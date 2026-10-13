@@ -35,7 +35,7 @@ export class Cull {
 		const pass = encoder.beginComputePass({ label: 'cull', timestampWrites: timestamps });
 		pass.setBindGroup(0, this.#group);
 		pass.setPipeline(this.#cull);
-		pass.dispatchWorkgroups(Math.ceil(this.#pool.listed / GROUP));
+		if (this.#pool.listed) pass.dispatchWorkgroups(Math.ceil(this.#pool.listed / GROUP));
 		pass.end();
 	}
 }

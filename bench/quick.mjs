@@ -89,7 +89,18 @@ mark('built');
 await launch(port, out, []);
 const page = await attach(port);
 await page.send('Emulation.setCPUThrottlingRate', { rate: cpuRate });
-await onConsole(page, (type, text) => console.error(`page ${type}: ${text}`));
+/** @type {Set<string>} */
+const errors = new Set();
+await page.send('Log.enable');
+await page.send('Log.clear');
+page.on('Log.entryAdded', ({ entry }) => {
+	if (entry.source === 'rendering' && ['warning', 'error'].includes(entry.level))
+		errors.add(`rendering: ${entry.text}`);
+});
+await onConsole(page, (type, text) => {
+	console.error(`page ${type}: ${text}`);
+	if (type === 'error' || type === 'exception') errors.add(`page ${type}: ${text}`);
+});
 await page.send('Page.navigate', { url });
 await until('the page', 10_000, () =>
 	page.evaluate(`location.href === '${url}' && 'bench' in window`).catch(() => false)
@@ -159,7 +170,7 @@ for (const name of new Set(repetitions.flatMap((r) => Object.keys(r.metrics)))) 
 	metrics[name] = median(repetitions.map((r) => r.metrics[name] ?? 0));
 }
 Object.assign(metrics, moves.metrics, { idleMs });
-const reasons = [...new Set([...repetitions, moves].flatMap((r) => r.reasons))];
+const reasons = [...new Set([...errors, ...[...repetitions, moves].flatMap((r) => r.reasons)])];
 const result = {
 	time: new Date().toISOString(),
 	adapter,
