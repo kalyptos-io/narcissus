@@ -36,7 +36,12 @@ export class Quality {
 	}
 
 	sample(ms: number, now: number, consecutive: boolean): boolean {
-		if (!consecutive || now - this.#last > 250 || !Number.isFinite(ms) || ms <= 0) {
+		if (
+			!consecutive ||
+			now - this.#last > Math.max(250, 2 * ms) ||
+			!Number.isFinite(ms) ||
+			ms <= 0
+		) {
 			this.#reset();
 			this.#last = now;
 			return false;
@@ -44,7 +49,7 @@ export class Quality {
 		const elapsed = Math.max(0, now - this.#last);
 		this.#last = now;
 		this.#samples.push({ time: now, ms });
-		this.#samples = this.#samples.filter((s) => now - s.time <= 1000);
+		this.#samples = this.#samples.filter((s) => now - s.time <= Math.max(1000, 2 * ms));
 		if (now - this.#samples[0].time < 300) return false;
 		const p90 = percentile(
 			this.#samples.map((s) => s.ms),

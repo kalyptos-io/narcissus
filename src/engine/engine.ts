@@ -754,12 +754,14 @@ class GpuEngine implements Engine {
 	/** frame timings for stats, and the render scale controller */
 	#sample(now: number, cpuMs: number, moved: boolean): void {
 		const quality = this.#quality;
-		const consecutive = now - this.#lastFrame <= GAP_MS;
+		const { gpuMs } = this.#renderer.stats();
+		// queued work can span more than the idle-gap threshold
+		const consecutive = now - this.#lastFrame <= Math.max(GAP_MS, 2 * gpuMs, 2 * cpuMs);
 		if (consecutive) push(this.#frameMs, now - this.#lastFrame);
 		push(this.#cpuMs, cpuMs);
 		this.#lastFrame = now;
 		// only moving frames adapt the scale, so a still view stays sharp
-		if (quality.sample(this.#renderer.stats().gpuMs, now, consecutive && moved)) this.#fit();
+		if (quality.sample(gpuMs, now, consecutive && moved)) this.#fit();
 		if (moved) this.#movedAt = now;
 		else if (quality.scale < 1 && now - this.#movedAt > STILL_MS) {
 			quality.full();
