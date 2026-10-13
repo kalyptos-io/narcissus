@@ -11,7 +11,7 @@ import { serve } from './h2serve.mjs';
 const bench = import.meta.dirname;
 const {
 	OUT,
-	WORLD = resolve(bench, '../../bench-runs/world-v1'),
+	WORLD = join(bench, 'runs/world'),
 	PORT = '9341',
 	MBPS = '27',
 	RTT = '30',

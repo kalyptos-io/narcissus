@@ -1,4 +1,4 @@
-// usage: [WORLD=<world dir>] [SOURCE=http|synthetic] [WORLD_URL=<remote world.json>] [POSE_A=e,n,h,yaw,pitch,dist] [POSE_B=e,n,h,yaw,pitch,dist] [BUDGET=4000000] [VIEW_DISTANCE=1500] [SKY=r,g,b] [PORT=9351] [PROFILE=<file> writes the moves' main-thread cpuprofile] node bench/quick.mjs [--baseline writes the baseline] [--stop closes chrome]
+// usage: [WORLD=<world dir>] [SOURCE=http|synthetic|page] [WORLD_URL=<remote world.json>] [POSE_A=e,n,h,yaw,pitch,dist] [POSE_B=e,n,h,yaw,pitch,dist] [BUDGET=4000000] [VIEW_DISTANCE=1500] [SKY=r,g,b] [PORT=9351] [PROFILE=<file> writes the moves' main-thread cpuprofile] node bench/quick.mjs [--baseline writes the baseline] [--stop closes chrome]
 /** @import { AddressInfo } from 'node:net' */
 /** @import { Options, Repetition } from './quick.ts' */
 import { existsSync, lstatSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
@@ -11,9 +11,9 @@ import { shown, trace } from './trace.mjs';
 
 const bench = import.meta.dirname;
 const repo = resolve(bench, '..');
-const out = resolve(repo, '../bench-runs/quick');
+const out = join(bench, 'runs/quick');
 const {
-	WORLD = resolve(repo, '../bench-runs/world-v1'),
+	WORLD = join(bench, 'runs/world'),
 	SOURCE = 'http',
 	WORLD_URL,
 	POSE_A = '724706.45,6178123.51,24.14,230.3,-35,588.3',

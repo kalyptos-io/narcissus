@@ -1,6 +1,6 @@
 // frames come from engine.step(), not animation frames, so vsync and window throttling stay out
 
-import { createEngine, type Engine, type StepReport } from '../src/engine/index.ts';
+import { createEngine, http, type Engine, type StepReport } from '../src/index.ts';
 import { parsePose, viewOf, type Pose } from '../src/controls/pose.ts';
 
 export interface Options {
@@ -10,8 +10,8 @@ export interface Options {
 	budget: number;
 	viewDistance: number;
 	sky: [number, number, number];
-	/** synthetic draws a generated world and fetches nothing */
-	source: 'http' | 'synthetic';
+	/** synthetic draws a generated world and fetches nothing; page is http as the page's own Fetch */
+	source: 'http' | 'synthetic' | 'page';
 	/** a remote world.json to stream instead of the served world */
 	world?: string;
 }
@@ -98,7 +98,7 @@ async function ready(options: Options) {
 		settings: { budget: options.budget, viewDistance: options.viewDistance },
 		sky: options.sky,
 		cache: 'memory',
-		source: options.source,
+		source: options.source === 'page' ? http : options.source,
 		manual: true
 	});
 	engine.resize(WIDTH, HEIGHT, 1);
