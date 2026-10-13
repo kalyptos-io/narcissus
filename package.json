@@ -1,0 +1,35 @@
+{
+	"name": "@kalyptos/narcissus",
+	"version": "0.0.0",
+	"description": "A WebGPU engine and tools for Guldmund Trees, streamed gaussian-splat scenes",
+	"license": "BSD-3-Clause",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"build": "vite build",
+		"check": "tsc",
+		"lint": "prettier --check . && eslint .",
+		"format": "prettier --write .",
+		"test": "vitest --run",
+		"bench": "node bench/quick.mjs",
+		"bench:drive": "node bench/drive.mjs"
+	},
+	"devDependencies": {
+		"@eslint/js": "^10.0.1",
+		"@types/node": "^24",
+		"@webgpu/types": "^0.1.74",
+		"eslint": "^10.4.1",
+		"eslint-config-prettier": "^10.1.8",
+		"globals": "^17.6.0",
+		"prettier": "^3.8.3",
+		"typescript": "^6.0.3",
+		"typescript-eslint": "^8.60.1",
+		"vite": "^8.1.5",
+		"vitest": "^5.0.2",
+		"webgpu": "0.4.0"
+	},
+	"engines": {
+		"node": ">=22.17"
+	},
+	"packageManager": "pnpm@12.8.1"
+}

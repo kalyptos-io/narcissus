@@ -1,0 +1,4 @@
+engineStrict: true
+# its postinstall only clears a macos quarantine flag
+allowBuilds:
+  webgpu: false
