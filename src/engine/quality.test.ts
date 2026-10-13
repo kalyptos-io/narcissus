@@ -6,6 +6,13 @@ function frames(q: Quality, ms: number, seconds: number, start = 0) {
 }
 
 describe('quality', () => {
+	it.each([4, 8, 15])('lowers the resolution during sustained rendering at %i fps', (fps) => {
+		const q = new Quality();
+		const interval = 1000 / fps;
+		for (let now = 0; now <= 3000; now += interval) q.sample(interval, now, true);
+		expect(q.scale).toBe(0.85);
+	});
+
 	it('lowers the resolution under slow frames and restores it under fast ones', () => {
 		const q = new Quality();
 		frames(q, 30, 2.5);

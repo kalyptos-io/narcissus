@@ -45,7 +45,7 @@ export class Quality {
 		this.#last = now;
 		this.#samples.push({ time: now, ms });
 		this.#samples = this.#samples.filter((s) => now - s.time <= 1000);
-		if (this.#samples.length < 20) return false;
+		if (now - this.#samples[0].time < 300) return false;
 		const p90 = percentile(
 			this.#samples.map((s) => s.ms),
 			0.9
