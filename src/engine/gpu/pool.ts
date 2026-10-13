@@ -76,6 +76,8 @@ export class Pool {
 	/** 1 per cluster slot in use */
 	#taken: Uint8Array;
 	#free: number;
+	// slots below this are occupied
+	#firstFree = 0;
 	#tables: number[];
 	#origin: [number, number, number] = [0, 0, 0];
 	// mirrors of pages and clusters, flushed once a draw: a write per change floods the gpu process
@@ -167,6 +169,7 @@ export class Pool {
 		this.#entries.delete(id);
 		this.#queue.delete(id);
 		for (const slot of entry.slots) this.#taken[slot] = 0;
+		this.#firstFree = Math.min(this.#firstFree, entry.slots[0]);
 		this.#free += entry.slots.length;
 		this.#tables.push(entry.table);
 		// the gpu list may name its clusters until the next draw
@@ -328,8 +331,7 @@ export class Pool {
 	#take(need: number): number[] {
 		const taken = this.#taken;
 		let at = -1;
-		// first fit scans all slots, cheap at a few adds a frame
-		for (let s = 0, run = 0; s < taken.length; s++) {
+		for (let s = this.#firstFree, run = 0; s < taken.length; s++) {
 			run = taken[s] ? 0 : run + 1;
 			if (run === need) {
 				at = s - need + 1;
@@ -338,8 +340,9 @@ export class Pool {
 		}
 		const out: number[] = [];
 		if (at >= 0) for (let s = at; s < at + need; s++) out.push(s);
-		else for (let s = 0; out.length < need; s++) if (!taken[s]) out.push(s);
+		else for (let s = this.#firstFree; out.length < need; s++) if (!taken[s]) out.push(s);
 		for (const s of out) taken[s] = 1;
+		while (this.#firstFree < taken.length && taken[this.#firstFree]) this.#firstFree++;
 		this.#free -= need;
 		return out;
 	}

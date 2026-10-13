@@ -194,4 +194,40 @@ describe('Pool', () => {
 		expect(pool.listed).toBe(0);
 		pool.destroy();
 	});
+
+	it('uploads a page across fragmented slots without changing its neighbours', async () => {
+		const device = await testDevice();
+		const pool = new Pool(device, 8 * CLUSTER);
+		const neighbour = page(2 * CLUSTER, 2);
+		for (let id = 1; id <= 4; id++) {
+			pool.add(id, id === 2 ? neighbour : page(2 * CLUSTER, id), [0, 0], none);
+		}
+		pool.upload(Infinity);
+		pool.remove(1);
+		pool.remove(3);
+		const added = page(3 * CLUSTER - 7, 5);
+		expect(pool.add(5, added, [0, 0], () => true)).toBe(true);
+		pool.upload(Infinity);
+		pool.draw([
+			{ id: 5, factors: 0xffffffff },
+			{ id: 2, factors: 0xffffffff }
+		]);
+		const list = (await read(device, pool.list)).u;
+		const geometry = (await read(device, pool.geometry)).u;
+		const colour = (await read(device, pool.colour)).u;
+		let at = 0;
+		for (const source of [added, neighbour]) {
+			for (let first = 0; first < source.count; first += CLUSTER) {
+				const slot = list[at++];
+				const count = Math.min(CLUSTER, source.count - first);
+				expect(slice(geometry, slot * CLUSTER * GEOMETRY_WORDS, count * GEOMETRY_WORDS)).toEqual(
+					slice(source.geometry, first * GEOMETRY_WORDS, count * GEOMETRY_WORDS)
+				);
+				expect(slice(colour, slot * CLUSTER * COLOUR_WORDS, count * COLOUR_WORDS)).toEqual(
+					slice(source.colour, first * COLOUR_WORDS, count * COLOUR_WORDS)
+				);
+			}
+		}
+		pool.destroy();
+	});
 });
