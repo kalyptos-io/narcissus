@@ -1,7 +1,7 @@
 // lsd radix sort, 8 bits a pass: block digit counts, a two-level scan, a stable scatter; no spin-waits
 
-const THREADS: u32 = 256u;
-const ITEMS: u32 = 4u;
+const THREADS: u32 = 128u;
+const ITEMS: u32 = 8u;
 const BLOCK: u32 = 1024u;
 // blocks per scan chunk
 const CHUNK: u32 = 64u;
@@ -76,7 +76,9 @@ fn histogram(
 	if (block >= state.blocks) {
 		return;
 	}
-	atomicStore(&bins[t], 0u);
+	for (var d = t; d < DIGITS; d += THREADS) {
+		atomicStore(&bins[d], 0u);
+	}
 	workgroupBarrier();
 	let head = block * BLOCK;
 	for (var k = 0u; k < ITEMS; k++) {
@@ -86,7 +88,9 @@ fn histogram(
 		}
 	}
 	workgroupBarrier();
-	hist[block * DIGITS + t] = atomicLoad(&bins[t]);
+	for (var d = t; d < DIGITS; d += THREADS) {
+		hist[block * DIGITS + d] = atomicLoad(&bins[d]);
+	}
 }
 
 @compute @workgroup_size(DIGITS)
@@ -159,7 +163,9 @@ fn scatter(
 		sk[i] = key;
 		sv[i] = value;
 	}
-	offsets[t] = hist[block * DIGITS + t];
+	for (var d = t; d < DIGITS; d += THREADS) {
+		offsets[d] = hist[block * DIGITS + d];
+	}
 	workgroupBarrier();
 
 	// stable local sort by the digit, two bits a split; thread t owns positions t ITEMS + k
@@ -189,7 +195,7 @@ fn scatter(
 			counts[t] += x;
 			workgroupBarrier();
 		}
-		// prefixes stop at 1020 items, so no count carries into its neighbour
+		// prefixes stop at 1016 items, so no count carries into its neighbour
 		let total = unpack(counts[THREADS - 2u], BLOCK - ITEMS) + unpack(tail, ITEMS);
 		var prior = vec4u(0u);
 		if (t > 0u) {

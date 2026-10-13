@@ -4,7 +4,7 @@ import { frameBuffers } from './buffers.ts';
 import { Sort } from './sort.ts';
 import { readBuffer, testDevice } from './test-device.ts';
 
-const COUNTS = [0, 1, 255, 256, 257, 100_000, 1_000_000];
+const COUNTS = [0, 1, 127, 128, 129, 255, 256, 257, 1023, 1024, 1025, 100_000, 1_000_000];
 
 // 24-bit keys where every third repeats an earlier one, so ties span all digits
 function testKeys(count: number): Uint32Array {
