@@ -16,7 +16,7 @@
 	},
 	"types": "./dist/index.d.ts",
 	"bin": {
-		"narcissus": "./dist/cli/main.js"
+		"narcissus": "dist/cli/main.js"
 	},
 	"files": [
 		"dist",
