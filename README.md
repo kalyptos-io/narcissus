@@ -1,19 +1,45 @@
 # narcissus
 
-The open library for Guldmund Trees: gaussian-splat scenes of any size, stored as static files and
-streamed by range request. narcissus holds the format, a WebGPU engine that draws it, and tools to
-check a tree.
+The open library for Guldmund Trees: gaussian-splat scenes of any size, stored as static files and streamed by range request. narcissus holds the format, a WebGPU engine that draws it, a viewer element, and tools to check and publish a world.
 
-This is early work. The package is not on npm yet.
+## Show a world
 
-## Develop
-
-```bash
-pnpm install
-pnpm check && pnpm lint && pnpm test
+```html
+<script
+	type="module"
+	src="https://cdn.jsdelivr.net/npm/@kalyptos/narcissus/dist/element/index.js"
+></script>
+<narcissus-viewer
+	src="https://example.com/world/world.json"
+	style="height: 100vh"
+></narcissus-viewer>
 ```
 
-The tests of the GPU kernels need a GPU adapter.
+Or with a bundler:
+
+```sh
+npm install @kalyptos/narcissus
+```
+
+```ts
+import { createEngine, Controls } from '@kalyptos/narcissus';
+```
+
+## Check and publish a world
+
+```sh
+npx @kalyptos/narcissus validate ./world --deep
+npx @kalyptos/narcissus info ./world
+npx @kalyptos/narcissus export ./world -o level3.ply --level 3
+npx @kalyptos/narcissus publish ./world remote:bucket/world
+```
+
+## Read more
+
+- [docs/format.md](docs/format.md): the specification of Guldmund Trees
+- [docs/hosting.md](docs/hosting.md): how to serve, publish and show a world
+- [docs/architecture.md](docs/architecture.md): how the code is built, and how to add a source or a plugin
+- [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Licence
 
