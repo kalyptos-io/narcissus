@@ -73,7 +73,7 @@ export class Planner {
 	/** when each refined page was last on screen */
 	#seen = new Map<number, number>();
 	#box = new Float64Array(6);
-	#out: Footprint = { pixels: 0, weight: 1 };
+	#out: Footprint = { shown: false, pixels: 0, weight: 1 };
 
 	plan(tree: Tree, view: View, resident: (id: number) => boolean, options: PlanOptions): Plan {
 		const { budget, capacity, now, predicted } = options;
@@ -171,13 +171,14 @@ export class Planner {
 
 	/** the fringe footprint, the larger of now and ahead */
 	#measure(page: PageNode, view: View, predicted: View | undefined): Measure {
-		const shown = this.#project(page, view, 1).pixels > 0;
-		let { pixels, weight } = this.#project(page, view, FRINGE);
+		const current = this.#project(page, view, FRINGE);
+		const shown = current.shown;
+		let { pixels, weight } = current;
 		let near = shown;
 		if (predicted) {
 			const ahead = this.#project(page, predicted, FRINGE);
 			if (ahead.pixels > pixels) ({ pixels, weight } = ahead);
-			near ||= ahead.pixels > 0 && this.#project(page, predicted, 1).pixels > 0;
+			near ||= ahead.shown;
 		}
 		return { shown, near, pixels, weight };
 	}

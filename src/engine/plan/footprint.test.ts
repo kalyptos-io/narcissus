@@ -37,4 +37,12 @@ describe('footprint', () => {
 		expect(footprint(box(12.5), m, 1000, 1000, 1, 0.1, 1000).pixels).toBe(0);
 		expect(footprint(box(12.5), m, 1000, 1000, 1, 0.1, 1000, 1.1).pixels).toBeGreaterThan(0);
 	});
+
+	it('reports viewport visibility separately from the fringe', () => {
+		for (const b of [box(), box(9), box(12.5), box(20), box(0, 20), box(0, -1)]) {
+			const plain = footprint(b, identity(), 1000, 1000, 1, 0.1, 1000);
+			const fringe = footprint(b, identity(), 1000, 1000, 1, 0.1, 1000, 1.1);
+			expect(fringe.shown).toBe(plain.pixels > 0);
+		}
+	});
 });

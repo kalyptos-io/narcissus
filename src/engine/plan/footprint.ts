@@ -1,6 +1,8 @@
 // screen footprint of a box
 
 export interface Footprint {
+	/** overlaps the viewport without the fringe */
+	shown: boolean;
 	/** unclipped projected area in pixels */
 	pixels: number;
 	/** 1 at the edges up to 16 at the centre */
@@ -28,7 +30,7 @@ export function footprint(
 	near: number,
 	far: number,
 	margin = 1,
-	out: Footprint = { pixels: 0, weight: 1 }
+	out: Footprint = { shown: false, pixels: 0, weight: 1 }
 ): Footprint {
 	const cx = (box[0] + box[3]) / 2;
 	const cy = (box[1] + box[4]) / 2;
@@ -44,6 +46,7 @@ export function footprint(
 	const hz = Math.abs(m[2]) * ex + Math.abs(m[6]) * ey + Math.abs(m[10]) * ez;
 	out.pixels = 0;
 	out.weight = 1;
+	out.shown = false;
 	if (z + hz < near || z - hz > far) return out;
 	const front = Math.max(near, z - hz);
 	const back = Math.max(near, z + hz);
@@ -60,6 +63,7 @@ export function footprint(
 	const area = (x1 - x0) * (y1 - y0);
 	const visibleArea = (right - left) * (top - bottom);
 	if (area <= 0 || visibleArea <= 0) return out;
+	out.shown = x1 > -1 && x0 < 1 && y1 > -1 && y0 < 1;
 	// use unclipped density so a partly visible region keeps the same detail
 	out.pixels = (area * width * height) / 4;
 	out.weight = centreWeight(left, right, bottom, top);
