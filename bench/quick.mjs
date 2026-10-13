@@ -22,12 +22,20 @@ const {
 	VIEW_DISTANCE = '1500',
 	SKY = '0.62,0.72,0.8',
 	PORT = '9351',
-	PROFILE
+	PROFILE,
+	CPU_RATE = '1',
+	FRAME_LIMIT_MS = '100',
+	SNAPSHOT
 } = process.env;
 // a hung frame would leave an evaluate waiting forever
 const TIMEOUT_MS = 120_000;
 const port = Number(PORT);
 const baselineFile = join(out, 'baseline.json');
+const cpuRate = Number(CPU_RATE);
+const frameLimitMs = Number(FRAME_LIMIT_MS);
+if (!Number.isFinite(cpuRate) || cpuRate < 1) throw new Error('CPU_RATE must be at least 1');
+if (!Number.isFinite(frameLimitMs) || frameLimitMs <= 0)
+	throw new Error('FRAME_LIMIT_MS must be positive');
 
 if (process.argv.includes('--stop')) {
 	console.log((await stop(port)) ? 'chrome closed' : `no chrome on port ${port}`);
@@ -80,6 +88,7 @@ const mark = (/** @type {string} */ name) => marks.push([name, performance.now()
 mark('built');
 await launch(port, out, []);
 const page = await attach(port);
+await page.send('Emulation.setCPUThrottlingRate', { rate: cpuRate });
 await onConsole(page, (type, text) => console.error(`page ${type}: ${text}`));
 await page.send('Page.navigate', { url });
 await until('the page', 10_000, () =>
@@ -93,7 +102,8 @@ const options = {
 	viewDistance: Number(VIEW_DISTANCE),
 	sky: /** @type {[number, number, number]} */ (SKY.split(',').map(Number)),
 	source: /** @type {Options['source']} */ (SOURCE),
-	world: WORLD_URL
+	world: WORLD_URL,
+	frameLimitMs
 };
 mark('chrome');
 const { idleMs, adapter } = await page.evaluate(`bench.ready(${JSON.stringify(options)})`);
@@ -101,6 +111,10 @@ mark('ready');
 /** @type {Repetition[]} */
 const repetitions = await page.evaluate('bench.run()');
 mark('poses');
+if (SNAPSHOT) {
+	const shot = await page.send('Page.captureScreenshot', { format: 'png' });
+	writeFileSync(SNAPSHOT, Buffer.from(shot.data, 'base64'));
+}
 // live objects only, else the reading follows the gc's timing
 await page.send('HeapProfiler.collectGarbage');
 const heap = await page.send('Runtime.getHeapUsage');
@@ -149,6 +163,7 @@ const reasons = [...new Set([...repetitions, moves].flatMap((r) => r.reasons))];
 const result = {
 	time: new Date().toISOString(),
 	adapter,
+	cpuRate,
 	valid: reasons.length === 0,
 	reasons,
 	world: resolve(WORLD),
