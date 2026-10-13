@@ -15,10 +15,6 @@ describe('parseWorld', () => {
 		expect(parseWorld(JSON.parse(JSON.stringify(world)))).toEqual({ ...world, extra: {} });
 	});
 
-	it('reads version 4, the earlier number of version 1, as version 1', () => {
-		expect(parseWorld({ ...world, version: 4 }).version).toBe(1);
-	});
-
 	it('takes any coordinate system and height datum as labels', () => {
 		const { crs, height } = parseWorld({ ...world, crs: 'EPSG:32633', height: 'EGM2008' });
 		expect([crs, height]).toEqual(['EPSG:32633', 'EGM2008']);

@@ -2,8 +2,6 @@ import type { World, WorldRoot } from './types.ts';
 import { parseUnitPath } from './idx.ts';
 import { LEAF, VERSION } from './spec.ts';
 
-/** the number version 1 carried before the format was public */
-const EARLIER = 4;
 const KNOWN = new Set(['version', 'crs', 'height', 'leaf', 'roots', 'extent']);
 
 function fault(what: string): Error {
@@ -70,7 +68,7 @@ export function directory(url: string): string {
 /** throws an Error with a user-facing message when json is not a version 1 world */
 export function parseWorld(json: unknown): World {
 	const w = record(json, 'an unreadable world.json');
-	if (w.version !== VERSION && w.version !== EARLIER) {
+	if (w.version !== VERSION) {
 		throw new Error(`This world is version ${String(w.version)}; narcissus reads ${VERSION}.`);
 	}
 	if (w.leaf !== LEAF) throw fault(`${String(w.leaf)} m leaf units, not ${LEAF} m`);
