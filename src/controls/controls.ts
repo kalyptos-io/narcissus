@@ -10,8 +10,10 @@ import {
 	look,
 	lookAt,
 	pan,
+	LIMITS,
 	settled,
 	viewOf,
+	type Limits,
 	type Pose
 } from './pose.ts';
 
@@ -44,9 +46,15 @@ export function flyAxes(keys: ReadonlySet<string>): [number, number, number] {
 }
 
 /** moves the shown pose toward the target over dt seconds; the target itself once settled */
-export function smooth(shown: Pose, target: Pose, dt: number, ground: Ground): Pose {
+export function smooth(
+	shown: Pose,
+	target: Pose,
+	dt: number,
+	ground: Ground,
+	limits = LIMITS
+): Pose {
 	if (settled(shown, target)) return target;
-	return clampPose(blend(shown, target, 1 - Math.exp(-dt / TAU)), ground);
+	return clampPose(blend(shown, target, 1 - Math.exp(-dt / TAU)), ground, limits);
 }
 
 /** map camera: left drag orbits, right/middle/shift drag pans the ground, wheel zooms, f flies */
@@ -54,6 +62,7 @@ export class Controls {
 	#canvas: HTMLCanvasElement;
 	#engine: Engine;
 	#ground: Ground;
+	#limits: Limits;
 	#abort = new AbortController();
 	/** last client position of each pointer down on the canvas */
 	#pointers = new Map<number, { x: number; y: number }>();
@@ -70,11 +79,18 @@ export class Controls {
 	#last: number | null = null;
 	#dead = false;
 
-	constructor(canvas: HTMLCanvasElement, engine: Engine, ground: Ground, pose: Pose) {
+	constructor(
+		canvas: HTMLCanvasElement,
+		engine: Engine,
+		ground: Ground,
+		pose: Pose,
+		limits = LIMITS
+	) {
 		this.#canvas = canvas;
 		this.#engine = engine;
 		this.#ground = ground;
-		this.#target = clampPose(pose, this.#ground);
+		this.#limits = limits;
+		this.#target = this.#clamp(pose);
 		this.#current = this.#target;
 		this.#offFrame = engine.onFrame(this.#tick);
 
@@ -108,7 +124,7 @@ export class Controls {
 	moveTo(e: number, n: number): void {
 		const t = this.#target;
 		const dist = Math.min(t.dist, defaultView.dist);
-		this.#target = clampPose({ ...t, e, n, h: this.#ground(e, n), dist }, this.#ground);
+		this.#target = this.#clamp({ ...t, e, n, h: this.#ground(e, n), dist });
 		this.#wake();
 	}
 
@@ -168,7 +184,11 @@ export class Controls {
 		const hit = await this.#engine.pick(e.offsetX, e.offsetY);
 		if (!hit || this.#dead) return;
 		const [he, hn, hh] = hit;
-		this.#target = clampPose(lookAt(cameraOf(this.#current), { e: he, n: hn, h: hh }));
+		this.#target = clampPose(
+			lookAt(cameraOf(this.#current), { e: he, n: hn, h: hh }),
+			undefined,
+			this.#limits
+		);
 		this.#wake();
 	};
 
@@ -197,9 +217,13 @@ export class Controls {
 		const [ox, oy] = this.#orbit;
 		if (ox || oy) {
 			const [yaw, pitch] = [t.yaw + ox * ROTATE, t.pitch - oy * ROTATE];
-			t = this.#flying ? look(t, yaw, pitch) : clampPose({ ...t, yaw, pitch });
+			t = this.#flying
+				? look(t, yaw, pitch, this.#limits)
+				: clampPose({ ...t, yaw, pitch }, undefined, this.#limits);
 		}
-		if (this.#zoom) t = clampPose({ ...t, dist: t.dist * Math.exp(this.#zoom) });
+		if (this.#zoom) {
+			t = clampPose({ ...t, dist: t.dist * Math.exp(this.#zoom) }, undefined, this.#limits);
+		}
 		this.#pan = [0, 0];
 		this.#orbit = [0, 0];
 		this.#zoom = 0;
@@ -213,14 +237,18 @@ export class Controls {
 
 		const was = this.#current;
 		if (was !== t) {
-			this.#target = t = clampPose(t, this.#ground);
-			this.#current = smooth(was, t, dt, this.#ground);
+			this.#target = t = this.#clamp(t);
+			this.#current = smooth(was, t, dt, this.#ground, this.#limits);
 			this.#place();
 			for (const fn of this.#listeners) fn();
 		}
 		if (flying || this.#current !== this.#target) this.#wake();
 		else this.#last = null;
 	};
+
+	#clamp(pose: Pose): Pose {
+		return clampPose(pose, this.#ground, this.#limits);
+	}
 
 	#place() {
 		this.#engine.setCamera(viewOf(this.#current));

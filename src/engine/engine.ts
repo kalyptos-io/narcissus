@@ -322,10 +322,12 @@ class GpuEngine implements Engine {
 			if (this.#destroyed) throw new Error(DESTROYED);
 			if (ticket !== this.#opening) throw new Error(SUPERSEDED);
 		};
+		const { cache = 'opfs', source = 'http' } = this.#options;
+		// a worker resolves a relative url against its own script, not the page
+		if (source === 'http') worldUrl = new URL(worldUrl, document.baseURI).href;
 		const bytes = await this.#fetch(worldUrl, null);
 		const world = parseWorld(JSON.parse(new TextDecoder().decode(bytes)));
 		check();
-		const { cache = 'opfs', source = 'http' } = this.#options;
 		const loader = new Loader({
 			base: directory(worldUrl),
 			workers: Math.min(6, Math.max(2, navigator.hardwareConcurrency - 2)),

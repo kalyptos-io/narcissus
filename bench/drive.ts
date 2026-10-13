@@ -1,7 +1,6 @@
 // animation frames, a cold cache and a route of poses
 
-import { createEngine, type Engine, type Stats } from '../src/engine/index.ts';
-import { blend, viewOf, type Pose } from '../src/controls/pose.ts';
+import { blend, createEngine, viewOf, type Engine, type Pose, type Stats } from '../src/index.ts';
 
 export interface Options {
 	budget: number;

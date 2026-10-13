@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>narcissus</title>
+		<style>
+			html,
+			body {
+				height: 100%;
+				margin: 0;
+			}
+			narcissus-viewer {
+				height: 100%;
+			}
+		</style>
+		<!-- from a clone: pnpm build, then serve the repository root. on a site, point this at the package's dist/element.js -->
+		<script type="module" src="../dist/element.js"></script>
+	</head>
+	<body>
+		<!-- ?src=<url of a world.json> shows another world -->
+		<narcissus-viewer src="../fixtures/tree/world.json">
+			<p>This browser cannot show the world.</p>
+		</narcissus-viewer>
+		<script>
+			const viewer = document.querySelector('narcissus-viewer');
+			const src = new URLSearchParams(location.search).get('src');
+			if (src) viewer.setAttribute('src', src);
+			viewer.addEventListener('ready', (event) => console.log('ready', event.detail));
+			viewer.addEventListener('error', (event) => console.error(event.detail));
+		</script>
+	</body>
+</html>

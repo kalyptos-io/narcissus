@@ -1,7 +1,14 @@
 // frames come from engine.step(), not animation frames, so vsync and window throttling stay out
 
-import { createEngine, http, type Engine, type StepReport } from '../src/index.ts';
-import { parsePose, viewOf, type Pose } from '../src/controls/pose.ts';
+import {
+	createEngine,
+	http,
+	parsePose,
+	viewOf,
+	type Engine,
+	type Pose,
+	type StepReport
+} from '../src/index.ts';
 
 export interface Options {
 	/** poses as e,n,h,yaw,pitch,dist */
@@ -52,7 +59,7 @@ let b: Pose;
 let lost = '';
 
 function pose(cam: string): Pose {
-	const p = parsePose(new URLSearchParams({ cam }), () => 0);
+	const p = parsePose(cam);
 	if (!p) throw new Error(`bad pose ${cam}`);
 	return p;
 }

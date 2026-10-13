@@ -5,6 +5,8 @@ import type { Idx } from '../../format/index.ts';
 import { answering, type Ask } from './remote.ts';
 import type { Batch } from './scheduler.ts';
 import type { Loaded, Message, Reply } from './worker.ts';
+// inline, so the built engine is one file that needs no path to its worker
+import StreamWorker from './worker.ts?worker&inline';
 
 export interface LoaderOptions {
 	/** url of world.json's directory, ending in / */
@@ -37,7 +39,7 @@ export class Loader {
 		const { base, cache, source } = options;
 		const shards = Math.max(1, options.workers);
 		this.#slots = Array.from({ length: shards }, (_, shard) => {
-			const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
+			const worker = new StreamWorker();
 			const slot: Slot = { worker };
 			const answer =
 				typeof source === 'function'

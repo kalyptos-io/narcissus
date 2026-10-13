@@ -14,12 +14,18 @@ const LAYERS = {
 	'src/tools': ['format', 'ports'],
 	'src/engine': ['format', 'ports', 'adapters'],
 	'src/controls': ['engine'],
+	'src/element': ['engine', 'controls'],
 	'src/cli': ['format', 'ports', 'adapters', 'tools'],
-	bench: ['engine', 'controls']
+	bench: []
 };
-const NAMES = ['format', 'ports', 'adapters', 'tools', 'engine', 'controls', 'cli'];
+const NAMES = ['format', 'ports', 'adapters', 'tools', 'engine', 'controls', 'element', 'cli'];
 // the modules of a layer that other layers may import; a layer not named here is open
-const PUBLIC = { format: ['index.ts', 'encode.ts'], tools: ['index.ts'], engine: ['index.ts'] };
+const PUBLIC = {
+	format: ['index.ts', 'encode.ts'],
+	tools: ['index.ts'],
+	engine: ['index.ts'],
+	controls: ['index.ts']
+};
 // a test may drive its layer through the ports and their adapters
 const TESTS = ['ports', 'adapters'];
 

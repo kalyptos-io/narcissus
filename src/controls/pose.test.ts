@@ -4,11 +4,10 @@ import {
 	blend,
 	cameraOf,
 	clampPose,
-	defaultView,
-	DIST_RANGE,
 	fly,
 	formatPose,
 	height,
+	LIMITS,
 	look,
 	lookAt,
 	opening,
@@ -75,16 +74,14 @@ describe('pose and scene', () => {
 });
 
 describe('parse and format', () => {
-	const parse = (query: string) => parsePose(new URLSearchParams(query), () => 0);
-
 	it('round-trips a formatted pose', () => {
 		const p = { e: 866125.37, n: 6121010.52, h: 21.4, yaw: 212.5, pitch: -41.2, dist: 312.8 };
-		expect(parse(`cam=${formatPose(p)}`)).toEqual(p);
+		expect(parsePose(formatPose(p))).toEqual(p);
 	});
 
-	it('round-trips a query string', () => {
+	it('round-trips a pose text', () => {
 		const s = '866125.37,6121010.52,21.4,212.5,-41.2,312.8';
-		expect(formatPose(parse(`cam=${s}`)!)).toBe(s);
+		expect(formatPose(parsePose(s)!)).toBe(s);
 	});
 
 	it('rounds to centimetres and tenths of a degree', () => {
@@ -92,49 +89,18 @@ describe('parse and format', () => {
 		expect(formatPose(p)).toBe('1.23,2.35,3.46,4.6,-5.7,6.8');
 	});
 
-	it('reads ?at as the default view over the point, at its ground height', () => {
-		const ground = (e: number, n: number) => (e === 866125 && n === 6121010 ? 12.5 : NaN);
-		expect(parsePose(new URLSearchParams('at=866125,6121010'), ground)).toEqual({
-			e: 866125,
-			n: 6121010,
-			h: 12.5,
-			...defaultView
-		});
-	});
-
-	it('prefers ?cam over ?at', () => {
-		expect(parse('cam=1,2,3,4,-5,6&at=7,8')).toEqual({
-			e: 1,
-			n: 2,
-			h: 3,
-			yaw: 4,
-			pitch: -5,
-			dist: 6
-		});
-	});
-
-	it('falls back to ?at when ?cam is malformed', () => {
-		expect(parse('cam=1,2,3&at=7,8')?.e).toBe(7);
-	});
-
 	it.each([
 		'',
-		'cam=',
-		'cam=1,2,3,4,5',
-		'cam=1,2,3,4,5,6,7',
-		'cam=1,2,,4,-5,6',
-		'cam=1,2,3,4,-5,abc',
-		'cam=1,2,3,4,-5,NaN',
-		'cam=1,2,3,Infinity,-5,6',
-		'cam=1,2,3,4,-5,0',
-		'cam=1,2,3,4,-5,-10',
-		'at=',
-		'at=1',
-		'at=1,2,3',
-		'at=1,',
-		'at=x,2'
-	])('rejects %j', (query) => {
-		expect(parse(query)).toBeNull();
+		'1,2,3,4,5',
+		'1,2,3,4,5,6,7',
+		'1,2,,4,-5,6',
+		'1,2,3,4,-5,abc',
+		'1,2,3,4,-5,NaN',
+		'1,2,3,Infinity,-5,6',
+		'1,2,3,4,-5,0',
+		'1,2,3,4,-5,-10'
+	])('rejects %j', (text) => {
+		expect(parsePose(text)).toBeNull();
 	});
 });
 
@@ -148,8 +114,8 @@ describe('clampPose', () => {
 	it('stops tilt twenty degrees below the horizon and limits zoom', () => {
 		expect(clampPose(pose(0, 20, 10)).pitch).toBe(-20);
 		expect(clampPose(pose(0, -120, 10)).pitch).toBe(-90);
-		expect(clampPose(pose(0, -30, 0.01)).dist).toBe(DIST_RANGE[0]);
-		expect(clampPose(pose(0, -30, 1e9)).dist).toBe(DIST_RANGE[1]);
+		expect(clampPose(pose(0, -30, 0.01)).dist).toBe(LIMITS.dist[0]);
+		expect(clampPose(pose(0, -30, 1e9)).dist).toBe(LIMITS.dist[1]);
 	});
 
 	it('leaves a valid pose alone', () => {

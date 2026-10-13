@@ -20,29 +20,19 @@ export interface Pose extends Point {
 /** vertical field of view, degrees */
 export const FOV = 45;
 export const defaultView = { yaw: 0, pitch: -35, dist: 300 };
-/** the views the site opens on, each row a ?cam= value */
-export const HOMES: Pose[] = [
-	[725872, 6176765.56, 8.25, 170.2, -35.8, 169.9],
-	[721741.89, 6180144, 31.4, 271.8, -32.7, 176.8],
-	[719864.77, 6179893.72, 17.67, 186.2, -37.9, 179.2],
-	[719412.38, 6180239.44, 23.03, 303.2, -36.2, 266.9],
-	[719816.58, 6178267.49, 47.76, 80.2, -31.3, 158.3],
-	[723720.95, 6175593.74, 28.88, 24.1, -36.4, 133.7],
-	[726023.1, 6179077.44, 22.01, 306.9, -48.5, 323.9],
-	[728231.47, 6176470.95, 15.7, 264.7, -44, 260.4],
-	[724768.58, 6177018.48, 21.59, 17.1, -44.2, 129.2],
-	[723857.86, 6179663.61, 22.45, 269.9, -39.6, 203.9],
-	[721398.14, 6175090.41, 26.17, 214.8, -45, 185.9],
-	[719906.57, 6176668.19, 7.82, 180.5, -52.4, 205.4],
-	[725418.23, 6180011.98, 31.79, 246, -33, 345.5],
-	[724205.07, 6178027.75, 63.75, 272.6, -34.8, 203.1]
-].map(([e, n, h, yaw, pitch, dist]) => ({ e, n, h, yaw, pitch, dist }));
+/** how far a pose may go */
+export interface Limits {
+	/** degrees */
+	pitch: readonly [number, number];
+	/** metres from camera to focus */
+	dist: readonly [number, number];
+	/** metres the camera stays above the ground under it */
+	clearance: number;
+	/** the lowest height of the camera */
+	floor: number;
+}
 
-export const PITCH_RANGE = [-90, -20] as const;
-/** metres */
-export const DIST_RANGE = [1, 2_485] as const;
-const GROUND_CLEARANCE = 10;
-const MIN_CAMERA_HEIGHT = 50;
+export const LIMITS: Limits = { pitch: [-90, -20], dist: [1, 2_485], clearance: 10, floor: 50 };
 
 // sine of the flattest view angle pan and fly scale for; keeps a level view moving
 const FLAT = 0.1;
@@ -79,25 +69,13 @@ export function opening({ leaf, roots, extent }: Pick<World, 'leaf' | 'roots' | 
 	return best;
 }
 
-/** reads ?cam=E,N,H,yaw,pitch,dist or ?at=E,N, which takes its height from ground; null when neither is valid */
-export function parsePose(
-	params: Pick<URLSearchParams, 'get'>,
-	ground: (e: number, n: number) => number
-): Pose | null {
-	const nums = (key: string, count: number) => {
-		const parts = params.get(key)?.split(',');
-		if (parts?.length !== count || parts.some((s) => s.trim() === '')) return null;
-		const values = parts.map(Number);
-		return values.every(Number.isFinite) ? values : null;
-	};
-	const cam = nums('cam', 6);
-	if (cam && cam[5] > 0) {
-		const [e, n, h, yaw, pitch, dist] = cam;
-		return { e, n, h, yaw, pitch, dist };
-	}
-	const at = nums('at', 2);
-	if (at) return { e: at[0], n: at[1], h: ground(at[0], at[1]), ...defaultView };
-	return null;
+/** a pose from its text E,N,H,yaw,pitch,dist, as formatPose writes it; null when it is not one */
+export function parsePose(text: string): Pose | null {
+	const parts = text.split(',');
+	if (parts.length !== 6 || parts.some((s) => s.trim() === '')) return null;
+	const [e, n, h, yaw, pitch, dist] = parts.map(Number);
+	if (![e, n, h, yaw, pitch, dist].every(Number.isFinite) || dist <= 0) return null;
+	return { e, n, h, yaw, pitch, dist };
 }
 
 export function formatPose(p: Pose): string {
@@ -105,18 +83,22 @@ export function formatPose(p: Pose): string {
 	return [r(p.e, 2), r(p.n, 2), r(p.h, 2), r(p.yaw, 1), r(p.pitch, 1), r(p.dist, 1)].join(',');
 }
 
-export function clampPose(p: Pose, ground?: (e: number, n: number) => number): Pose {
+export function clampPose(
+	p: Pose,
+	ground?: (e: number, n: number) => number,
+	limits = LIMITS
+): Pose {
 	const q = {
 		e: p.e,
 		n: p.n,
 		h: p.h,
 		yaw: wrap(p.yaw),
-		pitch: clamp(p.pitch, PITCH_RANGE),
-		dist: clamp(p.dist, DIST_RANGE)
+		pitch: clamp(p.pitch, limits.pitch),
+		dist: clamp(p.dist, limits.dist)
 	};
 	if (ground) {
 		const c = cameraOf(q);
-		const floor = Math.max(MIN_CAMERA_HEIGHT, ground(c.e, c.n) + GROUND_CLEARANCE);
+		const floor = Math.max(limits.floor, ground(c.e, c.n) + limits.clearance);
 		if (c.h < floor) return { ...lookAt({ ...c, h: floor }, q), yaw: q.yaw };
 	}
 	return q;
@@ -170,9 +152,9 @@ export function lookAt(from: Point, to: Point): Pose {
 }
 
 /** turns the view to yaw and pitch about the camera, which stays put */
-export function look(p: Pose, yaw: number, pitch: number): Pose {
+export function look(p: Pose, yaw: number, pitch: number, limits = LIMITS): Pose {
 	const c = cameraOf(p);
-	const q = clampPose({ ...p, yaw, pitch });
+	const q = clampPose({ ...p, yaw, pitch }, undefined, limits);
 	const d = direction(q.yaw, q.pitch);
 	return { ...q, e: c.e + d.e * q.dist, n: c.n + d.n * q.dist, h: c.h + d.h * q.dist };
 }
