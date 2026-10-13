@@ -230,4 +230,32 @@ describe('Pool', () => {
 		}
 		pool.destroy();
 	});
+
+	it('updates repeated draws after factor changes, reordering and slot reuse', async () => {
+		const device = await testDevice();
+		const pool = new Pool(device, 8 * CLUSTER);
+		pool.add(1, page(2 * CLUSTER), [0, 0], none);
+		pool.add(2, page(2 * CLUSTER), [0, 0], none);
+		pool.add(3, page(CLUSTER), [0, 0], none);
+		pool.upload(Infinity);
+		const draw = async (ids: number[], factors = 0xffffffff) => {
+			pool.draw(ids.map((id) => ({ id, factors })));
+			return slice((await read(device, pool.list)).u, 0, pool.listed);
+		};
+		expect(await draw([1, 2, 3])).toEqual([0, 1, 2, 3, 4]);
+		expect(await draw([1, 2, 3], 0x01020304)).toEqual([0, 1, 2, 3, 4]);
+		const clusters = (await read(device, pool.clusters)).u;
+		const pages = (await read(device, pool.pages)).u;
+		expect(pages[clusters[0] * PAGE_WORDS + 19]).toBe(0x01020304);
+		expect(await draw([1, 2])).toEqual([0, 1, 2, 3]);
+		expect(await draw([3, 2])).toEqual([4, 2, 3]);
+		expect(await draw([2, 3])).toEqual([2, 3, 4]);
+		pool.remove(2);
+		pool.add(2, page(CLUSTER), [0, 0], none);
+		pool.upload(Infinity);
+		expect(await draw([2, 3])).toEqual([2, 4]);
+		expect(await draw([])).toEqual([]);
+		expect(await draw([1])).toEqual([0, 1]);
+		pool.destroy();
+	});
 });

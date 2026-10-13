@@ -88,6 +88,7 @@ export class Pool {
 	#clusterFloats: Float32Array;
 	#clusterDirty = new Dirty();
 	#list: Uint32Array<ArrayBuffer>;
+	#drawn: Entry[] = [];
 
 	constructor(device: GPUDevice, capacity: number) {
 		this.capacity = capacity;
@@ -199,20 +200,26 @@ export class Pool {
 	/** the pages to draw with their quadrant factors; rewrites the factors and the cluster list */
 	draw(drawn: Drawn[]): void {
 		let listed = 0;
+		let count = 0;
+		let changed = false;
 		for (const { id, factors } of drawn) {
 			const entry = this.#entries.get(id);
 			if (!entry || entry.page !== null) continue;
 			if (entry.factors !== factors) this.#setFactors(entry, factors);
 			this.#entries.delete(id);
 			this.#entries.set(id, entry);
-			this.#list.set(entry.slots, listed);
+			changed ||= this.#drawn[count] !== entry;
+			this.#drawn[count++] = entry;
+			if (changed) this.#list.set(entry.slots, listed);
 			listed += entry.slots.length;
 		}
+		changed ||= this.#drawn.length !== count;
+		this.#drawn.length = count;
 		this.listed = listed;
 		const queue = this.#device.queue;
 		this.#tableDirty.flush(queue, this.pages, this.#table);
 		this.#clusterDirty.flush(queue, this.clusters, this.#clusterWords);
-		queue.writeBuffer(this.list, 0, this.#list, 0, listed);
+		if (changed && listed) queue.writeBuffer(this.list, 0, this.#list, 0, listed);
 	}
 
 	/** world position of the floating origin; rewrites every page origin */
