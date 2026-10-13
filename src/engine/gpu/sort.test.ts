@@ -74,4 +74,14 @@ describe('Sort', () => {
 		expect(mismatch(got.values, want.values)).toBe(-1);
 		expect(got.draw).toEqual([4, 200, 0, 0]);
 	});
+
+	for (const key of [0, 0x555555, 0xaaaaaa, 0xffffff]) {
+		it(`keeps identical keys ${key.toString(16)} stable across full and partial blocks`, async () => {
+			const keys = new Uint32Array(4097).fill(key);
+			const got = await gpuSort(keys, keys.length, keys.length);
+			const want = cpuSort(keys);
+			expect(mismatch(got.keys, want.keys)).toBe(-1);
+			expect(mismatch(got.values, want.values)).toBe(-1);
+		});
+	}
 });

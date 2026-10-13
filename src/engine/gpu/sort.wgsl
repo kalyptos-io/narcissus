@@ -38,9 +38,18 @@ var<workgroup> bins: array<atomic<u32>, DIGITS>;
 var<workgroup> totals: array<u32, DIGITS>;
 var<workgroup> sk: array<u32, BLOCK>;
 var<workgroup> sv: array<u32, BLOCK>;
-var<workgroup> counts: array<vec4u, THREADS>;
+// three 10-bit counts; the fourth follows from the number of items
+var<workgroup> counts: array<u32, THREADS>;
+var<workgroup> tail: u32;
 var<workgroup> starts: array<u32, DIGITS>;
 var<workgroup> offsets: array<u32, DIGITS>;
+
+fn unpack(packed: u32, count: u32) -> vec4u {
+	let a = packed & 1023u;
+	let b = (packed >> 10u) & 1023u;
+	let c = (packed >> 20u) & 1023u;
+	return vec4u(a, b, c, count - a - b - c);
+}
 
 fn digit(key: u32) -> u32 {
 	return (key >> params.shift) & 0xffu;
@@ -166,10 +175,13 @@ fn scatter(
 			before[k] = mine[b];
 			mine[b] += 1u;
 		}
-		counts[t] = mine;
+		counts[t] = mine.x | (mine.y << 10u) | (mine.z << 20u);
+		if (t == THREADS - 1u) {
+			tail = counts[t];
+		}
 		workgroupBarrier();
 		for (var o = 1u; o < THREADS; o *= 2u) {
-			var x = vec4u(0u);
+			var x = 0u;
 			if (t >= o) {
 				x = counts[t - o];
 			}
@@ -177,8 +189,12 @@ fn scatter(
 			counts[t] += x;
 			workgroupBarrier();
 		}
-		let total = counts[THREADS - 1u];
-		let prior = counts[t] - mine;
+		// prefixes stop at 1020 items, so no count carries into its neighbour
+		let total = unpack(counts[THREADS - 2u], BLOCK - ITEMS) + unpack(tail, ITEMS);
+		var prior = vec4u(0u);
+		if (t > 0u) {
+			prior = unpack(counts[t - 1u], t * ITEMS);
+		}
 		let base = vec4u(0u, total.x, total.x + total.y, total.x + total.y + total.z);
 		for (var k = 0u; k < ITEMS; k++) {
 			let b = (keys[k] >> (params.shift + bit)) & 3u;
