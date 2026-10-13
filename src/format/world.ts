@@ -61,6 +61,12 @@ function root(value: unknown): WorldRoot {
 	return { ...key, idx };
 }
 
+/** the directory of a world.json url, with its trailing slash and without query or fragment; unit paths join it */
+export function directory(url: string): string {
+	const path = url.split(/[?#]/)[0];
+	return path.slice(0, path.lastIndexOf('/') + 1);
+}
+
 /** throws an Error with a user-facing message when json is not a version 1 world */
 export function parseWorld(json: unknown): World {
 	const w = record(json, 'an unreadable world.json');

@@ -11,13 +11,17 @@ const gitignorePath = path.resolve(import.meta.dirname, '.gitignore');
 const LAYERS = {
 	'src/format': [],
 	'src/adapters': ['ports'],
+	'src/tools': ['format', 'ports'],
 	'src/engine': ['format', 'ports', 'adapters'],
 	'src/controls': ['engine'],
+	'src/cli': ['format', 'ports', 'adapters', 'tools'],
 	bench: ['engine', 'controls']
 };
-const NAMES = ['format', 'ports', 'adapters', 'engine', 'controls'];
+const NAMES = ['format', 'ports', 'adapters', 'tools', 'engine', 'controls', 'cli'];
 // the modules of a layer that other layers may import; a layer not named here is open
-const PUBLIC = { format: ['index.ts', 'encode.ts'], engine: ['index.ts'] };
+const PUBLIC = { format: ['index.ts', 'encode.ts'], tools: ['index.ts'], engine: ['index.ts'] };
+// a test may drive its layer through the ports and their adapters
+const TESTS = ['ports', 'adapters'];
 
 function restricted(dir, allowed) {
 	return NAMES.filter((name) => name !== path.basename(dir)).flatMap((name) => {
@@ -29,6 +33,8 @@ function restricted(dir, allowed) {
 		return { group: [...group, ...open.map((file) => `!**/${name}/${file}`)], message };
 	});
 }
+
+const rule = (patterns) => ({ 'no-restricted-imports': ['error', { patterns }] });
 
 export default defineConfig(
 	includeIgnoreFile(gitignorePath),
@@ -42,13 +48,13 @@ export default defineConfig(
 			'no-undef': 'off'
 		}
 	},
-	...Object.entries(LAYERS).map(([dir, allowed]) => ({
-		files: [`${dir}/**`],
-		rules: { 'no-restricted-imports': ['error', { patterns: restricted(dir, allowed) }] }
-	})),
+	...Object.entries(LAYERS).flatMap(([dir, allowed]) => [
+		{ files: [`${dir}/**`], rules: rule(restricted(dir, allowed)) },
+		{ files: [`${dir}/**/*.test.ts`], rules: rule(restricted(dir, [...allowed, ...TESTS])) }
+	]),
 	{
 		// these run in node too
-		files: ['src/format/**', 'src/ports.ts'],
+		files: ['src/format/**', 'src/tools/**', 'src/ports.ts'],
 		rules: { 'no-restricted-globals': ['error', 'window', 'document', 'navigator'] }
 	}
 );

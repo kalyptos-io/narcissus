@@ -1,6 +1,7 @@
 // the page quadtree of an open world, grown as .idx files arrive
 
 import {
+	namedUnits,
 	unitPath,
 	LEAF,
 	PAGE_SIDE,
@@ -130,7 +131,7 @@ export class Tree {
 			const parent = this.units.get(unitKey(ancestor(idx, idx.level + 1)));
 			if (parent) this.#link(parent, unit);
 		}
-		const named = this.#named(unit);
+		const named = namedUnits(unit.idx);
 		for (const { key: child } of named) {
 			const node = child.level === idx.level - 1 ? this.units.get(unitKey(child)) : undefined;
 			if (node) this.#link(unit, node);
@@ -203,7 +204,7 @@ export class Tree {
 				if (count) this.#below.set(up, count);
 				else this.#below.delete(up);
 			}
-			for (const { key: below } of this.#named(unit)) this.#want(below);
+			for (const { key: below } of namedUnits(unit.idx)) this.#want(below);
 			this.#want(unit);
 		}
 		return removed;
@@ -216,7 +217,7 @@ export class Tree {
 		for (let level = key.level + 1; level <= key.level + 3; level++) {
 			const namer = this.units.get(unitKey(ancestor(key, level)));
 			if (!namer) continue;
-			const named = this.#named(namer).find((entry) => unitKey(entry.key) === k);
+			const named = namedUnits(namer.idx).find((entry) => unitKey(entry.key) === k);
 			if (!named) continue;
 			const wanted = {
 				level: key.level,
@@ -248,21 +249,6 @@ export class Tree {
 			page.parent = up;
 			if (up) up.children[(col & 1) + 2 * (row & 1)] = page;
 		}
-	}
-
-	/** the units an idx names: its children, then its descendants two and three levels down */
-	#named(unit: UnitNode): { key: UnitKey; hash: string }[] {
-		const { level, e, n, idx } = unit;
-		const half = LEAF * 2 ** (level - 1);
-		const named = idx.children.map(({ quadrant, idx: hash }) => ({
-			key: { level: level - 1, e: e + (quadrant & 1) * half, n: n + (quadrant >> 1) * half },
-			hash
-		}));
-		for (const { depth, column, row, idx: hash } of idx.descendants) {
-			const side = LEAF * 2 ** (level - depth);
-			named.push({ key: { level: level - depth, e: e + column * side, n: n + row * side }, hash });
-		}
-		return named;
 	}
 
 	/** the pages of ancestor unit a over the square of key, at a's lowest level */

@@ -1,6 +1,6 @@
 // the engine: world, planner, stream, pool and renderer behind one small api
 
-import { CLUSTER, GEOMETRY_WORDS, parseWorld, type World } from '../format/index.ts';
+import { CLUSTER, GEOMETRY_WORDS, directory, parseWorld, type World } from '../format/index.ts';
 import { PROJECTED_WORDS } from './gpu/layout.ts';
 import { requestGpu, type Gpu } from './gpu/device.ts';
 import { Pool } from './gpu/pool.ts';
@@ -169,12 +169,6 @@ export function rebase(origin: Point, position: Point): Point {
 	if (Math.hypot(e - origin[0], n - origin[1], h - origin[2]) <= REBASE) return origin;
 	const snap = (x: number) => Math.round(x / GRID) * GRID;
 	return [snap(e), snap(n), snap(h)];
-}
-
-/** url's directory with its trailing slash, without query or fragment */
-export function directory(url: string): string {
-	const path = url.split(/[?#]/)[0];
-	return path.slice(0, path.lastIndexOf('/') + 1);
 }
 
 /**

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseWorld } from './world.ts';
+import { directory, parseWorld } from './world.ts';
 
 const world = {
 	version: 1,
@@ -52,5 +52,12 @@ describe('parseWorld', () => {
 			{ ...world, extent: { ...world.extent, n: [6177000] } }
 		];
 		for (const json of bad) expect(() => parseWorld(json)).toThrow(/^This world has .+\.$/);
+	});
+});
+
+describe('directory', () => {
+	it('cuts a world url back to its directory without the query', () => {
+		const url = 'https://host.example/t/abc/world.json?v=2';
+		expect(directory(url)).toBe('https://host.example/t/abc/');
 	});
 });

@@ -12,5 +12,6 @@
 		"skipLibCheck": true,
 		"noEmit": true
 	},
-	"include": ["src", "bench", "vite.config.ts"]
+	"include": ["src", "bench", "vite.config.ts"],
+	"exclude": ["bench/runs"]
 }

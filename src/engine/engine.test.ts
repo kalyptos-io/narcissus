@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { capacities, directory, rebase, unproject } from './engine.ts';
+import { capacities, rebase, unproject } from './engine.ts';
 import { CLUSTER } from '../format/index.ts';
 import { forward, multiply, perspective, transform, view } from './math/mat4.ts';
 
@@ -35,13 +35,6 @@ describe('rebase', () => {
 
 	it('moves the origin to the nearest 1024 m grid point once the camera strays further', () => {
 		expect(rebase([0, 0, 0], [723100.4, 6177000, 30])).toEqual([722944, 6176768, 0]);
-	});
-});
-
-describe('directory', () => {
-	it('cuts a world url back to its directory without the query', () => {
-		const url = 'https://tiles.kalyptos.dk/t/abc/world.json?v=2';
-		expect(directory(url)).toBe('https://tiles.kalyptos.dk/t/abc/');
 	});
 });
 

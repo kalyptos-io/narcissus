@@ -1,6 +1,6 @@
 import type { Idx, PageRow, UnitKey } from './types.ts';
 import { unwrap } from './inflate.ts';
-import { CHILD_BYTES, DESCENDANT_BYTES, IDX_HEADER, IDX_MAGIC, ROW_BYTES } from './spec.ts';
+import { CHILD_BYTES, DESCENDANT_BYTES, IDX_HEADER, IDX_MAGIC, LEAF, ROW_BYTES } from './spec.ts';
 
 function hashAt(view: DataView, offset: number): string {
 	let hex = '';
@@ -83,4 +83,19 @@ export function parseUnitPath(path: string): (UnitKey & { hash: string }) | null
 	const m = UNIT_PATH.exec(path);
 	if (!m) return null;
 	return { level: Number(m[1]), e: Number(m[2]), n: Number(m[3]), hash: m[4] };
+}
+
+/** the units an idx names: its children, then its descendants two and three levels down */
+export function namedUnits(idx: Idx): { key: UnitKey; hash: string }[] {
+	const { level, e, n } = idx;
+	const half = LEAF * 2 ** (level - 1);
+	const named = idx.children.map(({ quadrant, idx: hash }) => ({
+		key: { level: level - 1, e: e + (quadrant & 1) * half, n: n + (quadrant >> 1) * half },
+		hash
+	}));
+	for (const { depth, column, row, idx: hash } of idx.descendants) {
+		const side = LEAF * 2 ** (level - depth);
+		named.push({ key: { level: level - depth, e: e + column * side, n: n + row * side }, hash });
+	}
+	return named;
 }
