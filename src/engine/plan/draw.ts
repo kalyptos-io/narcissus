@@ -42,6 +42,7 @@ export class Fader {
 	): { drawn: Drawn[]; fading: boolean } {
 		const entries = this.#entries;
 		const cover = covering(cut, resident);
+		let top = -1;
 
 		// finish ramps; quadrants that left the cover keep their factor
 		for (const [key, e] of entries) {
@@ -49,6 +50,7 @@ export class Fader {
 				entries.delete(key);
 				continue;
 			}
+			top = Math.max(top, e.level);
 			if (e.held) continue;
 			if (e.start !== null && now - e.start >= FADE_MS) e.start = null;
 			if (!cover.has(key)) {
@@ -62,6 +64,7 @@ export class Fader {
 			const e = entries.get(key);
 			if (!e) {
 				const added = entry(page, key % 4, now);
+				top = Math.max(top, added.level);
 				entries.set(key, added);
 				fresh.add(added);
 			} else if (e.held) {
@@ -74,8 +77,6 @@ export class Fader {
 		}
 
 		// a held drawer stays while a ramp over any part of its area runs
-		let top = -1;
-		for (const e of entries.values()) top = Math.max(top, e.level);
 		const outs = new Map<number, Entry>();
 		const under = new Map<number, Entry[]>();
 		for (const e of entries.values()) {
@@ -130,11 +131,13 @@ export class Fader {
 			for (const out of extra) holding.add(out);
 			for (const page of pages) pin(page);
 		}
-		for (const [key, e] of entries) if (e.held && !holding.has(e)) entries.delete(key);
-
 		const drawn = new Map<number, Drawn>();
 		let fading = false;
-		for (const e of entries.values()) {
+		for (const [key, e] of entries) {
+			if (e.held && !holding.has(e)) {
+				entries.delete(key);
+				continue;
+			}
 			if (e.held || e.start !== null) fading = true;
 			const f = factor(e, now);
 			if (!f) continue;
