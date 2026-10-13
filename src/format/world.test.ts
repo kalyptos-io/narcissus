@@ -2,23 +2,37 @@ import { describe, expect, it } from 'vitest';
 import { parseWorld } from './world.ts';
 
 const world = {
-	version: 4,
+	version: 1,
 	crs: 'EPSG:25832',
 	height: 'DVR90',
 	leaf: 250,
 	roots: [{ level: 5, e: 720000, n: 6176000, idx: 'u/5/720000/6176000.0123456789abcdef.idx' }],
-	extent: { e: [723000, 725000], n: [6177000, 6179000], h: [2.1, 49.9] },
-	attribution: { retrieved: '2026-10-03', epoch: 'skraafotos2025' }
+	extent: { e: [723000, 725000], n: [6177000, 6179000], h: [2.1, 49.9] }
 };
 
 describe('parseWorld', () => {
-	it('accepts a version 4 world', () => {
-		expect(parseWorld(JSON.parse(JSON.stringify(world)))).toEqual(world);
+	it('accepts a version 1 world', () => {
+		expect(parseWorld(JSON.parse(JSON.stringify(world)))).toEqual({ ...world, extra: {} });
 	});
 
-	it('rejects another version with a sentence that names the fix', () => {
+	it('reads version 4, the earlier number of version 1, as version 1', () => {
+		expect(parseWorld({ ...world, version: 4 }).version).toBe(1);
+	});
+
+	it('takes any coordinate system and height datum as labels', () => {
+		const { crs, height } = parseWorld({ ...world, crs: 'EPSG:32633', height: 'EGM2008' });
+		expect([crs, height]).toEqual(['EPSG:32633', 'EGM2008']);
+	});
+
+	it('keeps the members it does not know in extra', () => {
+		const attribution = { retrieved: '2026-10-03', epoch: 'skraafotos2025' };
+		const { extra } = parseWorld({ ...world, attribution, waiting: [] });
+		expect(extra).toEqual({ attribution, waiting: [] });
+	});
+
+	it('rejects another version with a sentence that names both', () => {
 		expect(() => parseWorld({ ...world, version: 3 })).toThrow(
-			'This world is version 3, this viewer reads 4. Rebuild it with the current guldmund.'
+			'This world is version 3; narcissus reads 1.'
 		);
 	});
 
@@ -27,17 +41,16 @@ describe('parseWorld', () => {
 		const bad: unknown[] = [
 			null,
 			[],
-			{ ...world, crs: 'EPSG:4326' },
+			{ ...world, crs: '' },
+			{ ...world, height: undefined },
 			{ ...world, leaf: 500 },
 			{ ...world, roots: [] },
 			{ ...world, roots: [{ ...root, e: 720001 }] },
 			{ ...world, roots: [{ ...root, idx: 'u/5/728000/6176000.0123456789abcdef.idx' }] },
 			{ ...world, roots: [{ ...root, idx: 'u/5/720000/6176000.0123456789abcdef.pack' }] },
 			{ ...world, extent: { ...world.extent, h: [49.9, 2.1] } },
-			{ ...world, extent: { ...world.extent, n: [6177000] } },
-			{ ...world, attribution: { epoch: 'skraafotos2025' } }
+			{ ...world, extent: { ...world.extent, n: [6177000] } }
 		];
-		const sentence = /^This world .+\. Rebuild it with the current guldmund\.$/;
-		for (const json of bad) expect(() => parseWorld(json)).toThrow(sentence);
+		for (const json of bad) expect(() => parseWorld(json)).toThrow(/^This world has .+\.$/);
 	});
 });

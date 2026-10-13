@@ -1,11 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import type { Fetch } from '../../ports.ts';
-import type { DecodedPage, Idx, PageRow, UnitKey } from '../../format/types.ts';
-import { parseIdx, unitPath } from '../../format/idx.ts';
-import { inflate } from '../../format/inflate.ts';
-import { decodePage } from '../../format/page.ts';
-import { LEAF, PACK_TRAILER, PARAMS, ROW_BYTES } from '../../format/spec.ts';
-import { parseWorld } from '../../format/world.ts';
+import {
+	parseIdx,
+	unitPath,
+	inflate,
+	decodePage,
+	LEAF,
+	PACK_TRAILER,
+	PARAMS,
+	ROW_BYTES,
+	parseWorld,
+	type DecodedPage,
+	type Idx,
+	type PageRow,
+	type UnitKey
+} from '../../format/index.ts';
 import { synthetic } from './synthetic.ts';
 
 const BASE = 'synthetic/';
@@ -71,7 +80,7 @@ function inside(page: DecodedPage, box: Float32Array): boolean {
 }
 
 describe('synthetic', () => {
-	it('serves a version 4 world over Denmark with two level 12 roots', async () => {
+	it('serves a world with two level 12 roots', async () => {
 		const { roots, extent } = await world(synthetic());
 		expect(roots.map(({ level, e, n }) => ({ level, e, n }))).toEqual([
 			{ level: 12, e: 0, n: 5120000 },

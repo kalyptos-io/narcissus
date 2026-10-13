@@ -13,7 +13,7 @@ export interface Frame {
 	far: number;
 	/** camera position, floating-origin frame */
 	camera: Float32Array;
-	/** the floating origin, EPSG:25832 metres and DVR90 height */
+	/** the floating origin, in world coordinates */
 	origin: readonly [number, number, number];
 }
 

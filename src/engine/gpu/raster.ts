@@ -1,4 +1,4 @@
-import { WORK } from '../../format/spec.ts';
+import { WORK } from './layout.ts';
 import { bufferGroup, bufferLayout, type FrameBuffers } from './buffers.ts';
 import common from './common.wgsl?raw';
 import code from './raster.wgsl?raw';

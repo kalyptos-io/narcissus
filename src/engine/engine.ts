@@ -1,7 +1,7 @@
 // the engine: world, planner, stream, pool and renderer behind one small api
 
-import { CLUSTER, GEOMETRY_WORDS, PROJECTED_WORDS } from '../format/spec.ts';
-import { parseWorld } from '../format/world.ts';
+import { CLUSTER, GEOMETRY_WORDS, parseWorld, type World } from '../format/index.ts';
+import { PROJECTED_WORDS } from './gpu/layout.ts';
 import { requestGpu, type Gpu } from './gpu/device.ts';
 import { Pool } from './gpu/pool.ts';
 import { Renderer, type DepthPick, type HeightsRequest } from './gpu/renderer.ts';
@@ -22,7 +22,6 @@ import { percentile, pixelRatio, Quality } from './quality.ts';
 import { Feed } from './stream/feed.ts';
 import { http } from '../adapters/http.ts';
 import { Loader } from './stream/loader.ts';
-import type { World } from '../format/types.ts';
 import type { Camera, Drawn, Settings, Stats } from './types.ts';
 import { Tree } from './world/tree.ts';
 
@@ -54,7 +53,7 @@ export interface Engine {
 	pick(x: number, y: number): Promise<[number, number, number] | null>;
 	ground(e: number, n: number): number | undefined;
 	/**
-	 * DVR90 tops of the solid splats the next frame draws over cells x cells of 1 m from the
+	 * tops, as world heights, of the solid splats the next frame draws over cells x cells of 1 m from the
 	 * south-west corner (west, south), rows south to north, NaN where none; null if no frame comes
 	 */
 	heights(west: number, south: number, cells: number): Promise<Float32Array | null>;

@@ -1,13 +1,13 @@
 import type { World, WorldRoot } from './types.ts';
 import { parseUnitPath } from './idx.ts';
-import { LEAF, WORLD_VERSION } from './spec.ts';
+import { LEAF, VERSION } from './spec.ts';
 
-const CRS = 'EPSG:25832';
-const HEIGHT = 'DVR90';
-const REBUILD = 'Rebuild it with the current guldmund.';
+/** the number version 1 carried before the format was public */
+const EARLIER = 4;
+const KNOWN = new Set(['version', 'crs', 'height', 'leaf', 'roots', 'extent']);
 
 function fault(what: string): Error {
-	return new Error(`This world has ${what}. ${REBUILD}`);
+	return new Error(`This world has ${what}.`);
 }
 
 function record(value: unknown, what: string): Record<string, unknown> {
@@ -61,23 +61,19 @@ function root(value: unknown): WorldRoot {
 	return { ...key, idx };
 }
 
-/** throws an Error with a user-facing message when json is not a version 4 world */
+/** throws an Error with a user-facing message when json is not a version 1 world */
 export function parseWorld(json: unknown): World {
 	const w = record(json, 'an unreadable world.json');
-	if (w.version !== WORLD_VERSION) {
-		const v = String(w.version);
-		throw new Error(`This world is version ${v}, this viewer reads ${WORLD_VERSION}. ${REBUILD}`);
+	if (w.version !== VERSION && w.version !== EARLIER) {
+		throw new Error(`This world is version ${String(w.version)}; narcissus reads ${VERSION}.`);
 	}
-	if (w.crs !== CRS) throw fault(`coordinates in ${String(w.crs)}, not ${CRS}`);
-	if (w.height !== HEIGHT) throw fault(`heights in ${String(w.height)}, not ${HEIGHT}`);
 	if (w.leaf !== LEAF) throw fault(`${String(w.leaf)} m leaf units, not ${LEAF} m`);
 	if (!Array.isArray(w.roots) || w.roots.length === 0) throw fault('no roots');
 	const extent = record(w.extent, 'no extent');
-	const attribution = record(w.attribution, 'no attribution');
 	return {
-		version: WORLD_VERSION,
-		crs: CRS,
-		height: HEIGHT,
+		version: VERSION,
+		crs: text(w.crs, 'no coordinate system'),
+		height: text(w.height, 'no height datum'),
 		leaf: LEAF,
 		roots: w.roots.map(root),
 		extent: {
@@ -85,9 +81,6 @@ export function parseWorld(json: unknown): World {
 			n: range(extent.n, 'an invalid northing extent'),
 			h: range(extent.h, 'an invalid height extent')
 		},
-		attribution: {
-			retrieved: text(attribution.retrieved, 'no retrieval date'),
-			epoch: text(attribution.epoch, 'no imagery epoch')
-		}
+		extra: Object.fromEntries(Object.entries(w).filter(([member]) => !KNOWN.has(member)))
 	};
 }

@@ -1,6 +1,6 @@
 // which pages the view should draw and load, inside the draw budget and the pool
 
-import { slots } from '../../format/spec.ts';
+import { slots } from '../gpu/layout.ts';
 import { footprint, type Footprint } from './footprint.ts';
 import type { PageNode, Tree, Wanted } from '../world/tree.ts';
 

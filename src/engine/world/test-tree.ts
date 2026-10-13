@@ -1,7 +1,6 @@
 // .idx fixtures for the tests that grow a tree
 
-import { LEAF, PAGE_SIDE } from '../../format/spec.ts';
-import type { Idx, PageRow, UnitKey } from '../../format/types.ts';
+import { LEAF, PAGE_SIDE, type Idx, type PageRow, type UnitKey } from '../../format/index.ts';
 
 export function hash({ level, e, n }: UnitKey): string {
 	return ((level * 4096 + e / LEAF) * 65536 + n / LEAF).toString(16).padStart(16, '0');

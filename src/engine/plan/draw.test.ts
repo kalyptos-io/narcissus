@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LEAF, PAGE_SIDE } from '../../format/spec.ts';
-import type { Idx, PageRow } from '../../format/types.ts';
+import { LEAF, PAGE_SIDE, type Idx, type PageRow } from '../../format/index.ts';
 import type { Drawn } from '../types.ts';
 import { Tree, type PageNode } from '../world/tree.ts';
 import { FADE_CAP, FADE_MS, Fader } from './draw.ts';
@@ -34,13 +33,13 @@ function family(missing = -1): { parent: PageNode; children: PageNode[] } {
 		descendants: []
 	};
 	const tree = new Tree({
-		version: 4,
+		version: 1,
 		crs: 'EPSG:25832',
 		height: 'DVR90',
 		leaf: LEAF,
 		roots: [{ level: 0, e: E, n: N, idx: 'leaf.idx' }],
 		extent: { e: [E, E + LEAF], n: [N, N + LEAF], h: [0, 5] },
-		attribution: { retrieved: '2026-10-08', epoch: 'test' }
+		extra: {}
 	});
 	tree.add(idx, 'leaf.idx');
 	const [parent] = tree.roots;

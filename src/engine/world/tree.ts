@@ -1,8 +1,14 @@
 // the page quadtree of an open world, grown as .idx files arrive
 
-import { unitPath } from '../../format/idx.ts';
-import { LEAF, PAGE_SIDE } from '../../format/spec.ts';
-import type { Idx, PageRow, UnitKey, World } from '../../format/types.ts';
+import {
+	unitPath,
+	LEAF,
+	PAGE_SIDE,
+	type Idx,
+	type PageRow,
+	type UnitKey,
+	type World
+} from '../../format/index.ts';
 
 export interface UnitNode extends UnitKey {
 	idx: Idx;

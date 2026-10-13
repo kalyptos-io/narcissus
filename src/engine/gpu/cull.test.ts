@@ -1,20 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
 	CLUSTER,
-	CLUSTER_WORDS,
 	COLOUR_WORDS,
-	FRAME_UNIFORM_BYTES,
 	GEOMETRY_WORDS,
-	LOW_PASS,
 	PAGE_PARAMS,
-	PAGE_WORDS,
 	PARAMS,
-	WORK
-} from '../../format/spec.ts';
+	type DecodedPage
+} from '../../format/index.ts';
+import { CLUSTER_WORDS, FRAME_UNIFORM_BYTES, LOW_PASS, PAGE_WORDS, WORK } from './layout.ts';
 import { mulberry32 } from '../../format/encode.ts';
 import { boxVisible, planes } from '../math/frustum.ts';
 import { multiply, perspective, view } from '../math/mat4.ts';
-import type { DecodedPage } from '../../format/types.ts';
 import type { Drawn } from '../types.ts';
 import { frameBuffers } from './buffers.ts';
 import { Cull } from './cull.ts';

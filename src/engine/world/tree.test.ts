@@ -1,7 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { unitPath } from '../../format/idx.ts';
-import { LEAF } from '../../format/spec.ts';
-import type { UnitKey, World } from '../../format/types.ts';
+import { unitPath, LEAF, type UnitKey, type World } from '../../format/index.ts';
 import { hash, unit } from './test-tree.ts';
 import { Tree, unitKey, type PageNode, type UnitNode } from './tree.ts';
 
@@ -12,13 +10,13 @@ const NONE = ['none', 'none', 'none', 'none'];
 
 function world(...roots: UnitKey[]): World {
 	return {
-		version: 4,
+		version: 1,
 		crs: 'EPSG:25832',
 		height: 'DVR90',
 		leaf: LEAF,
 		roots: roots.map((key) => ({ ...key, idx: `u/${key.level}/${key.e}/${key.n}.idx` })),
 		extent: { e: [E, E + 2000], n: [N, N + 2000], h: [0, 5] },
-		attribution: { retrieved: '2026-10-08', epoch: 'test' }
+		extra: {}
 	};
 }
 

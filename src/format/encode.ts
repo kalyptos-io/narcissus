@@ -1,4 +1,4 @@
-// writers from the spec, for tests and synthetic worlds; guldmund writes real worlds
+// writers from the spec, for tests and synthetic worlds
 
 import type { Col, Idx, PageRow } from './types.ts';
 import { deflate } from './inflate.ts';
@@ -22,6 +22,8 @@ import {
 	SH_COEFFS,
 	VERSION
 } from './spec.ts';
+
+export { deflate };
 
 /** splats of one page in unit-local ENU */
 export interface Splats {

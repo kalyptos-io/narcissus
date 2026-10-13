@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { parseCol, sampleCol } from './col.ts';
 import { parseIdx, parseUnitPath } from './idx.ts';
@@ -73,8 +73,8 @@ function close(
 	}
 }
 
-// guldmund writes the fixture; it is copied here by hand, so it may be absent
-describe.skipIf(!existsSync(EXPECTED))('golden fixture', () => {
+// another writer of the format made the fixture, so every value here is a cross-check
+describe('golden fixture', () => {
 	it('parses its world.json and reaches the root units', () => {
 		const { world, units } = load();
 		const worldUrl = new URL(world, DIR);
@@ -85,7 +85,7 @@ describe.skipIf(!existsSync(EXPECTED))('golden fixture', () => {
 		}
 	});
 
-	it('reads every idx as guldmund wrote it', async () => {
+	it('reads every idx as its writer recorded it', async () => {
 		for (const unit of load().units) {
 			const { path, rows, ...header } = unit;
 			expect(parseUnitPath(path)).toMatchObject({ level: unit.level, e: unit.e, n: unit.n });
@@ -100,7 +100,7 @@ describe.skipIf(!existsSync(EXPECTED))('golden fixture', () => {
 		}
 	});
 
-	it('samples every col as guldmund does', async () => {
+	it('samples every col as its writer does', async () => {
 		const out = new Float32Array(12);
 		for (const c of load().cols) {
 			const col = await parseCol(read(c.path));
@@ -113,7 +113,7 @@ describe.skipIf(!existsSync(EXPECTED))('golden fixture', () => {
 		}
 	});
 
-	it('decodes every listed splat as guldmund does', async () => {
+	it('decodes every listed splat as its writer does', async () => {
 		for (const entry of load().pages) {
 			const { offset, length } = entry.row;
 			const payload = await inflate(read(entry.pack).subarray(offset, offset + length));

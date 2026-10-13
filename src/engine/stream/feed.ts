@@ -1,6 +1,6 @@
 // a plan turned into residency: idx fetches, page batches, pool admission and tree pruning
 
-import { unitPath } from '../../format/idx.ts';
+import { unitPath } from '../../format/index.ts';
 import type { Pool } from '../gpu/pool.ts';
 import type { Plan } from '../plan/cut.ts';
 import type { Tree, UnitNode } from '../world/tree.ts';

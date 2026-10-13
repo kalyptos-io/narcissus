@@ -31,5 +31,8 @@
 	"engines": {
 		"node": ">=22.17"
 	},
-	"packageManager": "pnpm@12.8.1"
+	"packageManager": "pnpm@12.8.1",
+	"dependencies": {
+		"@noble/hashes": "^2.4.0"
+	}
 }

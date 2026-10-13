@@ -1,6 +1,6 @@
-// the per-frame buffers the passes hand each other; layouts in common.wgsl and format/spec.ts
+// the per-frame buffers the passes hand each other; layouts in common.wgsl and layout.ts
 
-import { FRAME_UNIFORM_BYTES, PLUGIN_VEC4S, PROJECTED_WORDS, WORK } from '../../format/spec.ts';
+import { FRAME_UNIFORM_BYTES, PLUGIN_VEC4S, PROJECTED_WORDS, WORK } from './layout.ts';
 
 export interface FrameBuffers {
 	/** splats one frame may project */

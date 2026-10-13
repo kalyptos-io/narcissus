@@ -1,4 +1,4 @@
-import { KEY_BITS, WORK } from '../../format/spec.ts';
+import { KEY_BITS, WORK } from './layout.ts';
 import type { FrameBuffers } from './buffers.ts';
 import common from './common.wgsl?raw';
 import code from './sort.wgsl?raw';

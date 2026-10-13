@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FRAME_UNIFORM_BYTES, PROJECTED_WORDS, WORK } from '../../format/spec.ts';
+import { FRAME_UNIFORM_BYTES, PROJECTED_WORDS, WORK } from './layout.ts';
 import { frameBuffers } from './buffers.ts';
 import { COLOUR_FORMAT, DEPTH_FORMAT, depthAt, Raster } from './raster.ts';
 import { Sort } from './sort.ts';

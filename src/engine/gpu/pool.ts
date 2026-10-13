@@ -2,14 +2,12 @@
 
 import {
 	CLUSTER,
-	CLUSTER_WORDS,
 	COLOUR_WORDS,
 	GEOMETRY_WORDS,
-	PAGE_WORDS,
 	PARAMS,
-	slots
-} from '../../format/spec.ts';
-import type { DecodedPage } from '../../format/types.ts';
+	type DecodedPage
+} from '../../format/index.ts';
+import { CLUSTER_WORDS, PAGE_WORDS, slots } from './layout.ts';
 import type { Drawn } from '../types.ts';
 
 /** u32 word of Page.factors */

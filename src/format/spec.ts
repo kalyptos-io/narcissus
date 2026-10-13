@@ -1,4 +1,4 @@
-// format v1 constants (guldmund/docs/format.md) and the engine's gpu layouts built on them
+// the constants of guldmund trees version 1 (docs/format.md) and the layout of a decoded page
 
 export const C0 = 0.28209479177387814;
 export const C1 = 0.4886025119029199;
@@ -11,7 +11,6 @@ export const PACK_MAGIC = 'GMPK';
 export const IDX_MAGIC = 'GMIX';
 export const COL_MAGIC = 'GMCL';
 export const VERSION = 1;
-export const WORLD_VERSION = 4;
 /** bytes of the .idx and .col prefix before their deflate stream */
 export const PREFIX = 8;
 export const PACK_TRAILER = 16;
@@ -38,8 +37,6 @@ export const SH_COEFFS = 9;
 
 /** splats per cluster: the pool's slot, the cull's unit and one projection workgroup */
 export const CLUSTER = 256;
-/** pool slots a page of count splats takes: whole clusters, at least one */
-export const slots = (count: number) => Math.max(1, Math.ceil(count / CLUSTER)) * CLUSTER;
 
 /**
  * pool record, little-endian u32 words, split over two storage buffers so each stays under the
@@ -66,27 +63,3 @@ export const PARAMS = {
 	shScale: 18
 };
 export const PAGE_PARAMS = 27;
-
-/** u32 words of common.wgsl's Page and Cluster */
-export const PAGE_WORDS = 36;
-export const CLUSTER_WORDS = 12;
-/** bytes of common.wgsl's FrameUniforms */
-export const FRAME_UNIFORM_BYTES = 336;
-/** u32 words of common.wgsl's Projected */
-export const PROJECTED_WORDS = 6;
-/** vec4f slots shared by shade hooks */
-export const PLUGIN_VEC4S = 16;
-
-/** u32 word offsets in the work buffer; visible cluster ids start at WORK.list */
-export const WORK = {
-	visible: 0,
-	projected: 4,
-	drawArgs: 8,
-	list: 16
-};
-
-/** bits of a sort key: reversed log view depth, so ascending keys run far to near */
-export const KEY_BITS = 24;
-
-/** px² added to a splat's 2d covariance */
-export const LOW_PASS = 0.075;

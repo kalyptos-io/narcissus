@@ -33,7 +33,7 @@ export async function unwrap(bytes: Uint8Array, magic: string, kind: string): Pr
 	}
 	const version = head.getUint16(4, true);
 	if (version !== VERSION) {
-		throw new Error(`${kind} version ${version}, this viewer reads version ${VERSION}`);
+		throw new Error(`${kind} version ${version}; narcissus reads ${VERSION}`);
 	}
 	let body: Uint8Array;
 	try {

@@ -1,12 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import type { Cache, Fetch } from '../../ports.ts';
-import type { Col, Idx } from '../../format/types.ts';
-import { parseCol } from '../../format/col.ts';
-import { encodeCol, encodeIdx, encodePack, encodePage, type Splats } from '../../format/encode.ts';
-import { parseIdx } from '../../format/idx.ts';
-import { deflate } from '../../format/inflate.ts';
-import { decodePage } from '../../format/page.ts';
-import { PAGE_SIDE } from '../../format/spec.ts';
+import {
+	parseCol,
+	parseIdx,
+	decodePage,
+	PAGE_SIDE,
+	type Col,
+	type Idx
+} from '../../format/index.ts';
+import {
+	deflate,
+	encodeCol,
+	encodeIdx,
+	encodePack,
+	encodePage,
+	type Splats
+} from '../../format/encode.ts';
 import { loadBatch, loadIdx, type Sources } from './jobs.ts';
 import { memoryCache } from '../../adapters/memory.ts';
 import type { Batch, PageJob } from './scheduler.ts';

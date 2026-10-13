@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { capacities, directory, rebase, unproject } from './engine.ts';
-import { CLUSTER } from '../format/spec.ts';
+import { CLUSTER } from '../format/index.ts';
 import { forward, multiply, perspective, transform, view } from './math/mat4.ts';
 
 const MiB = 2 ** 20;

@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { CLUSTER, COLOUR_WORDS, GEOMETRY_WORDS, PAGE_PARAMS, PARAMS } from '../../format/spec.ts';
-import type { DecodedPage } from '../../format/types.ts';
+import {
+	CLUSTER,
+	COLOUR_WORDS,
+	GEOMETRY_WORDS,
+	PAGE_PARAMS,
+	PARAMS,
+	type DecodedPage
+} from '../../format/index.ts';
 import { Heights } from './heights.ts';
 import { Pool } from './pool.ts';
 import { testDevice } from './test-device.ts';

@@ -1,8 +1,7 @@
 import { setFlagsFromString } from 'node:v8';
 import { runInNewContext } from 'node:vm';
 import { describe, expect, it } from 'vitest';
-import { parseIdx } from '../../format/idx.ts';
-import { parseWorld } from '../../format/world.ts';
+import { parseIdx, parseWorld } from '../../format/index.ts';
 import { view as viewMatrix } from '../math/mat4.ts';
 import { ground, synthetic } from '../stream/synthetic.ts';
 import { Tree } from '../world/tree.ts';

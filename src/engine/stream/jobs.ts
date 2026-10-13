@@ -1,11 +1,15 @@
 // what a stream worker does, as plain functions over the ports
 
 import type { Cache, Fetch } from '../../ports.ts';
-import type { Col, DecodedPage, Idx } from '../../format/types.ts';
-import { parseCol } from '../../format/col.ts';
-import { parseIdx } from '../../format/idx.ts';
-import { inflate } from '../../format/inflate.ts';
-import { decodePage } from '../../format/page.ts';
+import {
+	parseCol,
+	parseIdx,
+	inflate,
+	decodePage,
+	type Col,
+	type DecodedPage,
+	type Idx
+} from '../../format/index.ts';
 import type { Batch } from './scheduler.ts';
 
 export interface Sources {

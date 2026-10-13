@@ -16,16 +16,17 @@ const LAYERS = {
 	bench: ['engine', 'controls']
 };
 const NAMES = ['format', 'ports', 'adapters', 'engine', 'controls'];
-// other layers import only the index.ts of these
-const SEALED = ['engine'];
+// the modules of a layer that other layers may import; a layer not named here is open
+const PUBLIC = { format: ['index.ts', 'encode.ts'], engine: ['index.ts'] };
 
 function restricted(dir, allowed) {
 	return NAMES.filter((name) => name !== path.basename(dir)).flatMap((name) => {
 		const group = name === 'ports' ? ['**/ports.ts'] : [`**/${name}/**`];
 		if (!allowed.includes(name)) return { group, message: `${dir} does not import ${name}.` };
-		if (!SEALED.includes(name)) return [];
-		const message = `Import ${name} through its index.ts.`;
-		return { group: [...group, `!**/${name}/index.ts`], message };
+		const open = PUBLIC[name];
+		if (!open) return [];
+		const message = `Import ${name} through its ${open.join(' or ')}.`;
+		return { group: [...group, ...open.map((file) => `!**/${name}/${file}`)], message };
 	});
 }
 

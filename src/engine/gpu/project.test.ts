@@ -4,20 +4,22 @@ import {
 	C1,
 	CLUSTER,
 	COLOUR_WORDS,
-	FRAME_UNIFORM_BYTES,
 	GEOMETRY_WORDS,
-	KEY_BITS,
-	LOW_PASS,
 	PAGE_PARAMS,
 	PARAMS,
+	type DecodedPage
+} from '../../format/index.ts';
+import {
+	FRAME_UNIFORM_BYTES,
+	KEY_BITS,
+	LOW_PASS,
 	PLUGIN_VEC4S,
 	PROJECTED_WORDS,
 	WORK
-} from '../../format/spec.ts';
+} from './layout.ts';
 import { planes } from '../math/frustum.ts';
 import { multiply, perspective, transform, view } from '../math/mat4.ts';
 import type { Shade } from '../plugin.ts';
-import type { DecodedPage } from '../../format/types.ts';
 import { frameBuffers } from './buffers.ts';
 import { Pool } from './pool.ts';
 import { Project } from './project.ts';

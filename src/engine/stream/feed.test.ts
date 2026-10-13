@@ -1,9 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { unitPath } from '../../format/idx.ts';
-import { LEAF } from '../../format/spec.ts';
+import { unitPath, LEAF, type DecodedPage, type Idx, type UnitKey } from '../../format/index.ts';
 import type { Pool } from '../gpu/pool.ts';
 import type { Plan } from '../plan/cut.ts';
-import type { DecodedPage, Idx, UnitKey } from '../../format/types.ts';
 import { hash, unit as full } from '../world/test-tree.ts';
 import { Tree, unitKey, type PageNode, type Wanted } from '../world/tree.ts';
 import { FEED, Feed, type FeedOptions } from './feed.ts';
@@ -110,13 +108,13 @@ function plan(load: PageNode[], idx: Wanted[] = [], keep: PageNode[] = load): Pl
 /** a tree holding one level-1 root, its four children wanted */
 function setup(options: Partial<FeedOptions> = {}, capacity = Infinity) {
 	const tree = new Tree({
-		version: 4,
+		version: 1,
 		crs: 'EPSG:25832',
 		height: 'DVR90',
 		leaf: LEAF,
 		roots: [{ ...ROOT, idx: 'root.idx' }],
 		extent: { e: [E, E + 500], n: [N, N + 500], h: [0, 5] },
-		attribution: { retrieved: '2026-10-08', epoch: 'test' }
+		extra: {}
 	});
 	const root = tree.add(unit(ROOT), 'root.idx');
 	const loader = new FakeLoader();

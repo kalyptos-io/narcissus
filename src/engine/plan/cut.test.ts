@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { LEAF, PAGE_SIDE, slots } from '../../format/spec.ts';
+import { LEAF, PAGE_SIDE, type UnitKey } from '../../format/index.ts';
+import { slots } from '../gpu/layout.ts';
 import { view as viewMatrix } from '../math/mat4.ts';
-import type { UnitKey } from '../../format/types.ts';
 import { unit } from '../world/test-tree.ts';
 import { Tree, type PageNode } from '../world/tree.ts';
 import { HOLD, MARGIN, Planner, type Plan, type PlanOptions, type View } from './cut.ts';
@@ -18,13 +18,13 @@ const rad = Math.PI / 180;
 function rooted(root: UnitKey, count = COUNT): Tree {
 	const side = LEAF * 2 ** root.level;
 	const tree = new Tree({
-		version: 4,
+		version: 1,
 		crs: 'EPSG:25832',
 		height: 'DVR90',
 		leaf: LEAF,
 		roots: [{ ...root, idx: 'root.idx' }],
 		extent: { e: [root.e, root.e + side], n: [root.n, root.n + side], h: [0, 5] },
-		attribution: { retrieved: '2026-10-08', epoch: 'test' }
+		extra: {}
 	});
 	tree.add(unit(root, { count, extra: 3 }), 'root.idx');
 	return tree;

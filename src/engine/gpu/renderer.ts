@@ -1,6 +1,6 @@
 // one frame on the gpu: cull, project, sort, raster, posts, present
 
-import { FRAME_UNIFORM_BYTES, LOW_PASS, PLUGIN_VEC4S, WORK } from '../../format/spec.ts';
+import { FRAME_UNIFORM_BYTES, LOW_PASS, PLUGIN_VEC4S, WORK } from './layout.ts';
 import { multiply } from '../math/mat4.ts';
 import type { Frame, Post, PostPass, Shade } from '../plugin.ts';
 import { frameBuffers, type FrameBuffers } from './buffers.ts';

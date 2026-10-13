@@ -48,13 +48,15 @@ export interface WorldRoot extends UnitKey {
 }
 
 export interface World {
-	version: 4;
+	version: 1;
+	/** names of the horizontal system and the height datum; a reader does not interpret them */
 	crs: string;
 	height: string;
 	leaf: number;
 	roots: WorldRoot[];
 	extent: { e: [number, number]; n: [number, number]; h: [number, number] };
-	attribution: { retrieved: string; epoch: string };
+	/** the members of world.json a reader does not know, as written */
+	extra: Record<string, unknown>;
 }
 
 /** a page decoded for the pool, colour corrected */

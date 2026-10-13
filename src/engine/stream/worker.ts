@@ -1,7 +1,7 @@
 // a stream worker: fetch, cache, inflate, decode; see jobs.ts
 
 import type { Cache } from '../../ports.ts';
-import type { Col, DecodedPage, Idx } from '../../format/types.ts';
+import type { Col, DecodedPage, Idx } from '../../format/index.ts';
 import { http } from '../../adapters/http.ts';
 import { loadBatch, loadIdx, type Sources } from './jobs.ts';
 import type { LoaderOptions } from './loader.ts';

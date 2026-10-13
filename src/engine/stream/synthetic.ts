@@ -1,10 +1,9 @@
-// a deterministic world over denmark, built in memory on request
+// a deterministic world, built in memory on request
 
 import type { Fetch } from '../../ports.ts';
-import type { Idx, PageRow, UnitKey, World } from '../../format/types.ts';
-import { contentName, encodeIdx, encodePage, mulberry32 } from '../../format/encode.ts';
-import { parseUnitPath, unitPath } from '../../format/idx.ts';
 import {
+	parseUnitPath,
+	unitPath,
 	BASE_PLANES,
 	C0,
 	LEAF,
@@ -12,8 +11,13 @@ import {
 	PAGE_HEADER,
 	PAGE_SIDE,
 	ROW_BYTES,
-	SH_COEFFS
-} from '../../format/spec.ts';
+	SH_COEFFS,
+	VERSION,
+	type Idx,
+	type PageRow,
+	type UnitKey
+} from '../../format/index.ts';
+import { contentName, encodeIdx, encodePage, mulberry32 } from '../../format/encode.ts';
 import { httpError } from '../../adapters/http.ts';
 
 interface Page {
@@ -79,14 +83,13 @@ const text = new TextEncoder();
 
 const ROOTS: UnitKey[] = [5120000, 6144000].map((n) => ({ level: TOP, e: 0, n }));
 
-const WORLD: World = {
-	version: 4,
-	crs: 'EPSG:25832',
-	height: 'DVR90',
+const WORLD = {
+	version: VERSION,
+	crs: 'synthetic',
+	height: 'synthetic',
 	leaf: LEAF,
 	roots: ROOTS.map((key) => ({ ...key, idx: unitPath(key, nameOf(key, 'idx'), 'idx') })),
-	extent: { e: [440000, 900000], n: [6050000, 6410000], h: [0, 80] },
-	attribution: { retrieved: '2026-10-01', epoch: 'synthetic' }
+	extent: { e: [440000, 900000], n: [6050000, 6410000], h: [0, 80] }
 };
 
 const WORLD_JSON = text.encode(JSON.stringify(WORLD));

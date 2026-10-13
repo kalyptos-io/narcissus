@@ -1,7 +1,7 @@
 // the cut as drawn pages and quadrant opacities, cross-fading where it changes
 
-import { PAGE_SIDE, slots } from '../../format/spec.ts';
-import type { PageRow } from '../../format/types.ts';
+import { PAGE_SIDE, type PageRow } from '../../format/index.ts';
+import { slots } from '../gpu/layout.ts';
 import type { Drawn } from '../types.ts';
 import type { PageNode } from '../world/tree.ts';
 

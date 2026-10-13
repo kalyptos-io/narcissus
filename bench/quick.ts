@@ -10,7 +10,7 @@ export interface Options {
 	budget: number;
 	viewDistance: number;
 	sky: [number, number, number];
-	/** synthetic draws a generated Denmark and fetches nothing */
+	/** synthetic draws a generated world and fetches nothing */
 	source: 'http' | 'synthetic';
 	/** a remote world.json to stream instead of the served world */
 	world?: string;

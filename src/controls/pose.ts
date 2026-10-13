@@ -1,6 +1,6 @@
 import type { Camera, World } from '../engine/index.ts';
 
-/** EPSG:25832 easting and northing, DVR90 height, metres */
+/** easting, northing and height in world coordinates, metres */
 export interface Point {
 	e: number;
 	n: number;
@@ -79,7 +79,7 @@ export function opening({ leaf, roots, extent }: Pick<World, 'leaf' | 'roots' | 
 	return best;
 }
 
-/** reads ?cam=E,N,H,yaw,pitch,dist or ?at=E,N (guldmund's --at), which takes its height from ground; null when neither is valid */
+/** reads ?cam=E,N,H,yaw,pitch,dist or ?at=E,N, which takes its height from ground; null when neither is valid */
 export function parsePose(
 	params: Pick<URLSearchParams, 'get'>,
 	ground: (e: number, n: number) => number

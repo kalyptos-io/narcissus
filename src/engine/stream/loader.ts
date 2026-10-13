@@ -1,6 +1,6 @@
 // the main thread's side of the stream workers
 
-import type { Idx } from '../../format/types.ts';
+import type { Idx } from '../../format/index.ts';
 import type { Batch } from './scheduler.ts';
 import type { Loaded, Message, Reply } from './worker.ts';
 

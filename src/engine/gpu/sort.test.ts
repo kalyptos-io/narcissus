@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { WORK } from '../../format/spec.ts';
+import { WORK } from './layout.ts';
 import { frameBuffers } from './buffers.ts';
 import { Sort } from './sort.ts';
 import { readBuffer, testDevice } from './test-device.ts';
