@@ -51,8 +51,8 @@ function newest(dir) {
 	return time;
 }
 const built = existsSync(stamp) ? Number(readFileSync(stamp, 'utf8')) : 0;
-// all of src/lib, since the page imports camera code besides the engine
-const changed = Math.max(newest(join(repo, 'src/lib')), newest(bench));
+// all of src, since the page imports the controls besides the engine
+const changed = Math.max(newest(join(repo, 'src')), newest(bench));
 if (changed > built || !existsSync(join(site, 'quick.html'))) {
 	const started = Date.now();
 	await build({

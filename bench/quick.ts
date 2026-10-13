@@ -1,7 +1,7 @@
 // frames come from engine.step(), not animation frames, so vsync and window throttling stay out
 
-import { createEngine, type Engine, type StepReport } from '#lib/engine/index.ts';
-import { parsePose, viewOf, type Pose } from '#lib/camera/pose.ts';
+import { createEngine, type Engine, type StepReport } from '../src/engine/index.ts';
+import { parsePose, viewOf, type Pose } from '../src/controls/pose.ts';
 
 export interface Options {
 	/** poses as e,n,h,yaw,pitch,dist */

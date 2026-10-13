@@ -6,7 +6,7 @@ import { createSecureServer } from 'node:http2';
 import { extname, join, normalize } from 'node:path';
 import { pipeline } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { byteRange } from '../src/lib/range.ts';
+import { byteRange } from './range.ts';
 
 /** @typedef {{ rttMs: number, mbps: number, served: [number, number][] }} Link */
 /** @typedef {(req: { url?: string, headers: { range?: string } }, res: any) => unknown} Handler */
