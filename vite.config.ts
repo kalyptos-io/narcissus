@@ -18,6 +18,8 @@ export default defineConfig({
 	},
 	test: {
 		expect: { requireAssertions: true },
+		// ci has a software gpu, where a pipeline can take seconds to compile
+		testTimeout: 30_000,
 		include: ['src/**/*.test.ts', 'bench/**/*.test.ts']
 	}
 });
