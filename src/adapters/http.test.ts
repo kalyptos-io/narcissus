@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Missing } from '../ports.ts';
 import { http } from './http.ts';
 
 const file = new Uint8Array(Array.from({ length: 32 }, (_, k) => k));
@@ -48,9 +49,16 @@ describe('http', () => {
 		expect(calls[0].signal).toBe(signal);
 	});
 
-	it('throws an error naming the status and url for any other status', async () => {
+	it('throws Missing for a 404', async () => {
 		serve(false, 404);
-		const url = 'https://w/gone.pack';
-		await expect(http(url, [0, 1])).rejects.toThrow(/404.*w\/gone\.pack/);
+		await expect(http('https://w/gone.pack', [0, 1])).rejects.toBeInstanceOf(Missing);
+	});
+
+	it('throws an error naming the status and url for any other status', async () => {
+		serve(false, 503);
+		const url = 'https://w/down.pack';
+		const error = await http(url, [0, 1]).catch((e: unknown) => e);
+		expect(error).not.toBeInstanceOf(Missing);
+		expect((error as Error).message).toMatch(/503.*w\/down\.pack/);
 	});
 });

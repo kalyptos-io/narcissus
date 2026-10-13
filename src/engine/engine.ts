@@ -30,7 +30,11 @@ export interface EngineOptions {
 	/** display rgb 0..1 behind the splats */
 	sky: readonly [number, number, number];
 	cache?: 'opfs' | 'memory' | 'none';
-	source?: 'http' | 'synthetic';
+	/**
+	 * where the bytes come from: http, the generated world of the benches, or the page's own Fetch,
+	 * which runs on the main thread
+	 */
+	source?: 'http' | 'synthetic' | Fetch;
 	/** no animation loop: frames come only from step(), for benches */
 	manual?: boolean;
 }
@@ -96,8 +100,13 @@ export async function createEngine(
 	// persisted storage keeps the page cache out of the browser's eviction; best effort
 	if ((options.cache ?? 'opfs') === 'opfs') void navigator.storage?.persist().catch(() => false);
 	// only benches draw the synthetic world, so its generator stays out of the viewer's bundle
+	const { source = 'http' } = options;
 	const fetch =
-		options.source === 'synthetic' ? (await import('./stream/synthetic.ts')).synthetic() : http;
+		source === 'synthetic'
+			? (await import('./stream/synthetic.ts')).synthetic()
+			: source === 'http'
+				? http
+				: source;
 	return new GpuEngine(canvas, gpu, context, options, fetch);
 }
 

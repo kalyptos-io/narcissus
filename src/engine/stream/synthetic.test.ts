@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Fetch } from '../../ports.ts';
+import { Missing, type Fetch } from '../../ports.ts';
 import {
 	parseIdx,
 	unitPath,
@@ -133,14 +133,15 @@ describe('synthetic', () => {
 		expect(inside(coarse, root.rows[0].box)).toBe(true);
 	});
 
-	it('rejects a wrong hash, an unknown unit and a col with http 404', async () => {
+	it('rejects a wrong hash, an unknown unit and a col with Missing', async () => {
 		const fetch = synthetic();
 		const { idx } = (await world(fetch)).roots[1];
-		const missing = /^http 404 /;
 		const wrong = idx.replace(/[0-9a-f]{16}/, '0123456789abcdef');
-		await expect(fetch(BASE + wrong, null)).rejects.toThrow(missing);
-		await expect(fetch(BASE + 'u/0/0/0.0123456789abcdef.idx', null)).rejects.toThrow(missing);
-		await expect(fetch(BASE + idx.replace(/idx$/, 'col'), null)).rejects.toThrow(missing);
+		await expect(fetch(BASE + wrong, null)).rejects.toBeInstanceOf(Missing);
+		await expect(fetch(BASE + 'u/0/0/0.0123456789abcdef.idx', null)).rejects.toBeInstanceOf(
+			Missing
+		);
+		await expect(fetch(BASE + idx.replace(/idx$/, 'col'), null)).rejects.toBeInstanceOf(Missing);
 	});
 
 	it('rejects a pack range that cuts a page', async () => {

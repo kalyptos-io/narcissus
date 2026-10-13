@@ -1,6 +1,8 @@
 // the main thread's side of the stream workers
 
+import { Missing, type Fetch } from '../../ports.ts';
 import type { Idx } from '../../format/index.ts';
+import { answering, type Ask } from './remote.ts';
 import type { Batch } from './scheduler.ts';
 import type { Loaded, Message, Reply } from './worker.ts';
 
@@ -9,7 +11,8 @@ export interface LoaderOptions {
 	base: string;
 	workers: number;
 	cache: 'opfs' | 'memory' | 'none';
-	source: 'http' | 'synthetic';
+	/** a Fetch stays on the main thread, where the workers ask it by message */
+	source: 'http' | 'synthetic' | Fetch;
 }
 
 interface Slot {
@@ -36,9 +39,23 @@ export class Loader {
 		this.#slots = Array.from({ length: shards }, (_, shard) => {
 			const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
 			const slot: Slot = { worker };
-			worker.onmessage = ({ data }: MessageEvent<Reply>) => this.#reply(data);
+			const answer =
+				typeof source === 'function'
+					? answering(source, (fetched, transfer) => worker.postMessage(fetched, transfer))
+					: undefined;
+			worker.onmessage = ({ data }: MessageEvent<Reply | Ask>) => {
+				if ('id' in data) this.#reply(data);
+				else answer?.(data);
+			};
 			worker.onerror = () => this.#fail(slot);
-			const init = { type: 'init', base, cache, source, shard, shards } satisfies Message;
+			const init = {
+				type: 'init',
+				base,
+				cache,
+				source: typeof source === 'function' ? 'page' : source,
+				shard,
+				shards
+			} satisfies Message;
 			worker.postMessage(init);
 			return slot;
 		});
@@ -101,8 +118,9 @@ export class Loader {
 		const pending = this.#pending.get(reply.id);
 		if (!pending) return;
 		if ('page' in reply) pending.page?.(reply.page);
-		else if ('error' in reply) pending.reject(new Error(reply.error));
-		else pending.resolve('value' in reply ? reply.value : undefined);
+		else if ('error' in reply) {
+			pending.reject(reply.missing ? new Missing(reply.error) : new Error(reply.error));
+		} else pending.resolve('value' in reply ? reply.value : undefined);
 	}
 
 	/** a worker that failed to load never answers */

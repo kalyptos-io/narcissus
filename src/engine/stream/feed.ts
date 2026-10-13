@@ -4,7 +4,7 @@ import { unitPath } from '../../format/index.ts';
 import type { Pool } from '../gpu/pool.ts';
 import type { Plan } from '../plan/cut.ts';
 import type { Tree, UnitNode } from '../world/tree.ts';
-import { isMissing } from '../../adapters/http.ts';
+import { Missing } from '../../ports.ts';
 import type { Loader } from './loader.ts';
 import { Scheduler, type Batch, type PageJob } from './scheduler.ts';
 import type { Loaded } from './worker.ts';
@@ -36,7 +36,7 @@ export class Feed {
 	#loader: Loader;
 	#pool: Pool;
 	#onArrive: () => void;
-	/** runs once, when an immutable file answered 404: the world was released anew and must be reopened */
+	/** runs once, when an immutable file was missing: the world was released anew and must be reopened */
 	#onStale: () => void;
 	#options: FeedOptions;
 	#scheduler: Scheduler;
@@ -217,7 +217,7 @@ export class Feed {
 	}
 
 	#fail(path: string, error: unknown): void {
-		if (isMissing(error)) {
+		if (error instanceof Missing) {
 			if (this.#stale) return;
 			this.#stale = true;
 			this.#onStale();

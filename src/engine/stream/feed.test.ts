@@ -5,7 +5,7 @@ import type { Plan } from '../plan/cut.ts';
 import { hash, unit as full } from '../world/test-tree.ts';
 import { Tree, unitKey, type PageNode, type Wanted } from '../world/tree.ts';
 import { FEED, Feed, type FeedOptions } from './feed.ts';
-import { httpError } from '../../adapters/http.ts';
+import { Missing } from '../../ports.ts';
 import type { Loader } from './loader.ts';
 import type { Batch } from './scheduler.ts';
 
@@ -249,10 +249,10 @@ describe('Feed', () => {
 		expect(loader.idxs.map(({ path }) => path)).toEqual([wanted.path, wanted.path]);
 	});
 
-	it('calls onStale once when immutable files answer 404', async () => {
+	it('calls onStale once when immutable files are missing', async () => {
 		const { tree, loader, stale, feed } = setup();
 		feed.update(plan([], tree.wanted()), NONE, 0);
-		for (const call of loader.idxs) call.reject(httpError(404, call.path));
+		for (const call of loader.idxs) call.reject(new Missing(call.path));
 		await settle();
 		expect(loader.idxs).toHaveLength(4);
 		expect(stale).toHaveBeenCalledTimes(1);
@@ -262,7 +262,7 @@ describe('Feed', () => {
 		const { tree, root, loader, feed } = setup();
 		const [first, ...rest] = tree.wanted();
 		feed.update(plan([], [first]), NONE, 0);
-		loader.idxs[0].reject(httpError(404, first.path));
+		loader.idxs[0].reject(new Missing(first.path));
 		await settle();
 		feed.update(plan(root.pages.slice(0, 2), rest), NONE, 10);
 		expect(loader.idxs).toHaveLength(1);

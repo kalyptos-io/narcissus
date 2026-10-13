@@ -1,6 +1,6 @@
 // a deterministic world, built in memory on request
 
-import type { Fetch } from '../../ports.ts';
+import { Missing, type Fetch } from '../../ports.ts';
 import {
 	parseUnitPath,
 	unitPath,
@@ -18,7 +18,6 @@ import {
 	type UnitKey
 } from '../../format/index.ts';
 import { contentName, encodeIdx, encodePage, mulberry32 } from '../../format/encode.ts';
-import { httpError } from '../../adapters/http.ts';
 
 interface Page {
 	g: number;
@@ -94,7 +93,7 @@ const WORLD = {
 
 const WORLD_JSON = text.encode(JSON.stringify(WORLD));
 
-/** the synthetic world under any base; a file it does not hold rejects with http 404 */
+/** the synthetic world under any base; a file it does not hold rejects with Missing */
 export function synthetic(): Fetch {
 	return async (url, range) => {
 		if (url.endsWith('world.json')) return part(WORLD_JSON, range);
@@ -106,7 +105,7 @@ export function synthetic(): Fetch {
 			!exists(unit) ||
 			unit.hash !== nameOf(unit, ext)
 		) {
-			throw httpError(404, url);
+			throw new Missing(`no file ${url}`);
 		}
 		if (ext === 'idx') return part(await idxBytes(unit), range);
 		return packBytes(unit, range, url);
