@@ -19,11 +19,11 @@ describe('inflate', () => {
 	});
 
 	it('reads a view into a larger buffer', async () => {
-		const packed = await deflate(new TextEncoder().encode('kikkert'));
+		const packed = await deflate(new TextEncoder().encode('narcissus'));
 		const padded = new Uint8Array(packed.length + 6);
 		padded.set(packed, 3);
 		const bytes = await inflate(padded.subarray(3, 3 + packed.length));
-		expect(new TextDecoder().decode(bytes)).toBe('kikkert');
+		expect(new TextDecoder().decode(bytes)).toBe('narcissus');
 	});
 });
 

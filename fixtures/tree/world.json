@@ -1,5 +1,5 @@
 {
- "version": 4,
+ "version": 1,
  "crs": "EPSG:25832",
  "height": "DVR90",
  "leaf": 250,
@@ -24,9 +24,5 @@
    23.39,
    36.5
   ]
- },
- "attribution": {
-  "retrieved": "2026-10-03",
-  "epoch": "skraafotos2025"
  }
 }

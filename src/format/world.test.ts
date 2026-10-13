@@ -25,9 +25,9 @@ describe('parseWorld', () => {
 	});
 
 	it('keeps the members it does not know in extra', () => {
-		const attribution = { retrieved: '2026-10-03', epoch: 'skraafotos2025' };
-		const { extra } = parseWorld({ ...world, attribution, waiting: [] });
-		expect(extra).toEqual({ attribution, waiting: [] });
+		const source = { name: 'survey', retrieved: '2026-10-03' };
+		const { extra } = parseWorld({ ...world, source, waiting: [] });
+		expect(extra).toEqual({ source, waiting: [] });
 	});
 
 	it('rejects another version with a sentence that names both', () => {

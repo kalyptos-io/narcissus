@@ -3,25 +3,50 @@
 	"version": "0.0.0",
 	"description": "A WebGPU engine and tools for Guldmund Trees, streamed gaussian-splat scenes",
 	"license": "BSD-3-Clause",
-	"private": true,
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/kalyptos-io/narcissus.git"
+	},
 	"type": "module",
+	"exports": {
+		".": "./dist/index.js",
+		"./element": "./dist/element/index.js",
+		"./format": "./dist/format/index.js",
+		"./tools": "./dist/tools/index.js"
+	},
+	"types": "./dist/index.d.ts",
+	"bin": {
+		"narcissus": "./dist/cli/main.js"
+	},
+	"files": [
+		"dist",
+		"docs/format.md"
+	],
+	"publishConfig": {
+		"access": "public"
+	},
 	"scripts": {
-		"build": "vite build",
+		"build": "vite build && tsc -p tsconfig.build.json",
+		"prepack": "pnpm build",
 		"check": "tsc",
 		"lint": "prettier --check . && eslint .",
 		"format": "prettier --write .",
 		"test": "vitest --run",
+		"package": "publint && attw --pack --profile esm-only",
 		"bench": "node bench/quick.mjs",
 		"bench:drive": "node bench/drive.mjs"
 	},
 	"devDependencies": {
+		"@arethetypeswrong/cli": "^0.18.5",
 		"@eslint/js": "^10.0.1",
+		"@noble/hashes": "^2.4.0",
 		"@types/node": "^24",
 		"@webgpu/types": "^0.1.74",
 		"eslint": "^10.4.1",
 		"eslint-config-prettier": "^10.1.8",
 		"globals": "^17.6.0",
 		"prettier": "^3.8.3",
+		"publint": "^0.3.25",
 		"typescript": "^6.0.3",
 		"typescript-eslint": "^8.60.1",
 		"vite": "^8.1.5",
@@ -31,8 +56,5 @@
 	"engines": {
 		"node": ">=22.17"
 	},
-	"packageManager": "pnpm@12.8.1",
-	"dependencies": {
-		"@noble/hashes": "^2.4.0"
-	}
+	"packageManager": "pnpm@12.8.1"
 }
