@@ -58,10 +58,10 @@ export class Fader {
 			}
 		}
 		const fresh = new Set<Entry>();
-		for (const [key, [page, q]] of cover) {
+		for (const [key, page] of cover) {
 			const e = entries.get(key);
 			if (!e) {
-				const added = entry(page, q, now);
+				const added = entry(page, key % 4, now);
 				entries.set(key, added);
 				fresh.add(added);
 			} else if (e.held) {
@@ -146,11 +146,8 @@ export class Fader {
 	}
 }
 
-/** the static cover: page id * 4 + quadrant of every quadrant that draws */
-function covering(
-	cut: PageNode[],
-	resident: (id: number) => boolean
-): Map<number, [PageNode, number]> {
+/** the static cover: the page of every quadrant that draws, by page id * 4 + quadrant */
+function covering(cut: PageNode[], resident: (id: number) => boolean): Map<number, PageNode> {
 	const ends = new Set(cut);
 	const planned = new Set<PageNode>();
 	const roots: PageNode[] = [];
@@ -160,7 +157,7 @@ function covering(
 			if (!p.parent) roots.push(p);
 		}
 	}
-	const cover = new Map<number, [PageNode, number]>();
+	const cover = new Map<number, PageNode>();
 	const descend = (page: PageNode) => {
 		for (let q = 0; q < 4; q++) {
 			const child = page.children[q];
@@ -168,7 +165,7 @@ function covering(
 			if (child && resident(child.id) && planned.has(child)) {
 				descend(child);
 			} else if (child !== null || ends.has(page)) {
-				cover.set(page.id * 4 + q, [page, q]);
+				cover.set(page.id * 4 + q, page);
 			}
 		}
 	};

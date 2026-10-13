@@ -73,7 +73,7 @@ export class Planner {
 	/** when each refined page was last on screen */
 	#seen = new Map<number, number>();
 	#box = new Float64Array(6);
-	#out: Footprint = { pixels: 0, coverage: 0, weight: 1 };
+	#out: Footprint = { pixels: 0, weight: 1 };
 
 	plan(tree: Tree, view: View, resident: (id: number) => boolean, options: PlanOptions): Plan {
 		const { budget, capacity, now, predicted } = options;

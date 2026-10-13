@@ -46,7 +46,6 @@ describe('Pool', () => {
 		expect(pool.add(1, page(300), [0, 0], none)).toBe(true);
 		expect(pool.add(2, page(CLUSTER), [0, 0], none)).toBe(true);
 		expect(pool.add(3, page(2 * CLUSTER), [0, 0], none)).toBe(false);
-		expect(pool.used).toBe(300 + CLUSTER);
 		expect(pool.queued).toBe(2);
 		expect(pool.holds(1)).toBe(true);
 		expect(pool.has(1)).toBe(false);
@@ -88,7 +87,6 @@ describe('Pool', () => {
 		// page 1 is all that is uploaded and too small to make room, so it stays
 		expect(pool.add(6, page(4 * CLUSTER), [0, 0], none)).toBe(false);
 		expect(pool.holds(1)).toBe(true);
-		expect(pool.used).toBe(10 + 10 + 2 * CLUSTER);
 		pool.destroy();
 	});
 
@@ -97,9 +95,19 @@ describe('Pool', () => {
 		pool.add(1, page(2 * CLUSTER), [0, 0], none);
 		pool.remove(1);
 		expect(pool.holds(1)).toBe(false);
-		expect(pool.used).toBe(0);
 		expect(pool.queued).toBe(0);
 		expect(pool.add(2, page(2 * CLUSTER), [0, 0], () => true)).toBe(true);
+		pool.destroy();
+	});
+
+	it('holds nothing once cleared', async () => {
+		const pool = new Pool(await testDevice(), 2 * CLUSTER);
+		pool.add(1, page(CLUSTER), [0, 0], none);
+		pool.add(2, page(CLUSTER), [0, 0], none);
+		pool.upload(Infinity);
+		pool.clear();
+		expect([...pool.ids()]).toEqual([]);
+		expect(pool.add(3, page(2 * CLUSTER), [0, 0], () => true)).toBe(true);
 		pool.destroy();
 	});
 

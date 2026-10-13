@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { LEAF, PAGE_SIDE, type UnitKey } from '../../format/index.ts';
+import type { UnitKey } from '../../format/index.ts';
 import { slots } from '../gpu/layout.ts';
 import { view as viewMatrix } from '../math/mat4.ts';
-import { unit } from '../world/test-tree.ts';
-import { Tree, type PageNode } from '../world/tree.ts';
+import { unit, world } from '../world/test-tree.ts';
+import { square, Tree, type PageNode } from '../world/tree.ts';
 import { HOLD, MARGIN, Planner, type Plan, type PlanOptions, type View } from './cut.ts';
 import { FADE_MS, Fader } from './draw.ts';
 import { footprint } from './footprint.ts';
@@ -16,16 +16,7 @@ const rad = Math.PI / 180;
 
 /** a world of one root with its extra levels down to one page, nothing below it added yet */
 function rooted(root: UnitKey, count = COUNT): Tree {
-	const side = LEAF * 2 ** root.level;
-	const tree = new Tree({
-		version: 1,
-		crs: 'EPSG:25832',
-		height: 'DVR90',
-		leaf: LEAF,
-		roots: [{ ...root, idx: 'root.idx' }],
-		extent: { e: [root.e, root.e + side], n: [root.n, root.n + side], h: [0, 5] },
-		extra: {}
-	});
+	const tree = new Tree(world(root));
 	tree.add(unit(root, { count, extra: 3 }), 'root.idx');
 	return tree;
 }
@@ -57,11 +48,6 @@ function settle(
 		for (const wanted of plan.idx) tree.add(unit(wanted, { count: COUNT }), wanted.path);
 	}
 	throw new Error('the plan did not settle');
-}
-
-function square(page: PageNode): [number, number, number] {
-	const side = PAGE_SIDE * 2 ** page.g;
-	return [page.unit.e + page.row.i * side, page.unit.n + page.row.j * side, side];
 }
 
 function at(cut: PageNode[], e: number, n: number): PageNode {

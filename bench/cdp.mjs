@@ -52,10 +52,12 @@ export const within = async (what, ms, promise) => {
 	return Promise.race([promise, timeout]);
 };
 
-// null when a browser answers on port already; the profile and chrome.log go in dir; mode is the
-// display's WIDTHxHEIGHT@RATEHz, which the kiosk window fills
-/** @type {(port: number, dir: string, extra: string[], mode?: string) => Promise<ChildProcess | null>} */
-export const launch = async (port, dir, extra, mode = '1920x1080@100Hz') => {
+// the display's WIDTHxHEIGHT@RATEHz, which the kiosk window fills
+const MODE = '1920x1080@100Hz';
+
+// null when a browser answers on port already; the profile and chrome.log go in dir
+/** @type {(port: number, dir: string, extra: string[]) => Promise<ChildProcess | null>} */
+export const launch = async (port, dir, extra) => {
 	if (await listening(port)) return null;
 	const log = join(dir, 'chrome.log');
 	// the mode is set before chrome starts, so its window opens at the display size
@@ -65,7 +67,7 @@ export const launch = async (port, dir, extra, mode = '1920x1080@100Hz') => {
 		'sh',
 		'-c',
 		'wlr-randr --output HEADLESS-1 --custom-mode "$0" && exec "$@"',
-		mode,
+		MODE,
 		CHROME,
 		`--remote-debugging-port=${port}`,
 		'--remote-debugging-address=127.0.0.1',

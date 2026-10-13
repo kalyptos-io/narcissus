@@ -77,7 +77,6 @@ export class Controls {
 	#listeners = new Set<() => void>();
 	#offFrame: () => void;
 	#last: number | null = null;
-	#dead = false;
 
 	constructor(
 		canvas: HTMLCanvasElement,
@@ -129,7 +128,6 @@ export class Controls {
 	}
 
 	destroy(): void {
-		this.#dead = true;
 		this.#abort.abort();
 		this.#offFrame();
 		this.#listeners.clear();
@@ -182,7 +180,7 @@ export class Controls {
 
 	#pick = async (e: MouseEvent) => {
 		const hit = await this.#engine.pick(e.offsetX, e.offsetY);
-		if (!hit || this.#dead) return;
+		if (!hit || this.#abort.signal.aborted) return;
 		const [he, hn, hh] = hit;
 		this.#target = clampPose(
 			lookAt(cameraOf(this.#current), { e: he, n: hn, h: hh }),
@@ -200,7 +198,7 @@ export class Controls {
 	}
 
 	#wake() {
-		if (!this.#dead) this.#engine.requestFrame();
+		if (!this.#abort.signal.aborted) this.#engine.requestFrame();
 	}
 
 	#tick = (time: number) => {

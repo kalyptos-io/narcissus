@@ -1,5 +1,5 @@
-import { KEY_BITS, WORK } from './layout.ts';
-import type { FrameBuffers } from './buffers.ts';
+import { groups, KEY_BITS, WORK } from './layout.ts';
+import { bufferLayout, type FrameBuffers } from './buffers.ts';
 import common from './common.wgsl?raw';
 import code from './sort.wgsl?raw';
 
@@ -8,7 +8,6 @@ const BLOCK = 1024;
 const CHUNK = 64;
 const DIGITS = 256;
 const PASSES = KEY_BITS / 8;
-const GROUPS_X = 65535;
 // uniform binding offsets must be multiples of 256 bytes
 const PARAMS_STRIDE = 256;
 const PARAMS_BYTES = 32;
@@ -20,7 +19,6 @@ export class Sort {
 	readonly values: number;
 	/** scratch bytes */
 	readonly bytes: number;
-	#state: GPUBuffer;
 	#owned: GPUBuffer[];
 	#prepare: GPUComputePipeline;
 	#kernels: GPUComputePipeline[];
@@ -39,7 +37,7 @@ export class Sort {
 		const blocks = Math.max(1, Math.ceil(capacity / BLOCK));
 		// fixed sizes: chrome validates indirect args on its gpu process's main thread, a cost every
 		// dispatch; kernels skip the blocks and chunks past the count
-		this.#blocks = [Math.min(blocks, GROUPS_X), Math.ceil(blocks / GROUPS_X)];
+		this.#blocks = groups(blocks);
 		this.#chunks = Math.ceil(blocks / CHUNK);
 		const make = (label: string, size: number, usage: number) =>
 			device.createBuffer({ label, size, usage });
@@ -50,9 +48,9 @@ export class Sort {
 			GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
 		);
 		const hist = make('sort histograms', blocks * DIGITS * 4, storage);
-		const sums = make('sort chunk sums', Math.ceil(blocks / CHUNK) * DIGITS * 4, storage);
-		this.#state = make('sort state', 12, storage);
-		this.#owned = [params, hist, sums, this.#state];
+		const sums = make('sort chunk sums', this.#chunks * DIGITS * 4, storage);
+		const state = make('sort state', 12, storage);
+		this.#owned = [params, hist, sums, state];
 		this.bytes = this.#owned.reduce((sum, b) => sum + b.size, 0);
 
 		const words = new Uint32Array((PASSES * PARAMS_STRIDE) / 4);
@@ -70,16 +68,13 @@ export class Sort {
 			visibility: GPUShaderStage.COMPUTE,
 			buffer: { type }
 		});
-		const main = device.createBindGroupLayout({
-			label: 'sort',
-			entries: [
-				entry(0, 'uniform'),
-				entry(1, 'storage'),
-				entry(2, 'storage'),
-				entry(3, 'storage'),
-				entry(4, 'read-only-storage')
-			]
-		});
+		const main = bufferLayout(device, 'sort', GPUShaderStage.COMPUTE, [
+			'uniform',
+			'storage',
+			'storage',
+			'storage',
+			'read-only-storage'
+		]);
 		const prepare = device.createBindGroupLayout({
 			label: 'sort prepare',
 			entries: [entry(0, 'uniform'), entry(5, 'storage'), entry(6, 'storage')]
@@ -106,7 +101,7 @@ export class Sort {
 			layout: prepare,
 			entries: [
 				{ binding: 0, resource: uniform(0) },
-				{ binding: 5, resource: { buffer: this.#state } },
+				{ binding: 5, resource: { buffer: state } },
 				{ binding: 6, resource: { buffer: buffers.work } }
 			]
 		});
@@ -119,7 +114,7 @@ export class Sort {
 					{ binding: 1, resource: { buffer: buffers.sort } },
 					{ binding: 2, resource: { buffer: hist } },
 					{ binding: 3, resource: { buffer: sums } },
-					{ binding: 4, resource: { buffer: this.#state } }
+					{ binding: 4, resource: { buffer: state } }
 				]
 			})
 		);

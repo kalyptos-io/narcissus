@@ -22,15 +22,13 @@ describe('footprint', () => {
 		expect(projected(box(20)).pixels).toBe(0);
 		expect(projected(box(0, 20)).pixels).toBe(0);
 		expect(projected(box(9)).pixels).toBeGreaterThanOrEqual(projected(box()).pixels);
-		expect(projected(box(9)).coverage).toBeLessThan(projected(box()).coverage);
 		expect(projected(box(9)).weight).toBeLessThan(projected(box()).weight);
 		expect(projected(box(-9)).weight).toBeCloseTo(projected(box(9)).weight);
 	});
 
-	it('measures visible contribution correctly when a region surrounds the camera', () => {
+	it('covers at least the screen when a region surrounds the camera', () => {
 		const m = identity();
-		const projected = footprint(box(0, -1), m, 1000, 1000, 1, 0.1, 1000);
-		expect(projected.pixels * projected.coverage).toBeCloseTo(1_000_000);
+		expect(footprint(box(0, -1), m, 1000, 1000, 1, 0.1, 1000).pixels).toBeGreaterThan(1_000_000);
 		expect(footprint(box(12), m, 1000, 1000, 1, 0.1, 1000).pixels).toBe(0);
 	});
 

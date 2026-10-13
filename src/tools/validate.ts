@@ -127,8 +127,9 @@ async function checkUnit(source: Fetch, base: string, unit: Unit, deep: boolean,
 		};
 		const table = await packTable(read, idx.packSize);
 		for (const row of idx.rows) {
-			const page = `page ${row.g}/${row.i}/${row.j}`;
-			const listed = table.get(`${row.g}/${row.i}/${row.j}`);
+			const key = `${row.g}/${row.i}/${row.j}`;
+			const page = `page ${key}`;
+			const listed = table.get(key);
 			if (!listed || listed.offset !== row.offset || listed.length !== row.length) {
 				fault(pack, `does not list ${page} as its .idx does`);
 			} else if (whole) {

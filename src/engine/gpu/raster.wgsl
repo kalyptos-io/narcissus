@@ -23,8 +23,7 @@ fn corner(v: u32, i: u32) -> Corner {
 	let major = unpack2x16float(p.axes.x);
 	let minor = unpack2x16float(p.axes.y);
 	let colour = vec4f(unpack2x16float(p.colour.x), unpack2x16float(p.colour.y));
-	// out to where the gaussian falls under 1/255, at most 3 sigmas
-	let r = min(3.0, sqrt(max(2.0 * log(255.0 * colour.a), 0.0)));
+	let r = reach(colour.a);
 	let uv = vec2f(f32(v & 1u), f32(v >> 1u)) * 2.0 - 1.0;
 	let pixel = p.centre + (major * uv.x + minor * uv.y) * r;
 	return Corner(vec4f(pixel / frame.viewport * 2.0 - 1.0, 0.0, 1.0), uv * r, colour);

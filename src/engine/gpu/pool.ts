@@ -18,7 +18,6 @@ const MERGE_WORDS = 1024;
 interface Entry {
 	/** null once uploaded */
 	page: DecodedPage | null;
-	count: number;
 	/** cluster c of the page sits in slots[c] */
 	slots: number[];
 	/** page-table slot */
@@ -27,9 +26,6 @@ interface Entry {
 	base: [number, number, number];
 	factors: number;
 }
-
-// decoded pages arrive transferred from workers, never on shared memory
-const owned = (words: Uint32Array) => words as Uint32Array<ArrayBuffer>;
 
 /** word ranges of a cpu mirror changed since the last flush */
 class Dirty {
@@ -81,7 +77,6 @@ export class Pool {
 	#taken: Uint8Array;
 	#free: number;
 	#tables: number[];
-	#used = 0;
 	#origin: [number, number, number] = [0, 0, 0];
 	// mirrors of pages and clusters, flushed once a draw: a write per change floods the gpu process
 	#table: Uint32Array<ArrayBuffer>;
@@ -117,11 +112,6 @@ export class Pool {
 	/** clusters the pool can hold */
 	get slots(): number {
 		return this.capacity / CLUSTER;
-	}
-
-	/** splats held, queued or uploaded */
-	get used(): number {
-		return this.#used;
 	}
 
 	get bytes(): number {
@@ -162,14 +152,12 @@ export class Pool {
 		const o = PARAMS.origin;
 		this.#entries.set(id, {
 			page,
-			count: page.count,
 			slots: this.#take(need),
 			table: this.#tables.pop()!,
 			base: [page.params[o] + unit[0], page.params[o + 1] + unit[1], page.params[o + 2]],
 			factors: 0
 		});
 		this.#queue.add(id);
-		this.#used += page.count;
 		return true;
 	}
 
@@ -178,12 +166,15 @@ export class Pool {
 		if (!entry) return;
 		this.#entries.delete(id);
 		this.#queue.delete(id);
-		this.#used -= entry.count;
 		for (const slot of entry.slots) this.#taken[slot] = 0;
 		this.#free += entry.slots.length;
 		this.#tables.push(entry.table);
 		// the gpu list may name its clusters until the next draw
 		if (entry.page === null && entry.factors !== 0) this.#setFactors(entry, 0);
+	}
+
+	clear(): void {
+		for (const id of this.#entries.keys()) this.remove(id);
 	}
 
 	/** pages queued and not yet uploaded */
@@ -280,14 +271,14 @@ export class Pool {
 			queue.writeBuffer(
 				this.geometry,
 				record * GEOMETRY_WORDS * 4,
-				owned(page.geometry),
+				page.geometry,
 				first * GEOMETRY_WORDS,
 				splats * GEOMETRY_WORDS
 			);
 			queue.writeBuffer(
 				this.colour,
 				record * COLOUR_WORDS * 4,
-				owned(page.colour),
+				page.colour,
 				first * COLOUR_WORDS,
 				splats * COLOUR_WORDS
 			);

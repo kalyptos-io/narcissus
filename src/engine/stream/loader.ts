@@ -36,8 +36,7 @@ export class Loader {
 	#id = 0;
 
 	constructor(options: LoaderOptions) {
-		const { base, cache, source } = options;
-		const shards = Math.max(1, options.workers);
+		const { base, cache, source, workers: shards } = options;
 		this.#slots = Array.from({ length: shards }, (_, shard) => {
 			const worker = new StreamWorker();
 			const slot: Slot = { worker };

@@ -39,8 +39,8 @@ export async function trace(/** @type {number} */ port) {
 
 /**
  * frames of the page that set performance marks `${name}:start` and `${name}:end`, between them:
- * shown per second, the wait for the first shown frame and the longest wait, dropped, and the share of the
- * time the gpu process's main thread was busy, which every tab's drawing queues behind
+ * shown per second, the longest wait for one, dropped, and the share of the time the gpu process's
+ * main thread was busy, which every tab's drawing queues behind
  * @param {TraceEvent[]} events
  * @param {string} name
  */
@@ -85,7 +85,6 @@ export function shown(events, name) {
 	const waits = points.slice(1).map((t, i) => t - points[i]);
 	return {
 		fps: times.length / ((to - from) / 1e6),
-		firstMs: ((times[0] ?? to) - from) / 1000,
 		maxGapMs: Math.max(0, ...waits) / 1000,
 		dropped,
 		gpuMainShare: busy / (to - from)

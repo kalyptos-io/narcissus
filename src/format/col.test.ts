@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { Col } from './types.ts';
 import { parseCol, sampleCol } from './col.ts';
-import { encodeCol } from './encode.ts';
-import { deflate } from './inflate.ts';
+import { encodeCol, wrap } from './encode.ts';
+import { COL_MAGIC } from './spec.ts';
 
 function grid(n: number, f: (c: number, i: number, j: number) => number): Col {
 	const values = new Float32Array(12 * n * n);
@@ -38,11 +38,9 @@ describe('parseCol', () => {
 	it('rejects a body cut short of its nodes', async () => {
 		const body = new Uint8Array(60 + 12 * 9);
 		new DataView(body.buffer).setUint16(0, 4, true);
-		const z = await deflate(body);
-		const file = new Uint8Array(8 + z.length);
-		file.set([71, 77, 67, 76, 1, 0, 0, 0]);
-		file.set(z, 8);
-		await expect(parseCol(file)).rejects.toThrow('.col holds 168 bytes, 4 nodes need 252');
+		await expect(parseCol(await wrap(body, COL_MAGIC))).rejects.toThrow(
+			'.col holds 168 bytes, 4 nodes need 252'
+		);
 	});
 });
 

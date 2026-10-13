@@ -6,27 +6,13 @@ function frames(q: Quality, ms: number, seconds: number, start = 0) {
 }
 
 describe('quality', () => {
-	it('uses the requested budget immediately with no ceiling of its own', () => {
+	it('lowers the resolution under slow frames and restores it under fast ones', () => {
 		const q = new Quality();
-		q.configure(16_000_000);
-		expect(q.budget).toBe(16_000_000);
-		frames(q, 10, 25);
-		expect(q.budget).toBe(16_000_000);
-		q.configure(750_000);
-		expect(q.budget).toBe(750_000);
-	});
-
-	it('adapts resolution without walking the detail budget through levels', () => {
-		const q = new Quality();
-		q.configure(2_000_000);
 		frames(q, 30, 2.5);
 		expect(q.scale).toBe(0.85);
-		expect(q.budget).toBe(2_000_000);
 		frames(q, 30, 8, 3000);
 		expect(q.scale).toBe(0.85);
-		expect(q.budget).toBe(2_000_000);
 		frames(q, 10, 5.5, 12000);
-		expect(q.budget).toBe(2_000_000);
 		expect(q.scale).toBe(1);
 	});
 
@@ -38,16 +24,6 @@ describe('quality', () => {
 		q.sample(100, 201_016, true);
 		frames(q, 10, 1, 201_032);
 		expect(q.scale).toBe(1);
-		expect(q.budget).toBe(2_000_000);
-	});
-
-	it('does not undo memory constraints with timing samples or unchanged settings', () => {
-		const q = new Quality();
-		q.configure(4_000_000);
-		q.constrain(1_000_000);
-		frames(q, 5, 30);
-		q.configure(4_000_000);
-		expect(q.budget).toBe(1_000_000);
 	});
 
 	it('caps canvas area using its own size and the quality scale', () => {

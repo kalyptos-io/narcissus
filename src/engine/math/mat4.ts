@@ -55,15 +55,17 @@ export function perspective<T extends Mat4>(
 	return out;
 }
 
+// holds a product until it is whole, since out may be a or b
+const scratch = new Float64Array(16);
+
 export function multiply<T extends Mat4>(out: T, a: Mat4, b: Mat4): T {
-	const r = new Float64Array(16);
 	for (let c = 0; c < 4; c++)
 		for (let row = 0; row < 4; row++) {
 			let s = 0;
 			for (let k = 0; k < 4; k++) s += a[k * 4 + row] * b[c * 4 + k];
-			r[c * 4 + row] = s;
+			scratch[c * 4 + row] = s;
 		}
-	out.set(r);
+	out.set(scratch);
 	return out;
 }
 

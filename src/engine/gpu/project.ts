@@ -1,11 +1,9 @@
 import type { Shade } from '../plugin.ts';
 import { bufferGroup, bufferLayout, type FrameBuffers } from './buffers.ts';
 import common from './common.wgsl?raw';
+import { groups } from './layout.ts';
 import source from './project.wgsl?raw';
 import type { Pool } from './pool.ts';
-
-/** workgroups a dispatch row holds, as in project.wgsl */
-const GROUPS_X = 65535;
 
 /**
  * one workgroup per visible cluster: decode, fade, sh1, shade hooks, project, drop what cannot
@@ -61,7 +59,7 @@ export class Project {
 		pass.setPipeline((this.#pipeline ??= this.#build()));
 		pass.setBindGroup(0, this.#group);
 		// chrome validates indirect args on its gpu process's main thread, a cost every frame
-		pass.dispatchWorkgroups(Math.min(listed, GROUPS_X), Math.ceil(listed / GROUPS_X));
+		pass.dispatchWorkgroups(...groups(listed));
 		pass.end();
 	}
 

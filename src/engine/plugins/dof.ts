@@ -20,9 +20,8 @@ export function dof(focus: () => number, strength: () => number = () => 1): Plug
 					size: 32,
 					usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
 				});
+				const binding = { buffer: uniforms };
 				const values = new Float32Array(8);
-				let sources: [GPUTextureView, GPUTextureView] | undefined;
-				let group: GPUBindGroup | undefined;
 				return {
 					run(encoder, frame, colour, depth, target) {
 						const distance = focus();
@@ -35,19 +34,7 @@ export function dof(focus: () => number, strength: () => number = () => 1): Plug
 							(RADIUS * height * strength()) / 540
 						]);
 						device.queue.writeBuffer(uniforms, 0, values);
-						if (colour !== sources?.[0] || depth !== sources[1] || !group) {
-							sources = [colour, depth!];
-							group = device.createBindGroup({
-								label: 'dof',
-								layout: pass.layout,
-								entries: [
-									{ binding: 0, resource: colour },
-									{ binding: 1, resource: depth! },
-									{ binding: 2, resource: { buffer: uniforms } }
-								]
-							});
-						}
-						pass.encode(encoder, group, target);
+						pass.encode(encoder, [colour, depth!, binding], target);
 					},
 					destroy() {
 						uniforms.destroy();

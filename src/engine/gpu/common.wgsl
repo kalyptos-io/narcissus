@@ -1,6 +1,12 @@
 // shared by every engine pass; sizes and word offsets mirror format/spec.ts
 
 const KEY_BITS: u32 = 24u;
+// word offsets in the work buffer, layout.ts WORK
+const WORK_VISIBLE: u32 = 0u;
+const WORK_PROJECTED: u32 = 4u;
+const WORK_LIST: u32 = 16u;
+// workgroups a dispatch row holds
+const GROUPS_X: u32 = 65535u;
 const C0: f32 = 0.28209479177387814;
 const C1: f32 = 0.4886025119029199;
 
@@ -77,4 +83,9 @@ struct Splat {
 // the byte of word at bit, 0 to 1
 fn fraction(word: u32, bit: u32) -> f32 {
 	return f32(extractBits(word, bit, 8u)) / 255.0;
+}
+
+// sigmas out to where a gaussian of opacity falls under 1/255, at most 3; the quad raster draws
+fn reach(opacity: f32) -> f32 {
+	return min(3.0, sqrt(max(2.0 * log(255.0 * opacity), 0.0)));
 }

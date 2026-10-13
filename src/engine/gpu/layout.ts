@@ -23,6 +23,14 @@ export const WORK = {
 	list: 16
 };
 
+/** workgroups a dispatch row holds, common.wgsl's GROUPS_X */
+const GROUPS_X = 65535;
+/** x and y of a dispatch of count workgroups, which the shader numbers row by row */
+export const groups = (count: number): [number, number] => [
+	Math.min(count, GROUPS_X),
+	Math.ceil(count / GROUPS_X)
+];
+
 /** bits of a sort key: reversed log view depth, so ascending keys run far to near */
 export const KEY_BITS = 24;
 

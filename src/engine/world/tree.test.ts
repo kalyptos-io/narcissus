@@ -1,24 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { unitPath, LEAF, type UnitKey, type World } from '../../format/index.ts';
-import { hash, unit } from './test-tree.ts';
+import { unitPath } from '../../format/index.ts';
+import { hash, unit, world } from './test-tree.ts';
 import { Tree, unitKey, type PageNode, type UnitNode } from './tree.ts';
 
 const E = 720000;
 const N = 6176000;
 const OPEN = ['unknown', 'unknown', 'unknown', 'unknown'];
 const NONE = ['none', 'none', 'none', 'none'];
-
-function world(...roots: UnitKey[]): World {
-	return {
-		version: 1,
-		crs: 'EPSG:25832',
-		height: 'DVR90',
-		leaf: LEAF,
-		roots: roots.map((key) => ({ ...key, idx: `u/${key.level}/${key.e}/${key.n}.idx` })),
-		extent: { e: [E, E + 2000], n: [N, N + 2000], h: [0, 5] },
-		extra: {}
-	};
-}
 
 function page(unit: UnitNode, g: number, i: number, j: number): PageNode {
 	const found = unit.pages.find((p) => p.g === g && p.row.i === i && p.row.j === j);

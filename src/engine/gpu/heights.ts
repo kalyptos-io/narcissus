@@ -1,9 +1,9 @@
 import { bufferGroup, bufferLayout } from './buffers.ts';
 import common from './common.wgsl?raw';
 import source from './heights.wgsl?raw';
+import { groups } from './layout.ts';
 import type { Pool } from './pool.ts';
 
-const GROUPS_X = 65535;
 /** bytes of heights.wgsl's Area */
 const AREA_BYTES = 32;
 /** least opacity and largest scale in metres of a splat that counts as solid */
@@ -11,7 +11,7 @@ const OPACITY = 0.5;
 const SCALE = 1;
 
 /** z of the ordered bits heights.wgsl writes, NaN for an empty cell */
-export function unordered(keys: Uint32Array): Float32Array {
+function unordered(keys: Uint32Array): Float32Array {
 	const bits = new Uint32Array(keys.length);
 	for (let i = 0; i < keys.length; i++) {
 		const key = keys[i];
@@ -60,6 +60,7 @@ export class Heights {
 	): () => Promise<Float32Array | null> {
 		const device = this.#device;
 		const pool = this.#pool;
+		const { listed } = pool;
 		const bytes = cells * cells * 4;
 		const area = device.createBuffer({
 			label: 'heights area',
@@ -78,16 +79,14 @@ export class Heights {
 		});
 		const values = new ArrayBuffer(AREA_BYTES);
 		new Float32Array(values).set([x, y, 0, 0, OPACITY, SCALE]);
-		new Uint32Array(values).set([cells, pool.listed], 2);
+		new Uint32Array(values).set([cells, listed], 2);
 		device.queue.writeBuffer(area, 0, values);
 		const resources = [area, pool.pages, pool.clusters, pool.list, pool.geometry, tops];
 		const group = bufferGroup(device, 'heights', this.#layout, resources);
 		const pass = encoder.beginComputePass({ label: 'heights', timestampWrites: timestamps });
 		pass.setPipeline(this.#pipeline);
 		pass.setBindGroup(0, group);
-		const listed = pool.listed;
-		if (listed > 0)
-			pass.dispatchWorkgroups(Math.min(listed, GROUPS_X), Math.ceil(listed / GROUPS_X));
+		if (listed > 0) pass.dispatchWorkgroups(...groups(listed));
 		pass.end();
 		encoder.copyBufferToBuffer(tops, 0, readback, 0, bytes);
 		return () =>

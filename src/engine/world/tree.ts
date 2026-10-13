@@ -17,6 +17,8 @@ export interface UnitNode extends UnitKey {
 	path: string;
 	parent: UnitNode | null;
 	pages: PageNode[];
+	/** its pages by slot */
+	grid: Map<number, PageNode>;
 }
 
 export interface PageNode {
@@ -46,7 +48,6 @@ export interface Wanted extends UnitKey {
 const slot = (g: number, i: number, j: number) => (g * 256 + i) * 256 + j;
 
 export class Tree {
-	readonly world: World;
 	/** the coarsest pages of every root */
 	readonly roots: PageNode[] = [];
 	readonly pages = new Map<number, PageNode>();
@@ -55,14 +56,12 @@ export class Tree {
 	/** the highest root level, the top of every ancestor chain */
 	#top: number;
 	#next = 0;
-	#grids = new Map<UnitNode, Map<number, PageNode>>();
 	/** by unit key, with the level of the unit that named it */
 	#wanted = new Map<string, { wanted: Wanted; from: number }>();
 	/** by unit key, added units below it; absent for none */
 	#below = new Map<string, number>();
 
 	constructor(world: World) {
-		this.world = world;
 		this.#rootKeys = new Set(world.roots.map(unitKey));
 		this.#top = Math.max(...world.roots.map((root) => root.level));
 	}
@@ -72,6 +71,7 @@ export class Tree {
 		const key = unitKey(idx);
 		const known = this.units.get(key);
 		if (known) return known;
+		const grid = new Map<number, PageNode>();
 		const unit: UnitNode = {
 			level: idx.level,
 			e: idx.e,
@@ -79,9 +79,9 @@ export class Tree {
 			idx,
 			path,
 			parent: null,
-			pages: []
+			pages: [],
+			grid
 		};
-		const grid = new Map<number, PageNode>();
 		for (const row of idx.rows) {
 			const b = row.box;
 			const page: PageNode = {
@@ -98,7 +98,6 @@ export class Tree {
 			grid.set(slot(row.g, row.i, row.j), page);
 		}
 		this.units.set(key, unit);
-		this.#grids.set(unit, grid);
 		this.#wanted.delete(key);
 		for (let level = idx.level + 1; level <= this.#top; level++) {
 			const up = unitKey(ancestor(idx, level));
@@ -197,7 +196,6 @@ export class Tree {
 				for (const page of this.#over(parent, unit)) page.children.fill(open ? undefined : null);
 			}
 			this.units.delete(key);
-			this.#grids.delete(unit);
 			for (let level = unit.level + 1; level <= this.#top; level++) {
 				const up = unitKey(ancestor(unit, level));
 				const count = this.#below.get(up)! - 1;
@@ -238,7 +236,7 @@ export class Tree {
 		const half = LEAF * 2 ** child.level;
 		const qa = (child.e - parent.e) / half;
 		const qb = (child.n - parent.n) / half;
-		const over = this.#grids.get(parent)!;
+		const over = parent.grid;
 		// the child's missing pages leave empty quadrants
 		for (const page of this.#over(parent, child)) page.children.fill(null);
 		for (const page of child.pages) {
@@ -253,7 +251,6 @@ export class Tree {
 
 	/** the pages of ancestor unit a over the square of key, at a's lowest level */
 	#over(a: UnitNode, key: UnitKey): PageNode[] {
-		const grid = this.#grids.get(a)!;
 		const g = a.level + 1;
 		const side = PAGE_SIDE * 2 ** g;
 		const i0 = (key.e - a.e) / side;
@@ -262,7 +259,7 @@ export class Tree {
 		const over: PageNode[] = [];
 		for (let j = j0; j < j0 + span; j++)
 			for (let i = i0; i < i0 + span; i++) {
-				const page = grid.get(slot(g, i, j));
+				const page = a.grid.get(slot(g, i, j));
 				if (page) over.push(page);
 			}
 		return over;
@@ -280,7 +277,7 @@ function ancestor(key: UnitKey, level: number): UnitKey {
 }
 
 /** south-west corner and side of a page's square, world metres */
-function square(page: PageNode): [number, number, number] {
+export function square(page: PageNode): [number, number, number] {
 	const side = PAGE_SIDE * 2 ** page.g;
 	return [page.unit.e + page.row.i * side, page.unit.n + page.row.j * side, side];
 }

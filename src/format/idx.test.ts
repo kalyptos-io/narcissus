@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { Idx } from './types.ts';
-import { encodeIdx } from './encode.ts';
+import { encodeIdx, wrap } from './encode.ts';
 import { parseIdx, parseUnitPath, unitPath } from './idx.ts';
-import { deflate } from './inflate.ts';
+import { IDX_MAGIC } from './spec.ts';
 
 const idx: Idx = {
 	level: 1,
@@ -56,11 +56,9 @@ describe('parseIdx', () => {
 	it('rejects a body whose counts do not match its size', async () => {
 		const body = new Uint8Array(40);
 		new DataView(body.buffer).setUint16(32, 1, true);
-		const z = await deflate(body);
-		const file = new Uint8Array(8 + z.length);
-		file.set([71, 77, 73, 88, 1, 0, 0, 0]);
-		file.set(z, 8);
-		await expect(parseIdx(file)).rejects.toThrow('.idx holds 40 bytes, its counts need 92');
+		await expect(parseIdx(await wrap(body, IDX_MAGIC))).rejects.toThrow(
+			'.idx holds 40 bytes, its counts need 92'
+		);
 	});
 });
 

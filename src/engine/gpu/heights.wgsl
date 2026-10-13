@@ -1,6 +1,5 @@
 // the top of the solid drawn splats over a square of 1 m cells; one workgroup per listed cluster
 
-const GROUPS_X: u32 = 65535u;
 const GROUP: u32 = 64u;
 
 struct Area {

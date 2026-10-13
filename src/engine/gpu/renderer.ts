@@ -8,7 +8,8 @@ import { Cull } from './cull.ts';
 import type { Gpu } from './device.ts';
 import { Heights } from './heights.ts';
 import type { Pool } from './pool.ts';
-import { Present } from './present.ts';
+import type { Fullscreen } from './fullscreen.ts';
+import { present } from './present.ts';
 import { Project } from './project.ts';
 import { COLOUR_FORMAT, DEPTH_FORMAT, depthAt, Raster } from './raster.ts';
 import { Sort } from './sort.ts';
@@ -66,7 +67,7 @@ export class Renderer {
 	#project: Project;
 	#sort: Sort;
 	#raster: Raster;
-	#present: Present | undefined;
+	#present: Fullscreen | undefined;
 	#heights: Heights;
 	#timing: Timing;
 	#uniforms = new Float32Array(FRAME_UNIFORM_BYTES / 4);
@@ -147,14 +148,14 @@ export class Renderer {
 		this.#dropTargets();
 	}
 
-	/** encodes and submits a frame that answers picks and heights; done resolves when the gpu has finished it */
+	/** encodes and submits a frame that answers picks and heights; resolves when the gpu has finished it */
 	render(
 		frame: Frame,
 		planes: Float32Array,
 		sky: readonly [number, number, number],
 		picks: DepthPick[],
 		heights: HeightsRequest[]
-	): { done: Promise<void> } {
+	): Promise<void> {
 		const device = this.#device;
 		const timing = this.#timing;
 		const posts = this.#posts;
@@ -193,8 +194,8 @@ export class Renderer {
 		}
 		const canvas = this.#context.getCurrentTexture().createView();
 		if (!posts.length) {
-			this.#present ??= new Present(device, this.#format);
-			this.#present.encode(encoder, colour, canvas);
+			this.#present ??= present(device, this.#format);
+			this.#present.encode(encoder, [colour], canvas);
 		} else {
 			let input = colour;
 			posts.forEach(({ post, pass }, k) => {
@@ -218,7 +219,7 @@ export class Renderer {
 		if (count) this.#readCount();
 		for (const { resolve, read } of reads) void read().then(resolve);
 		for (const { resolve, read } of tops) void read().then(resolve);
-		return { done: device.queue.onSubmittedWorkDone() };
+		return device.queue.onSubmittedWorkDone();
 	}
 
 	stats(): GpuStats {

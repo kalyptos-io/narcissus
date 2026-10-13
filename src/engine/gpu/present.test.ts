@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { Present } from './present.ts';
+import { present } from './present.ts';
 import { readBuffer, testDevice } from './test-device.ts';
 
-describe('Present', () => {
+describe('present', () => {
 	it('copies the colour target onto the canvas, opaque', async () => {
 		const device = await testDevice();
 		const source = device.createTexture({
@@ -21,9 +21,8 @@ describe('Present', () => {
 			size: 256,
 			usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
 		});
-		const present = new Present(device, 'rgba8unorm');
 		const encoder = device.createCommandEncoder();
-		present.encode(encoder, source.createView(), target.createView());
+		present(device, 'rgba8unorm').encode(encoder, [source.createView()], target.createView());
 		encoder.copyTextureToBuffer({ texture: target }, { buffer, bytesPerRow: 256 }, [2, 1]);
 		device.queue.submit([encoder.finish()]);
 		const bytes = [...new Uint8Array(await readBuffer(device, buffer, 0, 8))];

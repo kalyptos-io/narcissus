@@ -1,9 +1,29 @@
 // .idx fixtures for the tests that grow a tree
 
-import { LEAF, PAGE_SIDE, type Idx, type PageRow, type UnitKey } from '../../format/index.ts';
+import {
+	LEAF,
+	PAGE_SIDE,
+	type Idx,
+	type PageRow,
+	type UnitKey,
+	type World
+} from '../../format/index.ts';
 
 export function hash({ level, e, n }: UnitKey): string {
 	return ((level * 4096 + e / LEAF) * 65536 + n / LEAF).toString(16).padStart(16, '0');
+}
+
+/** a world of roots; a tree reads nothing else of it */
+export function world(...roots: UnitKey[]): World {
+	return {
+		version: 1,
+		crs: 'EPSG:25832',
+		height: 'DVR90',
+		leaf: LEAF,
+		roots: roots.map((key) => ({ ...key, idx: `u/${key.level}/${key.e}/${key.n}.idx` })),
+		extent: { e: [0, 0], n: [0, 0], h: [0, 0] },
+		extra: {}
+	};
 }
 
 export interface UnitOptions {

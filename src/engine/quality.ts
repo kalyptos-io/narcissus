@@ -13,9 +13,7 @@ export function percentile(values: readonly number[], fraction: number): number 
 }
 
 export class Quality {
-	budget = 2_000_000;
 	#scale = 0;
-	#ceiling = 2_000_000;
 	#samples: { time: number; ms: number }[] = [];
 	#last = -Infinity;
 	#slow = 0;
@@ -25,23 +23,12 @@ export class Quality {
 		return SCALES[this.#scale];
 	}
 
-	configure(requested: number): void {
-		const ceiling = Math.max(1, requested);
-		if (ceiling !== this.#ceiling) this.budget = ceiling;
-		this.#ceiling = ceiling;
-	}
-
 	full(): void {
 		this.#scale = 0;
-		this.reset();
+		this.#reset();
 	}
 
-	constrain(budget: number): void {
-		this.budget = Math.max(1, Math.min(this.budget, Math.floor(budget)));
-		this.reset();
-	}
-
-	reset(): void {
+	#reset(): void {
 		this.#samples = [];
 		this.#slow = 0;
 		this.#fast = 0;
@@ -50,7 +37,7 @@ export class Quality {
 
 	sample(ms: number, now: number, consecutive: boolean): boolean {
 		if (!consecutive || now - this.#last > 250 || !Number.isFinite(ms) || ms <= 0) {
-			this.reset();
+			this.#reset();
 			this.#last = now;
 			return false;
 		}
@@ -72,7 +59,7 @@ export class Quality {
 			if (this.#scale > 0) this.#scale--;
 			else return false;
 		} else return false;
-		this.reset();
+		this.#reset();
 		return true;
 	}
 }

@@ -3,8 +3,6 @@
 export interface Footprint {
 	/** unclipped projected area in pixels */
 	pixels: number;
-	/** share of that area on screen, within the margin */
-	coverage: number;
 	/** 1 at the edges up to 16 at the centre */
 	weight: number;
 }
@@ -30,7 +28,7 @@ export function footprint(
 	near: number,
 	far: number,
 	margin = 1,
-	out: Footprint = { pixels: 0, coverage: 0, weight: 1 }
+	out: Footprint = { pixels: 0, weight: 1 }
 ): Footprint {
 	const cx = (box[0] + box[3]) / 2;
 	const cy = (box[1] + box[4]) / 2;
@@ -45,7 +43,6 @@ export function footprint(
 	const hy = Math.abs(m[1]) * ex + Math.abs(m[5]) * ey + Math.abs(m[9]) * ez;
 	const hz = Math.abs(m[2]) * ex + Math.abs(m[6]) * ey + Math.abs(m[10]) * ez;
 	out.pixels = 0;
-	out.coverage = 0;
 	out.weight = 1;
 	if (z + hz < near || z - hz > far) return out;
 	const front = Math.max(near, z - hz);
@@ -65,7 +62,6 @@ export function footprint(
 	if (area <= 0 || visibleArea <= 0) return out;
 	// use unclipped density so a partly visible region keeps the same detail
 	out.pixels = (area * width * height) / 4;
-	out.coverage = visibleArea / area;
 	out.weight = centreWeight(left, right, bottom, top);
 	return out;
 }

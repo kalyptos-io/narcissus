@@ -302,8 +302,7 @@ class GpuEngine implements Engine {
 		this.#settings = { ...options.settings };
 		this.#css = [canvas.width, canvas.height, 1];
 		this.#target = [Math.max(1, canvas.width), Math.max(1, canvas.height)];
-		this.#quality.configure(options.settings.budget);
-		const { pool, frame } = this.#capacities();
+		const { pool, frame } = capacities(this.#budget, gpu.device.limits);
 		this.#pool = new Pool(gpu.device, pool);
 		this.#renderer = new Renderer(gpu, context, this.#pool, frame);
 		this.#frameCapacity = frame;
@@ -347,7 +346,6 @@ class GpuEngine implements Engine {
 		this.#feed?.destroy();
 		this.#feed = null;
 		this.#loader?.destroy();
-		const reopened = this.#tree !== null;
 		this.#url = worldUrl;
 		this.#tree = tree;
 		this.#loader = loader;
@@ -355,8 +353,8 @@ class GpuEngine implements Engine {
 		this.#planner = new Planner();
 		this.#fader = new Fader();
 		// page ids restart with the tree, so the old world's pages must leave the pool
-		if (reopened) this.#rebuild(this.#pool.capacity, this.#frameCapacity);
-		else this.#feed = this.#feedFor(tree, loader);
+		this.#pool.clear();
+		this.#feed = this.#feedFor(tree, loader);
 		this.#dirty = true;
 		this.requestFrame();
 		return world;
@@ -384,8 +382,7 @@ class GpuEngine implements Engine {
 	configure(settings: Partial<Settings>): void {
 		if (this.#destroyed) return;
 		this.#settings = { ...this.#settings, ...settings };
-		this.#quality.configure(this.#settings.budget);
-		const { pool, frame } = this.#capacities();
+		const { pool, frame } = capacities(this.#budget, this.#gpu.device.limits);
 		if (pool > this.#pool.capacity || frame > this.#frameCapacity) this.#rebuild(pool, frame);
 		this.#dirty = true;
 		this.requestFrame();
@@ -510,12 +507,10 @@ class GpuEngine implements Engine {
 		this.#gpu.device.destroy();
 	}
 
-	/** capacities for the quality budget, lowered first to what one frame can project */
-	#capacities(): { pool: number; frame: number } {
-		const limits = this.#gpu.device.limits;
-		const most = Math.floor(capacities(Infinity, limits).frame / FRAME_SHARE);
-		if (this.#quality.budget > most) this.#quality.constrain(most);
-		return capacities(this.#quality.budget, limits);
+	/** the settings' budget, within what one frame can project on this device */
+	get #budget(): number {
+		const most = Math.floor(capacities(Infinity, this.#gpu.device.limits).frame / FRAME_SHARE);
+		return Math.max(1, Math.min(this.#settings.budget, most));
 	}
 
 	/** a new pool and renderer; residency reloads through a new feed */
@@ -654,7 +649,7 @@ class GpuEngine implements Engine {
 		let drawn: Drawn[] = [];
 		let fading = false;
 		if (plan && feed) {
-			({ drawn, fading } = this.#fader.update(plan.cut, this.#has, now, quality.budget));
+			({ drawn, fading } = this.#fader.update(plan.cut, this.#has, now, this.#budget));
 			feed.update(plan, new Set(drawn.map((d) => d.id)), now);
 		}
 		if (pool.upload(UPLOAD_BYTES) > 0) this.#arrived = true;
@@ -663,7 +658,7 @@ class GpuEngine implements Engine {
 		this.#drawn = drawn.length;
 		const picks = this.#picks.splice(0).map((picking) => this.#pick(picking, frame));
 		const heights = this.#measures.splice(0).map((measuring) => this.#measure(measuring, origin));
-		const { done } = this.#renderer.render(frame, this.#planes, this.#options.sky, picks, heights);
+		const done = this.#renderer.render(frame, this.#planes, this.#options.sky, picks, heights);
 		const cpuMs = performance.now() - now;
 
 		// what comes next
@@ -695,6 +690,7 @@ class GpuEngine implements Engine {
 		const [width, height] = this.#target;
 		// the full-scale size, so a lower render scale costs sharpness, not detail
 		const scale = this.#quality.scale;
+		const budget = this.#budget;
 		const at = {
 			origin: this.#origin,
 			width: width / scale,
@@ -705,9 +701,9 @@ class GpuEngine implements Engine {
 		};
 		const view: View = { ...at, view: this.#view };
 		const options = {
-			budget: this.#quality.budget,
+			budget,
 			// pages the fader holds take up to FADE_CAP of the budget beside the plan's
-			capacity: pool.capacity - Math.ceil(FADE_CAP * this.#quality.budget),
+			capacity: pool.capacity - Math.ceil(FADE_CAP * budget),
 			now,
 			predicted: moved ? this.#predict(at) : undefined
 		};

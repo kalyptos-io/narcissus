@@ -64,11 +64,11 @@ export interface DecodedPage {
 	count: number;
 	quadrants: [number, number, number];
 	/** GEOMETRY_WORDS per splat, layout in spec.ts */
-	geometry: Uint32Array;
+	geometry: Uint32Array<ArrayBuffer>;
 	/** COLOUR_WORDS per splat */
-	colour: Uint32Array;
+	colour: Uint32Array<ArrayBuffer>;
 	/** PAGE_PARAMS floats; origin is unit-local, the pool moves it into the floating-origin frame */
-	params: Float32Array;
+	params: Float32Array<ArrayBuffer>;
 	/** per cluster of CLUSTER splats: min x, y, z, max x, y, z of their extents, relative to the origin */
-	clusters: Float32Array;
+	clusters: Float32Array<ArrayBuffer>;
 }

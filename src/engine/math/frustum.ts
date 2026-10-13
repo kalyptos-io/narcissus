@@ -1,18 +1,19 @@
 import type { Mat4 } from './mat4.ts';
 
+// left, right, bottom, top, near, far
+const ROWS: [number, number][] = [
+	[0, 1],
+	[0, -1],
+	[1, 1],
+	[1, -1],
+	[2, 0],
+	[2, -1]
+];
+
 /** the six planes of a webgpu view-projection (clip z 0..1), normalised; inside when n.p + d >= 0 */
 export function planes(out: Float32Array | Float64Array, m: Mat4): typeof out {
 	const row = (r: number, k: number) => m[k * 4 + r];
-	// left, right, bottom, top, near, far
-	const rows: [number, number][] = [
-		[0, 1],
-		[0, -1],
-		[1, 1],
-		[1, -1],
-		[2, 0],
-		[2, -1]
-	];
-	rows.forEach(([r, sign], p) => {
+	ROWS.forEach(([r, sign], p) => {
 		for (let k = 0; k < 4; k++) out[p * 4 + k] = sign ? row(3, k) + sign * row(r, k) : row(r, k);
 		const len = Math.hypot(out[p * 4], out[p * 4 + 1], out[p * 4 + 2]) || 1;
 		for (let k = 0; k < 4; k++) out[p * 4 + k] /= len;

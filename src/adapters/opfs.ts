@@ -5,7 +5,7 @@ import type { Cache } from '../ports.ts';
  * browser offers none (private windows); every failure inside is a miss, never an error.
  * shard k keeps its files in cache/k and must be their only user.
  */
-export async function opfsCache(bytes: number, shard = 0): Promise<Cache | null> {
+export async function opfsCache(bytes: number, shard: number): Promise<Cache | null> {
 	let dir: FileSystemDirectoryHandle;
 	try {
 		const root = await cacheRoot();
@@ -51,6 +51,8 @@ export async function opfsCache(bytes: number, shard = 0): Promise<Cache | null>
 	return {
 		async get(key) {
 			const name = encodeURIComponent(key);
+			// the shard is the directory's only user, so a scanned index lists every file
+			if (scanned && !index.has(name)) return undefined;
 			const value = await read(dir, name);
 			if (value) touch(name, value.length);
 			else forget(name);

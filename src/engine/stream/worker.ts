@@ -118,7 +118,7 @@ function transfers({ page }: Loaded): Transferable[] {
 	// two arrays of one page may share a buffer, and a buffer may be listed once only
 	const buffers = new Set<ArrayBuffer>();
 	for (const array of [page.geometry, page.colour, page.params, page.clusters]) {
-		buffers.add(array.buffer as ArrayBuffer);
+		buffers.add(array.buffer);
 	}
 	return [...buffers];
 }

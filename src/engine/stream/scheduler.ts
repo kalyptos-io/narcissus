@@ -104,26 +104,23 @@ export class Scheduler {
 		const { gap, span } = this.#options;
 		const window = Math.floor(seed.offset / span);
 		const at = jobs.indexOf(seed);
-		const ids = new Set([seed.id]);
 		const pages = [seed];
 		let start = seed.offset;
 		let end = seed.offset + seed.length;
 		for (let k = at + 1; k < jobs.length; k++) {
 			const job = jobs[k];
-			if (ids.has(job.id) || this.#flying.has(job.id)) continue;
+			if (this.#flying.has(job.id)) continue;
 			const after = Math.max(end, job.offset + job.length);
 			if (job.offset - end > gap || after - start > span) break;
 			if (Math.floor(job.offset / span) !== window) break;
-			ids.add(job.id);
 			pages.push(job);
 			end = after;
 		}
 		for (let k = at - 1; k >= 0; k--) {
 			const job = jobs[k];
-			if (ids.has(job.id) || this.#flying.has(job.id)) continue;
+			if (this.#flying.has(job.id)) continue;
 			if (start - (job.offset + job.length) > gap || end - job.offset > span) break;
 			if (Math.floor(job.offset / span) !== window) break;
-			ids.add(job.id);
 			pages.unshift(job);
 			start = job.offset;
 		}

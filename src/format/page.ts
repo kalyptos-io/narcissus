@@ -160,7 +160,12 @@ export function decodePage(payload: Uint8Array, col: Col | null): DecodedPage {
 }
 
 /** the file's dc and codebook bytes unchanged */
-function fileColour(payload: Uint8Array, n: number, k: number, book: number): Uint32Array {
+function fileColour(
+	payload: Uint8Array,
+	n: number,
+	k: number,
+	book: number
+): Uint32Array<ArrayBuffer> {
 	const colour = new Uint32Array(n * COLOUR_WORDS);
 	const pd = PAGE_HEADER + PLANES.dc * n;
 	const pl = PAGE_HEADER + PLANES.label * n;
@@ -187,7 +192,7 @@ function correctedColour(
 	geometry: Uint32Array,
 	params: Float32Array,
 	col: Col
-): Uint32Array {
+): Uint32Array<ArrayBuffer> {
 	const pd = PAGE_HEADER + PLANES.dc * n;
 	const pl = PAGE_HEADER + PLANES.label * n;
 	const codes = new Int8Array(payload.buffer, payload.byteOffset + book, k * SH_COEFFS);

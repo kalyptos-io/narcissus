@@ -2,7 +2,6 @@ import prettier from 'eslint-config-prettier';
 import path from 'node:path';
 import js from '@eslint/js';
 import { defineConfig, includeIgnoreFile } from 'eslint/config';
-import globals from 'globals';
 import ts from 'typescript-eslint';
 
 const gitignorePath = path.resolve(import.meta.dirname, '.gitignore');
@@ -47,13 +46,8 @@ export default defineConfig(
 	js.configs.recommended,
 	ts.configs.recommended,
 	prettier,
-	{
-		languageOptions: { globals: { ...globals.browser, ...globals.node } },
-		rules: {
-			// typescript checks undefined globals itself; no-undef misfires on ts
-			'no-undef': 'off'
-		}
-	},
+	// tsc checks undefined names, in the bench's js through checkJs
+	{ rules: { 'no-undef': 'off' } },
 	...Object.entries(LAYERS).flatMap(([dir, allowed]) => [
 		{ files: [`${dir}/**`], rules: rule(restricted(dir, allowed)) },
 		{ files: [`${dir}/**/*.test.ts`], rules: rule(restricted(dir, [...allowed, ...TESTS])) }

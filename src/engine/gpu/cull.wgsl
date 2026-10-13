@@ -1,9 +1,5 @@
 // one thread per listed cluster
 
-// mirrors spec.ts WORK
-const WORK_VISIBLE: u32 = 0u;
-const WORK_LIST: u32 = 16u;
-
 @group(0) @binding(0) var<uniform> uniforms: FrameUniforms;
 @group(0) @binding(1) var<storage, read> pages: array<Page>;
 @group(0) @binding(2) var<storage, read> clusters: array<Cluster>;

@@ -52,8 +52,9 @@ describe('scale', () => {
 	it('keeps planner time, tree and heap flat over 50 km', { timeout: 120_000 }, async () => {
 		const fetch = synthetic();
 		const json = new TextDecoder().decode(await fetch(BASE + 'world.json', null));
-		const tree = new Tree(parseWorld(JSON.parse(json)));
-		for (const root of tree.world.roots) {
+		const world = parseWorld(JSON.parse(json));
+		const tree = new Tree(world);
+		for (const root of world.roots) {
 			tree.add(await parseIdx(await fetch(BASE + root.idx, null)), root.idx);
 		}
 		const planner = new Planner();

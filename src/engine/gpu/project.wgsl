@@ -1,10 +1,5 @@
 // one workgroup per visible cluster, one thread per splat; shade() follows, generated with the hooks
 
-// mirrors spec.ts WORK
-const WORK_VISIBLE: u32 = 0u;
-const WORK_PROJECTED: u32 = 4u;
-const WORK_LIST: u32 = 16u;
-const GROUPS_X: u32 = 65535u;
 // ndc reach past the frustum, so splats centred just outside still cover the edge
 const GUARD: f32 = 1.3;
 
@@ -105,17 +100,19 @@ fn shown(cluster: Cluster, t: u32, dest: ptr<function, Projected>, key: ptr<func
 		return false;
 	}
 
-	// ewa: view-space covariance through the jacobian of the pixel projection
+	// ewa: view-space covariance wm wm^T through the jacobian of the pixel projection
 	let r = rotate(rotation(g));
 	let m = mat3x3f(r[0] * s.scale.x, r[1] * s.scale.y, r[2] * s.scale.z);
 	let w = mat3x3f(uniforms.view[0].xyz, uniforms.view[1].xyz, uniforms.view[2].xyz);
-	let cov = w * m * transpose(m) * transpose(w);
+	let wm = w * m;
 	let focal = uniforms.focal;
 	let j0 = vec3f(focal.x / depth, 0.0, focal.x * viewPos.x / (depth * depth));
 	let j1 = vec3f(0.0, focal.y / depth, focal.y * viewPos.y / (depth * depth));
-	let a = dot(j0, cov * j0) + uniforms.lowPass;
-	let b = dot(j0, cov * j1);
-	let c = dot(j1, cov * j1) + uniforms.lowPass;
+	let u = j0 * wm;
+	let v = j1 * wm;
+	let a = dot(u, u) + uniforms.lowPass;
+	let b = dot(u, v);
+	let c = dot(v, v) + uniforms.lowPass;
 	let mid = 0.5 * (a + c);
 	let rad = length(vec2f(0.5 * (a - c), b));
 	let major = sqrt(mid + rad);
@@ -127,8 +124,7 @@ fn shown(cluster: Cluster, t: u32, dest: ptr<function, Projected>, key: ptr<func
 	let axis = vec2f(cos(angle), sin(angle));
 	// the quad raster draws; a centre inside the guard band can still miss the screen
 	let centre = (ndc * 0.5 + 0.5) * uniforms.viewport;
-	let reach = min(3.0, sqrt(max(2.0 * log(255.0 * s.opacity), 0.0)));
-	let extent = reach * (abs(axis) * major + abs(axis.yx) * minor);
+	let extent = reach(s.opacity) * (abs(axis) * major + abs(axis.yx) * minor);
 	if (any(centre + extent < vec2f(0.0)) || any(centre - extent > uniforms.viewport)) {
 		return false;
 	}

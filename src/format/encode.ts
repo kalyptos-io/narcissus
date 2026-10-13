@@ -295,7 +295,7 @@ function unhex(hash: string): Uint8Array {
 }
 
 /** magic, version and the deflated body */
-async function wrap(body: Uint8Array, magic: string): Promise<Uint8Array> {
+export async function wrap(body: Uint8Array, magic: string): Promise<Uint8Array> {
 	const z = await deflate(body);
 	const out = new Uint8Array(PREFIX + z.length);
 	writeMagic(out, 0, magic);

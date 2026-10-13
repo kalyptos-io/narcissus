@@ -6,18 +6,12 @@ import type { Plan } from '../plan/cut.ts';
 import type { Tree, UnitNode } from '../world/tree.ts';
 import { Missing } from '../../ports.ts';
 import type { Loader } from './loader.ts';
-import { Scheduler, type Batch, type PageJob } from './scheduler.ts';
+import { Scheduler, type Batch, type PageJob, type SchedulerOptions } from './scheduler.ts';
 import type { Loaded } from './worker.ts';
 
-export interface FeedOptions {
+export interface FeedOptions extends SchedulerOptions {
 	/** .idx fetches in flight */
 	idx: number;
-	/** page batches in flight */
-	concurrency: number;
-	/** bytes two pages may lie apart and still share a request */
-	gap: number;
-	/** bytes one request may span */
-	span: number;
 }
 
 // few small batches: they split the link, a batch's pages wait for all its bytes, each page for its parent
@@ -79,8 +73,7 @@ export class Feed {
 		this.#onArrive = onArrive;
 		this.#onStale = onStale;
 		this.#options = options;
-		const { concurrency, gap, span } = options;
-		this.#scheduler = new Scheduler({ concurrency, gap, span });
+		this.#scheduler = new Scheduler(options);
 	}
 
 	/**
