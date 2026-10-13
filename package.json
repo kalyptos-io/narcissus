@@ -32,7 +32,7 @@
 		"lint": "prettier --check . && eslint .",
 		"format": "prettier --write .",
 		"test": "vitest --run",
-		"package": "publint && attw --pack --profile esm-only",
+		"package": "pnpm build && publint && attw --pack --profile esm-only",
 		"bench": "node bench/quick.mjs",
 		"bench:drive": "node bench/drive.mjs"
 	},

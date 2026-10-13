@@ -25,7 +25,7 @@ jobs:
       - run: pnpm check
       - run: pnpm lint
       - run: pnpm test
-      # packs, and so builds, the package
+      # builds, then checks the packed package
       - run: pnpm package
 
   publish:
