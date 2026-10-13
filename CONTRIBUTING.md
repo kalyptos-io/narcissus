@@ -14,7 +14,7 @@ A change to [docs/format.md](docs/format.md) is a new version of the format, and
 
 ## Setup
 
-You need Node 24 and [pnpm](https://pnpm.io).
+You need Node 26 and [pnpm](https://pnpm.io).
 
 ```sh
 pnpm install
