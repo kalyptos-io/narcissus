@@ -121,11 +121,14 @@ export class Sort {
 	encode(
 		encoder: GPUCommandEncoder,
 		maxSplats: number,
+		drawn: number,
 		timestamps?: GPUComputePassTimestampWrites
 	): void {
 		const [histogram, reduce, top, down, scatter] = this.#kernels;
 		const count = Math.max(1, Math.min(this.#blocks, Math.ceil(maxSplats / BLOCK)));
-		const blocks = groups(Math.ceil(count / 4));
+		// a stale count may trail a camera jump, so reduce workgroups by at most fourfold
+		const expected = Math.max(count / 16, (drawn || maxSplats) / BLOCK);
+		const blocks = groups(Math.min(Math.ceil(count / 4), Math.ceil(expected)));
 		const chunks = Math.ceil(count / CHUNK);
 		const pass = encoder.beginComputePass({ label: 'sort', timestampWrites: timestamps });
 		pass.setPipeline(this.#prepare);

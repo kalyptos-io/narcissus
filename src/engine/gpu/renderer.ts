@@ -174,7 +174,7 @@ export class Renderer {
 		encoder.clearBuffer(this.#buffers.work, 0, WORK.list * 4);
 		this.#cull.encode(encoder, timing.writes('cull'));
 		this.#project.encode(encoder, timing.writes('project'));
-		this.#sort.encode(encoder, this.#pool.listed * CLUSTER, timing.writes('sort'));
+		this.#sort.encode(encoder, this.#pool.listed * CLUSTER, this.#drawn, timing.writes('sort'));
 		this.#raster.encode(encoder, colour, depth, sky, timing.writes('raster'));
 		const reads = depthTexture
 			? picks.map(({ x, y, resolve }) => ({
