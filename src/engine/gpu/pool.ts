@@ -23,6 +23,8 @@ interface Entry {
 	page: DecodedPage | null;
 	/** cluster c of the page sits in slots[c] */
 	slots: number[];
+	active: number[];
+	mask: number;
 	/** page-table slot */
 	table: number;
 	/** page origin in world metres */
@@ -66,7 +68,7 @@ export class Pool {
 	readonly pages!: GPUBuffer;
 	/** Cluster per slot */
 	readonly clusters!: GPUBuffer;
-	/** drawn cluster ids, `listed` of them, the cull's input */
+	// cull input excludes clusters with only zero quadrant factors
 	readonly list!: GPUBuffer;
 	listed = 0;
 	/** splats */
@@ -164,6 +166,8 @@ export class Pool {
 			next: null,
 			page,
 			slots: this.#take(need),
+			active: [],
+			mask: 0,
 			table: this.#tables.pop()!,
 			base: [page.params[o] + unit[0], page.params[o + 1] + unit[1], page.params[o + 2]],
 			factors: 0
@@ -216,12 +220,14 @@ export class Pool {
 		for (const { id, factors } of drawn) {
 			const entry = this.#entries.get(id);
 			if (!entry || entry.page !== null) continue;
+			const active = entry.active;
 			if (entry.factors !== factors) this.#setFactors(entry, factors);
+			changed ||= active !== entry.active;
 			this.#touch(entry);
 			changed ||= this.#drawn[count] !== entry;
 			this.#drawn[count++] = entry;
-			if (changed) this.#list.set(entry.slots, listed);
-			listed += entry.slots.length;
+			if (changed) this.#list.set(entry.active, listed);
+			listed += entry.active.length;
 		}
 		changed ||= this.#drawn.length !== count;
 		this.#drawn.length = count;
@@ -356,6 +362,33 @@ export class Pool {
 	}
 
 	#setFactors(entry: Entry, factors: number): void {
+		let mask = 0;
+		for (let q = 0; q < 4; q++) if ((factors >>> (8 * q)) & 255) mask |= 1 << q;
+		if (mask !== entry.mask) {
+			entry.mask = mask;
+			if (mask === 15 && this.#table[entry.table * PAGE_WORDS + 3] > 0) entry.active = entry.slots;
+			else {
+				const active: number[] = [];
+				const page = entry.table * PAGE_WORDS;
+				let first = 0;
+				let last = -1;
+				for (let q = 0; q < 4; q++) {
+					const end = this.#table[page + (q === 3 ? 3 : 7 + 4 * q)];
+					if (mask & (1 << q) && end > first) {
+						for (
+							let c = Math.max(last + 1, Math.floor(first / CLUSTER));
+							c < Math.ceil(end / CLUSTER);
+							c++
+						) {
+							active.push(entry.slots[c]);
+							last = c;
+						}
+					}
+					first = end;
+				}
+				entry.active = active;
+			}
+		}
 		entry.factors = factors;
 		const word = entry.table * PAGE_WORDS + FACTORS;
 		this.#table[word] = factors;

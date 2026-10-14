@@ -198,7 +198,7 @@ describe('Pool', () => {
 		pool.upload(1);
 		pool.draw([
 			{ id: 2, factors: 9 },
-			{ id: 1, factors: 0xff }
+			{ id: 1, factors: 0xffffffff }
 		]);
 		expect(pool.listed).toBe(2);
 		const list = (await read(device, pool.list)).u;
@@ -215,7 +215,7 @@ describe('Pool', () => {
 			Math.fround(p.params[o + 1] + 500 + 3),
 			Math.fround(p.params[o + 2] - 1)
 		]);
-		expect(pages.u[w + 19]).toBe(0xff);
+		expect(pages.u[w + 19]).toBe(0xffffffff);
 
 		pool.draw([]);
 		expect(pool.listed).toBe(0);
@@ -269,10 +269,44 @@ describe('Pool', () => {
 		pool.remove(2);
 		pool.add(8, page(2 * CLUSTER), [0, 0], none);
 		pool.upload(Infinity);
-		pool.draw([5, 6, 7, 8].map((id) => ({ id, factors: 1 })));
+		pool.draw([5, 6, 7, 8].map((id) => ({ id, factors: 0xffffffff })));
 		expect(slice((await read(device, pool.list)).u, 0, pool.listed)).toEqual([
 			4, 5, 6, 0, 1, 7, 2, 3
 		]);
+		pool.destroy();
+	});
+
+	it('lists clusters that overlap active quadrants when their factors change', async () => {
+		const device = await testDevice();
+		const pool = new Pool(device, 4 * CLUSTER);
+		const source = page(1000);
+		source.quadrants = [100, 300, 900];
+		pool.add(1, source, [0, 0], none);
+		pool.upload(Infinity);
+		const draw = async (factors: number) => {
+			pool.draw([{ id: 1, factors }]);
+			return slice((await read(device, pool.list)).u, 0, pool.listed);
+		};
+		expect(await draw(0xff)).toEqual([0]);
+		expect(await draw(0xff00)).toEqual([0, 1]);
+		expect(await draw(0x8000)).toEqual([0, 1]);
+		expect(await draw(0xff0000)).toEqual([1, 2, 3]);
+		expect(await draw(0xff000000)).toEqual([3]);
+		expect(await draw(0xffff)).toEqual([0, 1]);
+		expect(await draw(0)).toEqual([]);
+		expect(await draw(0xffffffff)).toEqual([0, 1, 2, 3]);
+		pool.remove(1);
+		source.quadrants = [0, 0, 500];
+		pool.add(1, source, [0, 0], none);
+		pool.upload(Infinity);
+		expect(await draw(0xff)).toEqual([]);
+		expect(await draw(0xff00)).toEqual([]);
+		expect(await draw(0xff0000)).toEqual([0, 1]);
+		expect(await draw(0xff000000)).toEqual([1, 2, 3]);
+		pool.remove(1);
+		pool.add(1, page(0), [0, 0], none);
+		pool.upload(Infinity);
+		expect(await draw(0xffffffff)).toEqual([]);
 		pool.destroy();
 	});
 

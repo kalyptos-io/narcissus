@@ -18,19 +18,6 @@ fn inside(lo: vec3f, hi: vec3f) -> bool {
 	return true;
 }
 
-// some quadrant the cluster's splats overlap has a nonzero factor
-fn lit(page: Page, cluster: Cluster) -> bool {
-	var starts = array<u32, 5>(0u, page.q1, page.q2, page.q3, page.count);
-	let end = cluster.first + cluster.count;
-	for (var k = 0u; k < 4u; k++) {
-		let overlaps = max(starts[k], cluster.first) < min(starts[k + 1u], end);
-		if (overlaps && extractBits(page.factors, 8u * k, 8u) != 0u) {
-			return true;
-		}
-	}
-	return false;
-}
-
 @compute @workgroup_size(64)
 fn cull(@builtin(global_invocation_id) id: vec3u) {
 	if (id.x >= uniforms.clusters) {
@@ -39,7 +26,7 @@ fn cull(@builtin(global_invocation_id) id: vec3u) {
 	let slot = list[id.x];
 	let cluster = clusters[slot];
 	let page = pages[cluster.page];
-	if (!inside(page.origin + cluster.boxMin, page.origin + cluster.boxMax) || !lit(page, cluster)) {
+	if (!inside(page.origin + cluster.boxMin, page.origin + cluster.boxMax)) {
 		return;
 	}
 	atomicStore(&work[WORK_LIST + atomicAdd(&work[WORK_VISIBLE], 1u)], slot);
