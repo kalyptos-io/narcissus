@@ -365,4 +365,15 @@ describe('Project', () => {
 		context.pool.destroy();
 		context.buffers.destroy();
 	});
+
+	it('uses the current visible count after an empty frame', async () => {
+		const context = await setup();
+		expect((await run(context)).count).toBe(4);
+		context.pool.draw([]);
+		expect((await run(context)).count).toBe(0);
+		context.pool.draw([{ id: 1, factors: FACTORS }]);
+		expect((await run(context)).count).toBe(4);
+		context.pool.destroy();
+		context.buffers.destroy();
+	});
 });

@@ -1,7 +1,7 @@
 import type { Shade } from '../plugin.ts';
 import { bufferGroup, bufferLayout, type FrameBuffers } from './buffers.ts';
 import common from './common.wgsl?raw';
-import { groups } from './layout.ts';
+import { groups, WORK } from './layout.ts';
 import source from './project.wgsl?raw';
 import type { Pool } from './pool.ts';
 
@@ -16,10 +16,14 @@ export class Project {
 	#shades: { shade: Shade; slot: number }[] = [];
 	#group: GPUBindGroup;
 	#pool: Pool;
+	#work: GPUBuffer;
+	#visible: GPUBuffer;
 
 	constructor(device: GPUDevice, pool: Pool, buffers: FrameBuffers) {
 		this.#device = device;
 		this.#pool = pool;
+		this.#work = buffers.work;
+		this.#visible = buffers.visible;
 		const layout = bufferLayout(device, 'project', GPUShaderStage.COMPUTE, [
 			'uniform',
 			'uniform',
@@ -29,7 +33,8 @@ export class Project {
 			'read-only-storage',
 			'storage',
 			'storage',
-			'storage'
+			'storage',
+			'uniform'
 		]);
 		this.#layout = device.createPipelineLayout({ bindGroupLayouts: [layout] });
 		const resources = [
@@ -41,7 +46,8 @@ export class Project {
 			pool.clusters,
 			buffers.work,
 			buffers.projected,
-			buffers.sort
+			buffers.sort,
+			buffers.visible
 		];
 		this.#group = bufferGroup(device, 'project', layout, resources);
 	}
@@ -54,6 +60,8 @@ export class Project {
 
 	/** a workgroup per listed cluster, of which those past the visible ones return at once */
 	encode(encoder: GPUCommandEncoder, timestamps?: GPUComputePassTimestampWrites): void {
+		// a uniform count lets empty workgroups return without a barrier
+		encoder.copyBufferToBuffer(this.#work, WORK.visible * 4, this.#visible, 0, 4);
 		const listed = Math.max(1, this.#pool.listed);
 		const pass = encoder.beginComputePass({ label: 'project', timestampWrites: timestamps });
 		pass.setPipeline((this.#pipeline ??= this.#build()));

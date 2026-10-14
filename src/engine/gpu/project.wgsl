@@ -14,7 +14,7 @@ const GUARD: f32 = 1.3;
 // keys in [0, capacity), values in [capacity, 2 capacity)
 @group(0) @binding(8) var<storage, read_write> sort: array<u32>;
 
-var<workgroup> visible: u32;
+@group(0) @binding(9) var<uniform> visible: u32;
 var<workgroup> kept: atomic<u32>;
 var<workgroup> base: u32;
 
@@ -141,11 +141,8 @@ fn shown(cluster: Cluster, t: u32, dest: ptr<function, Projected>, key: ptr<func
 
 @compute @workgroup_size(256)
 fn project(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) t: u32) {
-	if (t == 0u) {
-		visible = atomicLoad(&work[WORK_VISIBLE]);
-	}
 	let index = wid.y * GROUPS_X + wid.x;
-	if (index >= workgroupUniformLoad(&visible)) {
+	if (index >= visible) {
 		return;
 	}
 	let cluster = clusters[atomicLoad(&work[WORK_LIST + index])];
