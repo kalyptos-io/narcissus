@@ -636,6 +636,7 @@ class GpuEngine implements Engine {
 		// plan
 		const tree = this.#tree;
 		const feed = this.#feed;
+		const redraw = this.#arrived || this.#dirty || this.#fading;
 		const previous = this.#plan;
 		let plan = previous;
 		if (tree && feed) {
@@ -650,8 +651,14 @@ class GpuEngine implements Engine {
 		let drawn = this.#drawn;
 		let fading = this.#fading;
 		if (plan && feed) {
-			// arrivals and active fades force a new plan
-			if (plan !== previous) {
+			// camera motion can leave the same opaque cover
+			if (
+				plan !== previous &&
+				(redraw ||
+					!previous ||
+					plan.cut.length !== previous.cut.length ||
+					plan.cut.some((page, k) => page !== previous.cut[k]))
+			) {
 				({ drawn, fading } = this.#fader.update(plan.cut, this.#has, now, this.#budget));
 			}
 			feed.update(plan, new Set(drawn.map((d) => d.id)), now);
