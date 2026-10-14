@@ -57,7 +57,7 @@ export class Project {
 	encode(encoder: GPUCommandEncoder, timestamps?: GPUComputePassTimestampWrites): void {
 		// a uniform count keeps the loop uniform across each workgroup
 		encoder.copyBufferToBuffer(this.#work, WORK.visible * 4, this.#visible, 0, 4);
-		const count = Math.max(1, Math.min(256, this.#pool.listed));
+		const count = Math.max(1, Math.min(128, this.#pool.listed));
 		const pass = encoder.beginComputePass({ label: 'project', timestampWrites: timestamps });
 		pass.setPipeline((this.#pipeline ??= this.#build()));
 		pass.setBindGroup(0, this.#group);
