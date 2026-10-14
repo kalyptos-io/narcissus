@@ -124,7 +124,7 @@ export class Sort {
 	): void {
 		const [histogram, reduce, top, down, scatter] = this.#kernels;
 		const count = Math.max(1, Math.min(this.#blocks, Math.ceil(maxSplats / BLOCK)));
-		const blocks = groups(count);
+		const blocks = groups(Math.ceil(count / 4));
 		const chunks = Math.ceil(count / CHUNK);
 		const pass = encoder.beginComputePass({ label: 'sort', timestampWrites: timestamps });
 		pass.setPipeline(this.#prepare);
