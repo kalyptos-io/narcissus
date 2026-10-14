@@ -225,7 +225,7 @@ class GpuEngine implements Engine {
 	#options: EngineOptions;
 	#fetch: Fetch;
 	#settings: Settings;
-	#quality = new Quality();
+	#quality: Quality;
 	#pool: Pool;
 	#renderer: Renderer;
 	/** splats one frame may project */
@@ -300,6 +300,7 @@ class GpuEngine implements Engine {
 		this.#options = options;
 		this.#fetch = fetch;
 		this.#settings = { ...options.settings };
+		this.#quality = this.#control();
 		this.#css = [canvas.width, canvas.height, 1];
 		this.#target = [Math.max(1, canvas.width), Math.max(1, canvas.height)];
 		const { pool, frame } = capacities(this.#budget, gpu.device.limits);
@@ -381,11 +382,16 @@ class GpuEngine implements Engine {
 
 	configure(settings: Partial<Settings>): void {
 		if (this.#destroyed) return;
+		const { budget, budgetRange } = this.#settings;
 		this.#settings = { ...this.#settings, ...settings };
-		const { pool, frame } = capacities(this.#budget, this.#gpu.device.limits);
-		if (pool > this.#pool.capacity || frame > this.#frameCapacity) this.#rebuild(pool, frame);
-		this.#dirty = true;
-		this.requestFrame();
+		const next = this.#settings;
+		const same = (a?: readonly number[], b?: readonly number[]) => a?.join() === b?.join();
+		// settings handed over unchanged keep the adapted budget
+		if (next.budget !== budget || !same(next.budgetRange, budgetRange)) {
+			this.#quality = this.#control();
+			this.#fit();
+		}
+		this.#rebudget();
 	}
 
 	resize(width: number, height: number, ratio: number): void {
@@ -438,6 +444,7 @@ class GpuEngine implements Engine {
 			},
 			memory: { pool: pool.bytes, buffers: gpu.bytes },
 			capacity: pool.capacity,
+			budget: this.#budget,
 			scale: this.#quality.scale,
 			loading: feed !== null && !feed.idle
 		};
@@ -507,30 +514,36 @@ class GpuEngine implements Engine {
 		this.#gpu.device.destroy();
 	}
 
-	/** the settings' budget, within what one frame can project on this device */
 	get #budget(): number {
-		const most = Math.floor(capacities(Infinity, this.#gpu.device.limits).frame / FRAME_SHARE);
-		return Math.max(1, Math.min(this.#settings.budget, most));
+		return this.#quality.budget;
 	}
 
-	/** a new pool and renderer; residency reloads through a new feed */
-	#rebuild(capacity: number, frame: number): void {
-		this.#feed?.destroy();
-		this.#feed = null;
+	/** the frame rate controller for the settings, its budgets within what one frame can project here */
+	#control(): Quality {
+		const { budget, budgetRange = [budget, budget] } = this.#settings;
+		const most = Math.floor(capacities(Infinity, this.#gpu.device.limits).frame / FRAME_SHARE);
+		const fit = (splats: number) => Math.max(1, Math.min(splats, most));
+		return new Quality(fit(budget), [fit(budgetRange[0]), fit(budgetRange[1])]);
+	}
+
+	/** buffers that hold the budget, and a plan for it */
+	#rebudget(): void {
+		const { pool, frame } = capacities(this.#budget, this.#gpu.device.limits);
+		if (pool > this.#pool.capacity || frame > this.#frameCapacity) this.#grow(pool, frame);
+		this.#dirty = true;
+		this.requestFrame();
+	}
+
+	/** a larger pool with its pages in place, and a renderer over it */
+	#grow(capacity: number, frame: number): void {
+		this.#pool.grow(capacity);
 		this.#renderer.destroy();
-		this.#pool.destroy();
-		this.#pool = new Pool(this.#gpu.device, capacity);
-		this.#pool.setOrigin(this.#origin);
 		const renderer = new Renderer(this.#gpu, this.#context, this.#pool, frame);
 		renderer.resize(...this.#target);
 		for (const entry of this.#shades) entry.off = renderer.shade(entry.hook);
 		for (const entry of this.#posts) entry.off = renderer.post(entry.hook);
 		this.#renderer = renderer;
 		this.#frameCapacity = frame;
-		if (this.#tree && this.#loader) this.#feed = this.#feedFor(this.#tree, this.#loader);
-		this.#plan = null;
-		this.#dirty = true;
-		this.requestFrame();
 	}
 
 	#feedFor(tree: Tree, loader: Loader): Feed {
@@ -762,17 +775,22 @@ class GpuEngine implements Engine {
 		};
 	}
 
-	/** frame timings for stats, and the render scale controller */
+	/** frame timings for stats, and the frame rate controller */
 	#sample(now: number, cpuMs: number, moved: boolean): void {
 		const quality = this.#quality;
 		const { gpuMs } = this.#renderer.stats();
+		const interval = now - this.#lastFrame;
 		// queued work can span more than the idle-gap threshold
-		const consecutive = now - this.#lastFrame <= Math.max(GAP_MS, 2 * gpuMs, 2 * cpuMs);
-		if (consecutive) push(this.#frameMs, now - this.#lastFrame);
+		const consecutive = interval <= Math.max(GAP_MS, 2 * gpuMs, 2 * cpuMs);
+		if (consecutive) push(this.#frameMs, interval);
 		push(this.#cpuMs, cpuMs);
 		this.#lastFrame = now;
-		// only moving frames adapt the scale, so a still view stays sharp
-		if (quality.sample(gpuMs, now, consecutive && moved)) this.#fit();
+		const budget = quality.budget;
+		// only moving frames adapt, so a still view stays sharp
+		if (quality.sample(interval, now, consecutive && moved, this.#plan?.planned ?? 0)) {
+			this.#fit();
+			if (quality.budget !== budget) this.#rebudget();
+		}
 		if (moved) this.#movedAt = now;
 		else if (quality.scale < 1 && now - this.#movedAt > STILL_MS) {
 			quality.full();

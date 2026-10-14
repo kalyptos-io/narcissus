@@ -4,6 +4,9 @@ import { Controls, defaultView, opening, parsePose } from '../controls/index.ts'
 import { createEngine, type Engine, type Settings, type World } from '../engine/index.ts';
 
 const VIEW_DISTANCE = 4000;
+const BUDGET = 4_000_000;
+const BUDGET_RANGE = [2_000_000, 6_000_000] as const;
+const PHONE_BUDGET = 2_000_000;
 const SKY = [0.62, 0.72, 0.8] as const;
 
 const template = document.createElement('template');
@@ -20,9 +23,10 @@ function mobile(): boolean {
 }
 
 /**
- * attributes: src, the url of a world.json; budget, the splats a frame may draw; view-distance in
- * metres; camera, the pose to open on as E,N,H,yaw,pitch,dist; sky as r,g,b from 0 to 1. camera
- * and sky are read when a world opens and when the element starts.
+ * attributes: src, the url of a world.json; budget, the splats a frame may draw, which otherwise
+ * adapts to the frame rate; view-distance in metres; camera, the pose to open on as
+ * E,N,H,yaw,pitch,dist; sky as r,g,b from 0 to 1. camera and sky are read when a world opens and
+ * when the element starts.
  * events: ready, with the World as its detail, and error, with a message.
  * after an error, such as a browser without webgpu, its own content shows in place of the canvas,
  * or the message when it has none.
@@ -73,14 +77,15 @@ export class NarcissusViewer extends HTMLElement {
 	}
 
 	#settings(): Settings {
-		const number = (name: string, otherwise: number) => {
+		const number = (name: string) => {
 			const value = Number(this.getAttribute(name));
-			return value > 0 && Number.isFinite(value) ? value : otherwise;
+			return value > 0 && Number.isFinite(value) ? value : null;
 		};
-		return {
-			budget: number('budget', mobile() ? 2_000_000 : 4_000_000),
-			viewDistance: number('view-distance', VIEW_DISTANCE)
-		};
+		const budget = number('budget');
+		const viewDistance = number('view-distance') ?? VIEW_DISTANCE;
+		if (budget !== null) return { budget, viewDistance };
+		if (mobile()) return { budget: PHONE_BUDGET, viewDistance };
+		return { budget: BUDGET, budgetRange: BUDGET_RANGE, viewDistance };
 	}
 
 	async #start(): Promise<void> {

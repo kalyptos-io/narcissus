@@ -61,18 +61,18 @@ class Dirty {
 
 export class Pool {
 	/** GEOMETRY_WORDS per record */
-	readonly geometry!: GPUBuffer;
+	geometry!: GPUBuffer;
 	/** COLOUR_WORDS per record */
-	readonly colour!: GPUBuffer;
+	colour!: GPUBuffer;
 	/** Page per table slot */
-	readonly pages!: GPUBuffer;
+	pages!: GPUBuffer;
 	/** Cluster per slot */
-	readonly clusters!: GPUBuffer;
+	clusters!: GPUBuffer;
 	// cull input excludes clusters with only zero quadrant factors
-	readonly list!: GPUBuffer;
+	list!: GPUBuffer;
 	listed = 0;
 	/** splats */
-	readonly capacity: number;
+	capacity: number;
 
 	#device: GPUDevice;
 	#entries = new Map<number, Entry>();
@@ -100,14 +100,7 @@ export class Pool {
 		this.capacity = capacity;
 		this.#device = device;
 		const slots = this.slots;
-		// copy-src lets tests and debugging read the pool back
-		const usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
-		const make = (label: string, size: number) => device.createBuffer({ label, size, usage });
-		this.geometry = make('pool geometry', capacity * GEOMETRY_WORDS * 4);
-		this.colour = make('pool colour', capacity * COLOUR_WORDS * 4);
-		this.pages = make('pool pages', slots * PAGE_WORDS * 4);
-		this.clusters = make('pool clusters', slots * CLUSTER_WORDS * 4);
-		this.list = make('pool list', slots * 4);
+		this.#allocate();
 		this.#taken = new Uint8Array(slots);
 		this.#free = slots;
 		this.#tables = Array.from({ length: slots }, (_, k) => slots - 1 - k);
@@ -124,8 +117,7 @@ export class Pool {
 	}
 
 	get bytes(): number {
-		const buffers = [this.geometry, this.colour, this.pages, this.clusters, this.list];
-		return buffers.reduce((sum, b) => sum + b.size, 0);
+		return this.#buffers().reduce((sum, b) => sum + b.size, 0);
 	}
 
 	/** uploaded and drawable */
@@ -246,9 +238,58 @@ export class Pool {
 		this.#tableDirty.clear();
 	}
 
+	/** room for capacity splats, the pages held staying in place; new buffers, so new bind groups */
+	grow(capacity: number): void {
+		if (capacity <= this.capacity) return;
+		const before = this.slots;
+		const old = this.#buffers();
+		this.capacity = capacity;
+		this.#allocate();
+		// queued writes run before the copy, and pending dirty ranges flush into the new buffers
+		const encoder = this.#device.createCommandEncoder({ label: 'pool grow' });
+		this.#buffers().forEach((buffer, k) =>
+			encoder.copyBufferToBuffer(old[k], 0, buffer, 0, old[k].size)
+		);
+		this.#device.queue.submit([encoder.finish()]);
+		for (const buffer of old) buffer.destroy();
+
+		const slots = this.slots;
+		const taken = new Uint8Array(slots);
+		taken.set(this.#taken);
+		this.#taken = taken;
+		this.#free += slots - before;
+		for (let s = slots - 1; s >= before; s--) this.#tables.push(s);
+		const table = new Uint32Array(slots * PAGE_WORDS);
+		table.set(this.#table);
+		this.#table = table;
+		this.#tableFloats = new Float32Array(table.buffer);
+		const clusterWords = new Uint32Array(slots * CLUSTER_WORDS);
+		clusterWords.set(this.#clusterWords);
+		this.#clusterWords = clusterWords;
+		this.#clusterFloats = new Float32Array(clusterWords.buffer);
+		const list = new Uint32Array(slots);
+		list.set(this.#list);
+		this.#list = list;
+	}
+
 	destroy(): void {
-		const buffers = [this.geometry, this.colour, this.pages, this.clusters, this.list];
-		for (const b of buffers) b.destroy();
+		for (const b of this.#buffers()) b.destroy();
+	}
+
+	#buffers(): GPUBuffer[] {
+		return [this.geometry, this.colour, this.pages, this.clusters, this.list];
+	}
+
+	#allocate(): void {
+		const { capacity, slots } = this;
+		// copy-src lets the pool grow, and tests and debugging read it back
+		const usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
+		const make = (label: string, size: number) => this.#device.createBuffer({ label, size, usage });
+		this.geometry = make('pool geometry', capacity * GEOMETRY_WORDS * 4);
+		this.colour = make('pool colour', capacity * COLOUR_WORDS * 4);
+		this.pages = make('pool pages', slots * PAGE_WORDS * 4);
+		this.clusters = make('pool clusters', slots * CLUSTER_WORDS * 4);
+		this.list = make('pool list', slots * 4);
 	}
 
 	#unlink(entry: Entry): void {

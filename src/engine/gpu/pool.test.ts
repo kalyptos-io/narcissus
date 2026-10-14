@@ -189,6 +189,41 @@ describe('Pool', () => {
 		pool.destroy();
 	});
 
+	it('grows with its pages in place and room for more', async () => {
+		const device = await testDevice();
+		const pool = new Pool(device, 2 * CLUSTER);
+		const first = page(300, 4);
+		const second = page(CLUSTER, 6);
+		pool.add(1, first, [0, 0], none);
+		pool.upload(Infinity);
+		pool.draw([{ id: 1, factors: 0xffffffff }]);
+		expect(pool.add(2, second, [0, 0], (id) => id === 1)).toBe(false);
+
+		// the writes above are still queued, so the copy must come after them
+		pool.grow(4 * CLUSTER);
+		expect(pool.bytes).toBe(4 * CLUSTER * 28 + 4 * (48 + 144 + 4));
+		expect(pool.has(1)).toBe(true);
+		expect(pool.add(2, second, [0, 0], none)).toBe(true);
+		pool.upload(Infinity);
+		pool.draw([
+			{ id: 1, factors: 0x01010101 },
+			{ id: 2, factors: 0xffffffff }
+		]);
+		expect(pool.listed).toBe(3);
+
+		const list = (await read(device, pool.list)).u;
+		const clusters = (await read(device, pool.clusters)).u;
+		const geometry = (await read(device, pool.geometry)).u;
+		const pages = (await read(device, pool.pages)).u;
+		expect(slice(list, 0, 3)).toEqual([0, 1, 2]);
+		expect(slice(geometry, 0, 300 * GEOMETRY_WORDS)).toEqual([...first.geometry]);
+		const added = slice(geometry, 2 * CLUSTER * GEOMETRY_WORDS, CLUSTER * GEOMETRY_WORDS);
+		expect(added).toEqual([...second.geometry]);
+		expect(pages[clusters[0] * PAGE_WORDS + 3]).toBe(300);
+		expect(pages[clusters[0] * PAGE_WORDS + 19]).toBe(0x01010101);
+		pool.destroy();
+	});
+
 	it('lists only drawn uploaded pages and rewrites origins on setOrigin', async () => {
 		const device = await testDevice();
 		const pool = new Pool(device, 4 * CLUSTER);

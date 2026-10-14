@@ -19,6 +19,8 @@ export interface Camera {
 export interface Settings {
 	/** splats the engine may draw per frame */
 	budget: number;
+	/** the budget adapts within it to hold 30 fps, starting from budget; without it the budget stays */
+	budgetRange?: readonly [number, number];
 	/** metres; the far clip and the planner's reach */
 	viewDistance: number;
 }
@@ -43,6 +45,8 @@ export interface Stats {
 	memory: { pool: number; buffers: number };
 	/** splats the pool holds at most */
 	capacity: number;
+	/** splats a frame may draw now */
+	budget: number;
 	scale: number;
 	loading: boolean;
 }
