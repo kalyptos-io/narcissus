@@ -301,8 +301,10 @@ export class Pool {
 			words[w + 1] = slots[c] * CLUSTER;
 			words[w + 2] = c * CLUSTER;
 			words[w + 3] = Math.max(0, Math.min(CLUSTER, page.count - c * CLUSTER));
-			floats.set(page.clusters.subarray(c * 6, c * 6 + 3), w + 4);
-			floats.set(page.clusters.subarray(c * 6 + 3, c * 6 + 6), w + 8);
+			for (let k = 0; k < 3; k++) {
+				floats[w + 4 + k] = page.clusters[c * 6 + k];
+				floats[w + 8 + k] = page.clusters[c * 6 + 3 + k];
+			}
 		}
 
 		// runs of consecutive slots go up in one write each
