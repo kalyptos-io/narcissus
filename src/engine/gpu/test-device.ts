@@ -16,6 +16,7 @@ export function testDevice(): Promise<GPUDevice> {
 		const adapter = await gpu.requestAdapter();
 		if (!adapter) throw new Error('No GPU adapter for the kernel tests.');
 		return adapter.requestDevice({
+			requiredFeatures: adapter.features.has('timestamp-query') ? ['timestamp-query'] : [],
 			requiredLimits: {
 				maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
 				maxBufferSize: adapter.limits.maxBufferSize

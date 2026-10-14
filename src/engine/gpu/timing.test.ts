@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest';
-import { create } from 'webgpu';
 import { testDevice } from './test-device.ts';
 import { Timing } from './timing.ts';
 
@@ -18,10 +17,8 @@ describe('Timing', () => {
 	});
 
 	it('resumes timestamp writes after the pending readback finishes', async (context) => {
-		const gpu = create([]);
-		const adapter = await gpu.requestAdapter();
-		if (!adapter?.features.has('timestamp-query')) context.skip();
-		const device = await adapter!.requestDevice({ requiredFeatures: ['timestamp-query'] });
+		const device = await testDevice();
+		if (!device.features.has('timestamp-query')) context.skip();
 		const timing = new Timing(device, true, ['empty']);
 		const encoder = device.createCommandEncoder();
 		encoder.beginComputePass({ timestampWrites: timing.writes('empty') }).end();
@@ -33,6 +30,5 @@ describe('Timing', () => {
 		await vi.waitFor(() => expect(timing.writes('empty')).toBeDefined());
 		expect(timing.ms.empty).toBeGreaterThanOrEqual(0);
 		timing.destroy();
-		device.destroy();
 	});
 });
