@@ -1,4 +1,4 @@
-// one workgroup per visible cluster, one thread per splat; shade() follows, generated with the hooks
+// workgroups loop over visible clusters, one thread per splat
 
 // ndc reach past the frustum, so splats centred just outside still cover the edge
 const GUARD: f32 = 1.3;
@@ -140,33 +140,35 @@ fn shown(cluster: Cluster, t: u32, dest: ptr<function, Projected>, key: ptr<func
 }
 
 @compute @workgroup_size(256)
-fn project(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) t: u32) {
-	let index = wid.y * GROUPS_X + wid.x;
-	if (index >= visible) {
-		return;
-	}
-	let cluster = clusters[atomicLoad(&work[WORK_LIST + index])];
-	var splat: Projected;
-	var key = 0u;
-	var keep = false;
-	if (t < cluster.count) {
-		keep = shown(cluster, t, &splat, &key);
-	}
+fn project(
+	@builtin(workgroup_id) wid: vec3u,
+	@builtin(num_workgroups) groups: vec3u,
+	@builtin(local_invocation_index) t: u32
+) {
+	for (var index = wid.y * groups.x + wid.x; index < visible; index += groups.x * groups.y) {
+		let cluster = clusters[atomicLoad(&work[WORK_LIST + index])];
+		var splat: Projected;
+		var key = 0u;
+		var keep = false;
+		if (t < cluster.count) {
+			keep = shown(cluster, t, &splat, &key);
+		}
 
-	// one global atomic per workgroup
-	var rank = 0u;
-	if (keep) {
-		rank = atomicAdd(&kept, 1u);
-	}
-	workgroupBarrier();
-	if (t == 0u) {
-		base = atomicAdd(&work[WORK_PROJECTED], atomicLoad(&kept));
-	}
-	let i = workgroupUniformLoad(&base) + rank;
-	let capacity = arrayLength(&projected);
-	if (keep && i < capacity) {
-		projected[i] = splat;
-		sort[i] = key;
-		sort[capacity + i] = i;
+		// one global atomic per cluster
+		var rank = 0u;
+		if (keep) {
+			rank = atomicAdd(&kept, 1u);
+		}
+		workgroupBarrier();
+		if (t == 0u) {
+			base = atomicAdd(&work[WORK_PROJECTED], atomicExchange(&kept, 0u));
+		}
+		let i = workgroupUniformLoad(&base) + rank;
+		let capacity = arrayLength(&projected);
+		if (keep && i < capacity) {
+			projected[i] = splat;
+			sort[i] = key;
+			sort[capacity + i] = i;
+		}
 	}
 }

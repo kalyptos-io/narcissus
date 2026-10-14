@@ -1,14 +1,10 @@
 import type { Shade } from '../plugin.ts';
 import { bufferGroup, bufferLayout, type FrameBuffers } from './buffers.ts';
 import common from './common.wgsl?raw';
-import { groups, WORK } from './layout.ts';
+import { WORK } from './layout.ts';
 import source from './project.wgsl?raw';
 import type { Pool } from './pool.ts';
 
-/**
- * one workgroup per visible cluster: decode, fade, sh1, shade hooks, project, drop what cannot
- * show, append Projected with its key and value
- */
 export class Project {
 	#device: GPUDevice;
 	#layout: GPUPipelineLayout;
@@ -58,16 +54,15 @@ export class Project {
 		this.#pipeline = undefined;
 	}
 
-	/** a workgroup per listed cluster, of which those past the visible ones return at once */
 	encode(encoder: GPUCommandEncoder, timestamps?: GPUComputePassTimestampWrites): void {
-		// a uniform count lets empty workgroups return without a barrier
+		// a uniform count keeps the loop uniform across each workgroup
 		encoder.copyBufferToBuffer(this.#work, WORK.visible * 4, this.#visible, 0, 4);
-		const listed = Math.max(1, this.#pool.listed);
+		const count = Math.max(1, Math.min(256, this.#pool.listed));
 		const pass = encoder.beginComputePass({ label: 'project', timestampWrites: timestamps });
 		pass.setPipeline((this.#pipeline ??= this.#build()));
 		pass.setBindGroup(0, this.#group);
 		// chrome validates indirect args on its gpu process's main thread, a cost every frame
-		pass.dispatchWorkgroups(...groups(listed));
+		pass.dispatchWorkgroups(count);
 		pass.end();
 	}
 
