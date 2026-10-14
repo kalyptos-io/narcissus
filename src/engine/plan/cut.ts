@@ -77,30 +77,27 @@ export class Planner {
 	plan(tree: Tree, view: View, resident: (id: number) => boolean, options: PlanOptions): Plan {
 		const { budget, capacity, now, predicted } = options;
 		const order: PageNode[] = [];
+		const visibility: number[] = [];
 		const refined = new Map<number, number>();
 		const seen = new Map<number, number>();
+		const wanted = tree.wanted();
 		const priority = new Map<number, number>();
 		const queue = new Queue();
 		let planned = 0;
 		let kept = 0;
-		const near = new Set<number>();
-		const shown = new Set<number>();
 
 		const enter = (page: PageNode, m: Measure) => {
 			const count = page.row.count;
 			order.push(page);
+			visibility.push((m.shown ? 1 : 0) | (m.near ? 2 : 0));
 			kept += slots(count);
-			if (m.shown) {
-				planned += count;
-				shown.add(page.id);
-			}
-			if (m.near) near.add(page.id);
+			if (m.shown) planned += count;
 			const handed = this.#refined.get(page.id);
 			const was = handed !== undefined;
 			const target = m.pixels * m.weight;
 			// rank by need alone: ranked up by the margin, it would meet the budget before what freed it
 			const ratio = target / Math.max(1, count);
-			if (m.pixels > 0) priority.set(page.id, ratio);
+			if (wanted.length && m.pixels > 0) priority.set(page.id, ratio);
 			const recent = now - (this.#seen.get(page.id) ?? -Infinity) <= HOLD;
 			const held = was && !m.shown && recent ? handed : null;
 			if ((count < target * (was ? MARGIN : 1) || held !== null) && refinable(page, resident))
@@ -143,24 +140,33 @@ export class Planner {
 		this.#refined = refined;
 		this.#seen = seen;
 
-		const cut = order.filter((page) => !refined.has(page.id));
+		const cut: PageNode[] = [];
+		const pending: { page: PageNode; near: boolean }[] = [];
 		const keep = new Set(refined.keys());
-		for (const page of cut) keep.add(page.id);
+		let missing = 0;
+		for (let i = 0; i < order.length; i++) {
+			const page = order[i];
+			if (refined.has(page.id)) continue;
+			cut.push(page);
+			keep.add(page.id);
+			if (!resident(page.id)) {
+				if (visibility[i] & 1) missing += page.row.count;
+				pending.push({ page, near: !!(visibility[i] & 2) });
+			}
+		}
 		const ranked: { wanted: Wanted; rank: number }[] = [];
-		for (const wanted of tree.wanted()) {
+		for (const item of wanted) {
 			let rank = -1;
-			for (const page of wanted.over) rank = Math.max(rank, priority.get(page.id) ?? -1);
-			if (rank >= 0) ranked.push({ wanted, rank });
+			for (const page of item.over) rank = Math.max(rank, priority.get(page.id) ?? -1);
+			if (rank >= 0) ranked.push({ wanted: item, rank });
 		}
 		ranked.sort((a, b) => b.rank - a.rank);
-		let missing = 0;
-		for (const page of cut) if (shown.has(page.id) && !resident(page.id)) missing += page.row.count;
 		return {
 			cut,
 			// fringe last: it holds up the screen's pages in the workers, and its uploads cost moving frames
-			load: cut.filter(
-				(page) => !resident(page.id) && (near.has(page.id) || (!predicted && missing === 0))
-			),
+			load: pending
+				.filter(({ near }) => near || (!predicted && missing === 0))
+				.map(({ page }) => page),
 			idx: ranked.map((entry) => entry.wanted),
 			keep,
 			planned,
