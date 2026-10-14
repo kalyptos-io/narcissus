@@ -277,7 +277,8 @@ export class Renderer {
 		for (const { shade, slot } of this.#shades) {
 			shade.update(frame, this.#plugins.subarray(slot * 4, (slot + shade.uniforms) * 4));
 		}
-		this.#device.queue.writeBuffer(this.#buffers.plugins, 0, this.#plugins);
+		if (this.#shades.length)
+			this.#device.queue.writeBuffer(this.#buffers.plugins, 0, this.#plugins);
 	}
 
 	#target(name: TargetName, format: GPUTextureFormat): GPUTexture {
