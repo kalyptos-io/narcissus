@@ -72,7 +72,6 @@ export class Planner {
 	#refined = new Map<number, number>();
 	/** when each refined page was last on screen */
 	#seen = new Map<number, number>();
-	#box = new Float64Array(6);
 	#out: Footprint = { shown: false, pixels: 0, weight: 1 };
 
 	plan(tree: Tree, view: View, resident: (id: number) => boolean, options: PlanOptions): Plan {
@@ -184,10 +183,19 @@ export class Planner {
 	}
 
 	#project(page: PageNode, view: View, margin: number): Footprint {
-		const box = this.#box;
-		for (let k = 0; k < 6; k++) box[k] = page.box[k] - view.origin[k % 3];
 		const { width, height, tan, near, far } = view;
-		return footprint(box, view.view, width, height, tan, near, far, margin, this.#out);
+		return footprint(
+			page.box,
+			view.view,
+			width,
+			height,
+			tan,
+			near,
+			far,
+			margin,
+			this.#out,
+			view.origin
+		);
 	}
 }
 

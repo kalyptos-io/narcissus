@@ -1,5 +1,7 @@
 // screen footprint of a box
 
+const ORIGIN = [0, 0, 0] as const;
+
 export interface Footprint {
 	/** overlaps the viewport without the fringe */
 	shown: boolean;
@@ -17,10 +19,7 @@ export function centreWeight(left: number, right: number, bottom: number, top: n
 	return 1 + 15 * Math.max(0, 1 - radius) ** 2;
 }
 
-/**
- * box is min x, y, z then max x, y, z in the frame of the column-major view matrix m; tan is
- * tan(fov / 2); margin widens the screen (1.1 keeps a 10% fringe)
- */
+/** box shifted by origin into view m; tan is tan(fov / 2), margin widens the viewport */
 export function footprint(
 	box: ArrayLike<number>,
 	m: ArrayLike<number>,
@@ -30,11 +29,12 @@ export function footprint(
 	near: number,
 	far: number,
 	margin = 1,
-	out: Footprint = { shown: false, pixels: 0, weight: 1 }
+	out: Footprint = { shown: false, pixels: 0, weight: 1 },
+	origin: readonly [number, number, number] = ORIGIN
 ): Footprint {
-	const cx = (box[0] + box[3]) / 2;
-	const cy = (box[1] + box[4]) / 2;
-	const cz = (box[2] + box[5]) / 2;
+	const cx = (box[0] + box[3]) / 2 - origin[0];
+	const cy = (box[1] + box[4]) / 2 - origin[1];
+	const cz = (box[2] + box[5]) / 2 - origin[2];
 	const ex = (box[3] - box[0]) / 2;
 	const ey = (box[4] - box[1]) / 2;
 	const ez = (box[5] - box[2]) / 2;

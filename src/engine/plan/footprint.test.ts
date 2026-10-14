@@ -26,6 +26,21 @@ describe('footprint', () => {
 		expect(projected(box(-9)).weight).toBeCloseTo(projected(box(9)).weight);
 	});
 
+	it('projects world boxes through a floating origin without a shifted copy', () => {
+		for (const origin of [
+			[724000, 6178000, 0],
+			[-1000000000, 1000000000, 1000]
+		] as const) {
+			for (const b of [box(), box(9), box(12.5), box(20), box(0, 20), box(0, -1)]) {
+				const world = b.map((v, k) => v + origin[k % 3]);
+				const expected = footprint(b, identity(), 1920, 1080, 1, 0.1, 1000, 1.1);
+				expect(
+					footprint(world, identity(), 1920, 1080, 1, 0.1, 1000, 1.1, undefined, origin)
+				).toEqual(expected);
+			}
+		}
+	});
+
 	it('covers at least the screen when a region surrounds the camera', () => {
 		const m = identity();
 		expect(footprint(box(0, -1), m, 1000, 1000, 1, 0.1, 1000).pixels).toBeGreaterThan(1_000_000);
