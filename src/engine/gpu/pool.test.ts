@@ -100,6 +100,33 @@ describe('Pool', () => {
 		pool.destroy();
 	});
 
+	it('preserves recency after removing middle, newest, and oldest pages', async () => {
+		const pool = new Pool(await testDevice(), 4 * CLUSTER);
+		for (const id of [1, 2, 3, 4]) pool.add(id, page(10), [0, 0], none);
+		pool.upload(Infinity);
+		pool.draw([
+			{ id: 2, factors: 1 },
+			{ id: 4, factors: 1 }
+		]);
+		pool.remove(3);
+		pool.remove(4);
+		pool.add(5, page(10), [0, 0], none);
+		pool.upload(Infinity);
+		pool.draw([{ id: 1, factors: 1 }]);
+		pool.remove(2);
+		for (const id of [6, 7, 8]) {
+			pool.add(id, page(10), [0, 0], none);
+			pool.upload(Infinity);
+		}
+		expect([...pool.ids()]).toEqual([1, 6, 7, 8]);
+		expect(pool.holds(5)).toBe(false);
+		pool.clear();
+		pool.add(9, page(10), [0, 0], none);
+		pool.upload(Infinity);
+		expect([...pool.ids()]).toEqual([9]);
+		pool.destroy();
+	});
+
 	it('holds nothing once cleared', async () => {
 		const pool = new Pool(await testDevice(), 2 * CLUSTER);
 		pool.add(1, page(CLUSTER), [0, 0], none);

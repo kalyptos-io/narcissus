@@ -16,6 +16,9 @@ const FACTORS = 19;
 const MERGE_WORDS = 1024;
 
 interface Entry {
+	id: number;
+	previous: Entry | null;
+	next: Entry | null;
 	/** null once uploaded */
 	page: DecodedPage | null;
 	/** cluster c of the page sits in slots[c] */
@@ -70,8 +73,9 @@ export class Pool {
 	readonly capacity: number;
 
 	#device: GPUDevice;
-	// map order is draw recency, least recently drawn first
 	#entries = new Map<number, Entry>();
+	#oldest: Entry | null = null;
+	#newest: Entry | null = null;
 	#queue = new Set<number>();
 	/** 1 per cluster slot in use */
 	#taken: Uint8Array;
@@ -135,7 +139,8 @@ export class Pool {
 
 	/** ids uploaded */
 	*ids(): Iterable<number> {
-		for (const [id, entry] of this.#entries) if (entry.page === null) yield id;
+		for (let entry = this.#oldest; entry; entry = entry.next)
+			if (entry.page === null) yield entry.id;
 	}
 
 	/**
@@ -153,13 +158,18 @@ export class Pool {
 		const need = slots(page.count) / CLUSTER;
 		if (!this.#fit(need, keep)) return false;
 		const o = PARAMS.origin;
-		this.#entries.set(id, {
+		const entry: Entry = {
+			id,
+			previous: null,
+			next: null,
 			page,
 			slots: this.#take(need),
 			table: this.#tables.pop()!,
 			base: [page.params[o] + unit[0], page.params[o + 1] + unit[1], page.params[o + 2]],
 			factors: 0
-		});
+		};
+		this.#entries.set(id, entry);
+		this.#touch(entry);
 		this.#queue.add(id);
 		return true;
 	}
@@ -167,6 +177,7 @@ export class Pool {
 	remove(id: number): void {
 		const entry = this.#entries.get(id);
 		if (!entry) return;
+		this.#unlink(entry);
 		this.#entries.delete(id);
 		this.#queue.delete(id);
 		for (const slot of entry.slots) this.#taken[slot] = 0;
@@ -206,8 +217,7 @@ export class Pool {
 			const entry = this.#entries.get(id);
 			if (!entry || entry.page !== null) continue;
 			if (entry.factors !== factors) this.#setFactors(entry, factors);
-			this.#entries.delete(id);
-			this.#entries.set(id, entry);
+			this.#touch(entry);
 			changed ||= this.#drawn[count] !== entry;
 			this.#drawn[count++] = entry;
 			if (changed) this.#list.set(entry.slots, listed);
@@ -235,14 +245,32 @@ export class Pool {
 		for (const b of buffers) b.destroy();
 	}
 
+	#unlink(entry: Entry): void {
+		if (entry.previous) entry.previous.next = entry.next;
+		else if (this.#oldest === entry) this.#oldest = entry.next;
+		if (entry.next) entry.next.previous = entry.previous;
+		else if (this.#newest === entry) this.#newest = entry.previous;
+		entry.previous = null;
+		entry.next = null;
+	}
+
+	#touch(entry: Entry): void {
+		if (this.#newest === entry) return;
+		this.#unlink(entry);
+		entry.previous = this.#newest;
+		if (this.#newest) this.#newest.next = entry;
+		else this.#oldest = entry;
+		this.#newest = entry;
+	}
+
 	/** frees the least recently drawn uploaded pages keep rejects until need slots are free */
 	#fit(need: number, keep: (id: number) => boolean): boolean {
 		let free = this.#free;
 		if (free >= need) return true;
 		const evict: number[] = [];
-		for (const [id, entry] of this.#entries) {
-			if (entry.page !== null || keep(id)) continue;
-			evict.push(id);
+		for (let entry = this.#oldest; entry; entry = entry.next) {
+			if (entry.page !== null || keep(entry.id)) continue;
+			evict.push(entry.id);
 			free += entry.slots.length;
 			if (free >= need) break;
 		}
