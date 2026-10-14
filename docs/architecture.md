@@ -63,3 +63,5 @@ The built-in `http` source runs inside the engine's workers. A `Fetch` from the 
 ## Benchmarks
 
 `pnpm bench` and `pnpm bench:drive` measure the engine in a real Chrome. They are a workstation tool: they need Linux, Chrome at `/opt/google/chrome/google-chrome`, a GPU and the `cage` compositor, and they are not part of CI.
+
+The quick bench accepts `CPU_RATE=6` for sixfold CPU throttling. This leaves GPU speed unchanged. Set `FRAME_LIMIT_MS=1000` to allow slow frames that exceed the default 100 ms validity limit. Results record both settings. A saved baseline is compared only when the adapter, world and benchmark settings match. `SNAPSHOT=/tmp/view.png` saves the settled second pose, and `PROFILE=/tmp/moves.cpuprofile` saves a CPU profile of the camera moves.

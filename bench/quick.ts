@@ -21,6 +21,7 @@ export interface Options {
 	source: 'http' | 'synthetic' | 'page';
 	/** a remote world.json to stream instead of the served world */
 	world?: string;
+	frameLimitMs: number;
 }
 
 export interface Repetition {
@@ -46,8 +47,6 @@ const SHOT = [480, 270] as const;
 const HITCH_MS = 50;
 /** a 100 Hz display */
 const PACE_MS = 10;
-/** a longer gap between measured frames invalidates the run */
-const GAP_MS = 100;
 const IDLE_MS = 60_000;
 const MIB = 2 ** 20;
 
@@ -57,6 +56,7 @@ let engine: Engine;
 let a: Pose;
 let b: Pose;
 let lost = '';
+let frameLimitMs: number;
 
 function pose(cam: string): Pose {
 	const p = parsePose(cam);
@@ -99,6 +99,7 @@ async function detailed() {
 }
 
 async function ready(options: Options) {
+	frameLimitMs = options.frameLimitMs;
 	a = pose(options.a);
 	b = pose(options.b);
 	engine = await createEngine(canvas, {
@@ -115,7 +116,7 @@ async function ready(options: Options) {
 	look(a);
 	await settle();
 	const idleMs = performance.now() - start;
-	const info = (await navigator.gpu.requestAdapter())?.info;
+	const info = (await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' }))?.info;
 	const adapter = info ? info.description || `${info.vendor} ${info.architecture}` : 'none';
 	return { idleMs, adapter };
 }
@@ -201,7 +202,7 @@ function repetition(poses: Measured[]): Repetition {
 	}
 	const reasons: string[] = [];
 	const gap = Math.max(...ms);
-	if (gap > GAP_MS) reasons.push(`a frame took ${gap.toFixed(0)} ms`);
+	if (gap > frameLimitMs) reasons.push(`a frame took ${gap.toFixed(0)} ms`);
 	if (lost) reasons.push(`device lost: ${lost}`);
 	return { metrics, reasons };
 }

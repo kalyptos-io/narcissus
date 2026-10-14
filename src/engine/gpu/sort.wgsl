@@ -1,7 +1,7 @@
 // lsd radix sort, 8 bits a pass: block digit counts, a two-level scan, a stable scatter; no spin-waits
 
-const THREADS: u32 = 256u;
-const ITEMS: u32 = 4u;
+const THREADS: u32 = 128u;
+const ITEMS: u32 = 8u;
 const BLOCK: u32 = 1024u;
 // blocks per scan chunk
 const CHUNK: u32 = 64u;
@@ -36,11 +36,22 @@ struct SortState {
 
 var<workgroup> bins: array<atomic<u32>, DIGITS>;
 var<workgroup> totals: array<u32, DIGITS>;
+var<workgroup> bitValues: atomic<u32>;
+var<workgroup> activeBits: u32;
 var<workgroup> sk: array<u32, BLOCK>;
 var<workgroup> sv: array<u32, BLOCK>;
-var<workgroup> counts: array<vec4u, THREADS>;
+// three 10-bit counts; the fourth follows from the number of items
+var<workgroup> counts: array<u32, THREADS * 2u>;
+var<workgroup> tail: u32;
 var<workgroup> starts: array<u32, DIGITS>;
 var<workgroup> offsets: array<u32, DIGITS>;
+
+fn unpack(packed: u32, count: u32) -> vec4u {
+	let a = packed & 1023u;
+	let b = (packed >> 10u) & 1023u;
+	let c = (packed >> 20u) & 1023u;
+	return vec4u(a, b, c, count - a - b - c);
+}
 
 fn digit(key: u32) -> u32 {
 	return (key >> params.shift) & 0xffu;
@@ -63,21 +74,20 @@ fn histogram(
 	@builtin(num_workgroups) groups: vec3u,
 	@builtin(local_invocation_index) t: u32
 ) {
-	let block = wid.y * groups.x + wid.x;
-	if (block >= state.blocks) {
-		return;
-	}
-	atomicStore(&bins[t], 0u);
-	workgroupBarrier();
-	let head = block * BLOCK;
-	for (var k = 0u; k < ITEMS; k++) {
-		let i = head + k * THREADS + t;
-		if (i < state.count) {
-			atomicAdd(&bins[digit(data[params.src + i])], 1u);
+	for (var block = wid.y * groups.x + wid.x; block < state.blocks; block += groups.x * groups.y) {
+		let head = block * BLOCK;
+		for (var k = 0u; k < ITEMS; k++) {
+			let i = head + k * THREADS + t;
+			if (i < state.count) {
+				atomicAdd(&bins[digit(data[params.src + i])], 1u);
+			}
 		}
+		workgroupBarrier();
+		for (var d = t; d < DIGITS; d += THREADS) {
+			hist[block * DIGITS + d] = atomicExchange(&bins[d], 0u);
+		}
+		workgroupBarrier();
 	}
-	workgroupBarrier();
-	hist[block * DIGITS + t] = atomicLoad(&bins[t]);
 }
 
 @compute @workgroup_size(DIGITS)
@@ -99,7 +109,15 @@ fn top(@builtin(local_invocation_index) t: u32) {
 		run += x;
 	}
 	totals[t] = run;
+	// a bit varies only when both zero and one occur in nonempty digits
+	if (run > 0u) {
+		atomicOr(&bitValues, t | ((255u ^ t) << 8u));
+	}
 	workgroupBarrier();
+	if (t == 0u) {
+		let values = atomicLoad(&bitValues);
+		sums[arrayLength(&sums) - 1u] = values & (values >> 8u);
+	}
 	for (var o = 1u; o < DIGITS; o *= 2u) {
 		var x = 0u;
 		if (t >= o) {
@@ -132,78 +150,100 @@ fn scatter(
 	@builtin(num_workgroups) groups: vec3u,
 	@builtin(local_invocation_index) t: u32
 ) {
-	let block = wid.y * groups.x + wid.x;
-	if (block >= state.blocks) {
+	let first = wid.y * groups.x + wid.x;
+	if (first >= state.blocks) {
 		return;
 	}
-	let head = block * BLOCK;
-	let valid = min(BLOCK, state.count - head);
-	// padding has digit 255 at every shift, so it sorts behind the valid keys and is never written
-	for (var k = 0u; k < ITEMS; k++) {
-		let i = k * THREADS + t;
-		var key = 0xffffffffu;
-		var value = 0u;
-		if (i < valid) {
-			key = data[params.src + head + i];
-			value = data[params.src + params.capacity + head + i];
-		}
-		sk[i] = key;
-		sv[i] = value;
+	if (t == 0u) {
+		activeBits = sums[arrayLength(&sums) - 1u];
 	}
-	offsets[t] = hist[block * DIGITS + t];
-	workgroupBarrier();
-
-	// stable local sort by the digit, two bits a split; thread t owns positions t ITEMS + k
-	for (var bit = 0u; bit < 8u; bit += 2u) {
-		var keys: array<u32, ITEMS>;
-		var values: array<u32, ITEMS>;
-		var before: array<u32, ITEMS>;
-		var mine = vec4u(0u);
+	let bits = workgroupUniformLoad(&activeBits);
+	for (var block = first; block < state.blocks; block += groups.x * groups.y) {
+		let head = block * BLOCK;
+		let valid = min(BLOCK, state.count - head);
+		// padding has digit 255 at every shift, so it sorts behind the valid keys and is never written
 		for (var k = 0u; k < ITEMS; k++) {
-			keys[k] = sk[t * ITEMS + k];
-			values[k] = sv[t * ITEMS + k];
-			let b = (keys[k] >> (params.shift + bit)) & 3u;
-			before[k] = mine[b];
-			mine[b] += 1u;
+			let i = k * THREADS + t;
+			var key = 0xffffffffu;
+			var value = 0u;
+			if (i < valid) {
+				key = data[params.src + head + i];
+				value = data[params.src + params.capacity + head + i];
+			}
+			sk[i] = key;
+			sv[i] = value;
 		}
-		counts[t] = mine;
+		for (var d = t; d < DIGITS; d += THREADS) {
+			offsets[d] = hist[block * DIGITS + d];
+		}
 		workgroupBarrier();
-		for (var o = 1u; o < THREADS; o *= 2u) {
-			var x = vec4u(0u);
-			if (t >= o) {
-				x = counts[t - o];
+
+		// stable local sort by the digit, two bits a split; thread t owns positions t ITEMS + k
+		for (var bit = 0u; bit < 8u; bit += 2u) {
+			if ((bits & (3u << bit)) == 0u) {
+				continue;
+			}
+			var keys: array<u32, ITEMS>;
+			var values: array<u32, ITEMS>;
+			var before: array<u32, ITEMS>;
+			var mine = vec4u(0u);
+			for (var k = 0u; k < ITEMS; k++) {
+				keys[k] = sk[t * ITEMS + k];
+				values[k] = sv[t * ITEMS + k];
+				let b = (keys[k] >> (params.shift + bit)) & 3u;
+				before[k] = mine[b];
+				mine[b] += 1u;
+			}
+			counts[t] = mine.x | (mine.y << 10u) | (mine.z << 20u);
+			if (t == THREADS - 1u) {
+				tail = counts[t];
 			}
 			workgroupBarrier();
-			counts[t] += x;
+			// separate reads and writes need only one barrier per scan step
+			var source = 0u;
+			for (var o = 1u; o < THREADS; o *= 2u) {
+				var x = counts[source + t];
+				if (t >= o) {
+					x += counts[source + t - o];
+				}
+				let dest = source ^ THREADS;
+				counts[dest + t] = x;
+				workgroupBarrier();
+				source = dest;
+			}
+			// prefixes stop at 1016 items, so no count carries into its neighbour
+			let total = unpack(counts[source + THREADS - 2u], BLOCK - ITEMS) + unpack(tail, ITEMS);
+			var prior = vec4u(0u);
+			if (t > 0u) {
+				prior = unpack(counts[source + t - 1u], t * ITEMS);
+			}
+			let base = vec4u(0u, total.x, total.x + total.y, total.x + total.y + total.z);
+			for (var k = 0u; k < ITEMS; k++) {
+				let b = (keys[k] >> (params.shift + bit)) & 3u;
+				let p = base[b] + prior[b] + before[k];
+				sk[p] = keys[k];
+				sv[p] = values[k];
+			}
 			workgroupBarrier();
 		}
-		let total = counts[THREADS - 1u];
-		let prior = counts[t] - mine;
-		let base = vec4u(0u, total.x, total.x + total.y, total.x + total.y + total.z);
+
 		for (var k = 0u; k < ITEMS; k++) {
-			let b = (keys[k] >> (params.shift + bit)) & 3u;
-			let p = base[b] + prior[b] + before[k];
-			sk[p] = keys[k];
-			sv[p] = values[k];
+			let i = t * ITEMS + k;
+			let d = digit(sk[i]);
+			if (i == 0u || digit(sk[i - 1u]) != d) {
+				starts[d] = i;
+			}
 		}
 		workgroupBarrier();
-	}
-
-	for (var k = 0u; k < ITEMS; k++) {
-		let i = t * ITEMS + k;
-		let d = digit(sk[i]);
-		if (i == 0u || digit(sk[i - 1u]) != d) {
-			starts[d] = i;
+		for (var k = 0u; k < ITEMS; k++) {
+			let i = k * THREADS + t;
+			if (i < valid) {
+				let d = digit(sk[i]);
+				let slot = offsets[d] + i - starts[d];
+				data[params.dst + slot] = sk[i];
+				data[params.dst + params.capacity + slot] = sv[i];
+			}
 		}
-	}
-	workgroupBarrier();
-	for (var k = 0u; k < ITEMS; k++) {
-		let i = k * THREADS + t;
-		if (i < valid) {
-			let d = digit(sk[i]);
-			let slot = offsets[d] + i - starts[d];
-			data[params.dst + slot] = sk[i];
-			data[params.dst + params.capacity + slot] = sv[i];
-		}
+		workgroupBarrier();
 	}
 }

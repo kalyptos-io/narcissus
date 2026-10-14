@@ -9,6 +9,7 @@ export interface FrameBuffers {
 	uniforms: GPUBuffer;
 	/** counters and indirect args (WORK), then visible cluster ids */
 	work: GPUBuffer;
+	visible: GPUBuffer;
 	/** capacity Projected */
 	projected: GPUBuffer;
 	/** keys, values, keys', values': capacity u32 each */
@@ -29,13 +30,15 @@ export function frameBuffers(device: GPUDevice, capacity: number, clusters: numb
 		make('work', (WORK.list + clusters) * 4, storage | GPUBufferUsage.INDIRECT),
 		make('projected', capacity * PROJECTED_WORDS * 4, storage),
 		make('sort', capacity * 16, storage),
-		make('plugins', PLUGIN_VEC4S * 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST)
+		make('plugins', PLUGIN_VEC4S * 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST),
+		make('visible clusters', 4, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST)
 	];
-	const [uniforms, work, projected, sort, plugins] = list;
+	const [uniforms, work, projected, sort, plugins, visible] = list;
 	return {
 		capacity,
 		uniforms,
 		work,
+		visible,
 		projected,
 		sort,
 		plugins,

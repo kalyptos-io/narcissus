@@ -282,25 +282,28 @@ function expectClose(got: number[], want: number[], tolerance: number): void {
 	});
 }
 
-async function setup() {
+async function setup(copies = 1, capacity = CAPACITY) {
 	const device = await testDevice();
-	const pool = new Pool(device, 4 * CLUSTER);
-	pool.add(1, page(), [0, 0], () => false);
+	const pool = new Pool(device, 4 * CLUSTER * copies);
+	for (let id = 1; id <= copies; id++) pool.add(id, page(), [0, 0], () => false);
 	pool.upload(Infinity);
-	pool.draw([{ id: 1, factors: FACTORS }]);
-	const buffers = frameBuffers(device, CAPACITY, pool.slots);
+	pool.draw(Array.from({ length: copies }, (_, i) => ({ id: i + 1, factors: FACTORS })));
+	const buffers = frameBuffers(device, capacity, pool.slots);
 	const uniforms = frame(device, buffers.uniforms);
 	return { device, pool, buffers, uniforms, project: new Project(device, pool, buffers) };
 }
 
 /** the drawn clusters as the visible list, then the projection alone */
-async function run({ device, pool, buffers, project }: Awaited<ReturnType<typeof setup>>) {
+async function run(
+	{ device, pool, buffers, project }: Awaited<ReturnType<typeof setup>>,
+	visible = pool.listed
+) {
 	const header = new Uint32Array(WORK.list);
 	header[WORK.visible] = pool.listed;
 	device.queue.writeBuffer(buffers.work, 0, header);
 	const encoder = device.createCommandEncoder();
 	encoder.copyBufferToBuffer(pool.list, 0, buffers.work, WORK.list * 4, pool.listed * 4);
-	project.encode(encoder);
+	project.encode(encoder, visible);
 	device.queue.submit([encoder.finish()]);
 	const work = new Uint32Array(await readBuffer(device, buffers.work, 0, WORK.list * 4));
 	const projected = await readBuffer(device, buffers.projected);
@@ -309,6 +312,55 @@ async function run({ device, pool, buffers, project }: Awaited<ReturnType<typeof
 }
 
 describe('Project', () => {
+	it('reuses workgroups across clusters without retaining compacted counts', async () => {
+		const copies = 769;
+		const context = await setup(copies, copies * 4);
+		const want = SPLATS.map((_, t) => expected(t, context.uniforms)).filter((e) => e !== null);
+		for (const visible of [0, 1, copies * 4]) {
+			const { count, projected, sort } = await run(context, visible);
+			expect(count).toBe(copies * want.length);
+			const floats = new Float32Array(projected);
+			const counts = new Array(want.length).fill(0);
+			for (let i = 0; i < count; i++) {
+				const w = i * PROJECTED_WORDS;
+				const match = want.findIndex((e) => gap(e.centre, [floats[w], floats[w + 1]]) < 1);
+				expect(match).toBeGreaterThanOrEqual(0);
+				counts[match]++;
+				expect(Math.abs(sort[i] - want[match].key)).toBeLessThanOrEqual(2);
+				expect(sort[copies * 4 + i]).toBe(i);
+			}
+			expect(counts).toEqual(want.map(() => copies));
+		}
+		context.pool.destroy();
+		context.buffers.destroy();
+	});
+
+	it('handles empty clusters between iterations and limits output to capacity', async () => {
+		const copies = 769;
+		const context = await setup(copies);
+		const { device, pool } = context;
+		const list = new Uint32Array(await readBuffer(device, pool.list, 0, pool.listed * 4));
+		const empty = new Uint32Array(SPLATS.length * GEOMETRY_WORDS);
+		let removed = 0;
+		for (let i = 1; i < copies; i += 3) {
+			device.queue.writeBuffer(pool.geometry, list[i] * CLUSTER * GEOMETRY_WORDS * 4, empty);
+			removed++;
+		}
+		const want = SPLATS.map((_, t) => expected(t, context.uniforms)).filter((e) => e !== null);
+		for (const visible of [0, 1, copies * 4]) {
+			const { count, projected, sort } = await run(context, visible);
+			expect(count).toBe((copies - removed) * want.length);
+			const floats = new Float32Array(projected);
+			for (let i = 0; i < CAPACITY; i++) {
+				const w = i * PROJECTED_WORDS;
+				expect(want.some((e) => gap(e.centre, [floats[w], floats[w + 1]]) < 1)).toBe(true);
+				expect(sort[CAPACITY + i]).toBe(i);
+			}
+		}
+		pool.destroy();
+		context.buffers.destroy();
+	});
+
 	it('projects splats as the cpu does and drops those behind or outside', async () => {
 		const context = await setup();
 		const { count, projected, sort } = await run(context);
@@ -361,6 +413,17 @@ describe('Project', () => {
 		expect((await run(context)).count).toBe(0);
 		values[3 * 4] = 1;
 		context.device.queue.writeBuffer(context.buffers.plugins, 0, values);
+		expect((await run(context)).count).toBe(4);
+		context.pool.destroy();
+		context.buffers.destroy();
+	});
+
+	it('uses the current visible count after an empty frame', async () => {
+		const context = await setup();
+		expect((await run(context)).count).toBe(4);
+		context.pool.draw([]);
+		expect((await run(context)).count).toBe(0);
+		context.pool.draw([{ id: 1, factors: FACTORS }]);
 		expect((await run(context)).count).toBe(4);
 		context.pool.destroy();
 		context.buffers.destroy();

@@ -29,7 +29,7 @@ export class Timing {
 	/** timestamp writes of a compute or render pass */
 	writes(pass: string) {
 		const queries = this.#queries;
-		if (!queries) return undefined;
+		if (!queries || this.#mapping) return undefined;
 		const k = this.#passes.indexOf(pass);
 		return { querySet: queries, beginningOfPassWriteIndex: 2 * k, endOfPassWriteIndex: 2 * k + 1 };
 	}

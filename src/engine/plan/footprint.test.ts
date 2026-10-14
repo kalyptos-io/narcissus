@@ -26,6 +26,21 @@ describe('footprint', () => {
 		expect(projected(box(-9)).weight).toBeCloseTo(projected(box(9)).weight);
 	});
 
+	it('projects world boxes through a floating origin without a shifted copy', () => {
+		for (const origin of [
+			[724000, 6178000, 0],
+			[-1000000000, 1000000000, 1000]
+		] as const) {
+			for (const b of [box(), box(9), box(12.5), box(20), box(0, 20), box(0, -1)]) {
+				const world = b.map((v, k) => v + origin[k % 3]);
+				const expected = footprint(b, identity(), 1920, 1080, 1, 0.1, 1000, 1.1);
+				expect(
+					footprint(world, identity(), 1920, 1080, 1, 0.1, 1000, 1.1, undefined, origin)
+				).toEqual(expected);
+			}
+		}
+	});
+
 	it('covers at least the screen when a region surrounds the camera', () => {
 		const m = identity();
 		expect(footprint(box(0, -1), m, 1000, 1000, 1, 0.1, 1000).pixels).toBeGreaterThan(1_000_000);
@@ -36,5 +51,27 @@ describe('footprint', () => {
 		const m = identity();
 		expect(footprint(box(12.5), m, 1000, 1000, 1, 0.1, 1000).pixels).toBe(0);
 		expect(footprint(box(12.5), m, 1000, 1000, 1, 0.1, 1000, 1.1).pixels).toBeGreaterThan(0);
+	});
+
+	it('reports viewport visibility separately from the fringe', () => {
+		for (const b of [box(), box(9), box(12.5), box(20), box(0, 20), box(0, -1)]) {
+			const plain = footprint(b, identity(), 1000, 1000, 1, 0.1, 1000);
+			const fringe = footprint(b, identity(), 1000, 1000, 1, 0.1, 1000, 1.1);
+			expect(fringe.shown).toBe(plain.pixels > 0);
+		}
+	});
+
+	it('keeps boxes crossing the near plane at each edge of a wide viewport', () => {
+		for (const axis of [0, 1]) {
+			for (const sign of [-1, 1]) {
+				const b = [-1, -1, -11, 1, 1, 1];
+				b[axis] += sign * (axis === 0 ? 22.5 : 11.5);
+				b[axis + 3] += sign * (axis === 0 ? 22.5 : 11.5);
+				expect(footprint(b, identity(), 2000, 1000, 1, 0.1, 1000).pixels).toBeGreaterThan(0);
+				b[axis] += sign * 3;
+				b[axis + 3] += sign * 3;
+				expect(footprint(b, identity(), 2000, 1000, 1, 0.1, 1000).pixels).toBe(0);
+			}
+		}
 	});
 });

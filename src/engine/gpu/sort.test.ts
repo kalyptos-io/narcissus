@@ -4,7 +4,7 @@ import { frameBuffers } from './buffers.ts';
 import { Sort } from './sort.ts';
 import { readBuffer, testDevice } from './test-device.ts';
 
-const COUNTS = [0, 1, 255, 256, 257, 100_000, 1_000_000];
+const COUNTS = [0, 1, 127, 128, 129, 255, 256, 257, 1023, 1024, 1025, 100_000, 1_000_000];
 
 // 24-bit keys where every third repeats an earlier one, so ties span all digits
 function testKeys(count: number): Uint32Array {
@@ -16,7 +16,7 @@ function testKeys(count: number): Uint32Array {
 }
 
 /** sorts keys with values 1, 2, ... after writing projected into WORK.projected */
-async function gpuSort(keys: Uint32Array, projected: number, capacity: number) {
+async function gpuSort(keys: Uint32Array, projected: number, capacity: number, drawn = projected) {
 	const device = await testDevice();
 	const buffers = frameBuffers(device, capacity, 1);
 	const sort = new Sort(device, buffers);
@@ -29,7 +29,7 @@ async function gpuSort(keys: Uint32Array, projected: number, capacity: number) {
 	);
 	device.queue.writeBuffer(buffers.work, WORK.projected * 4, new Uint32Array([projected]));
 	const encoder = device.createCommandEncoder();
-	sort.encode(encoder);
+	sort.encode(encoder, projected, drawn);
 	device.queue.submit([encoder.finish()]);
 	const read = async (offset: number) =>
 		new Uint32Array(await readBuffer(device, buffers.sort, offset, capacity * 4));
@@ -66,6 +66,27 @@ describe('Sort', () => {
 		});
 	}
 
+	for (const mask of [0x3f3f3f, 0x030303, 0xcccccc]) {
+		it(`sorts shared digit bits ${mask.toString(16)} across a partial block`, async () => {
+			const keys = testKeys(4097).map((key) => (key & mask) | (0xa0a0a0 & ~mask));
+			const got = await gpuSort(keys, keys.length, keys.length);
+			const want = cpuSort(keys);
+			expect(mismatch(got.keys, want.keys)).toBe(-1);
+			expect(mismatch(got.values, want.values)).toBe(-1);
+		});
+	}
+
+	for (const drawn of [0, 1, 1_000_000]) {
+		it(`sorts the current list when the previous count was ${drawn}`, async () => {
+			const keys = testKeys(1_000_001);
+			const got = await gpuSort(keys, keys.length, 1_048_576, drawn);
+			const want = cpuSort(keys);
+			expect(mismatch(got.keys, want.keys)).toBe(-1);
+			expect(mismatch(got.values, want.values)).toBe(-1);
+			expect(got.draw).toEqual([4, keys.length, 0, 0]);
+		});
+	}
+
 	it('sorts only the keys that fit when more were projected', async () => {
 		const keys = testKeys(300);
 		const got = await gpuSort(keys, 300, 200);
@@ -74,4 +95,23 @@ describe('Sort', () => {
 		expect(mismatch(got.values, want.values)).toBe(-1);
 		expect(got.draw).toEqual([4, 200, 0, 0]);
 	});
+
+	it('sorts a small projected list in a larger frame buffer', async () => {
+		const keys = testKeys(1025);
+		const got = await gpuSort(keys, keys.length, 131_072);
+		const want = cpuSort(keys);
+		expect(mismatch(got.keys, want.keys)).toBe(-1);
+		expect(mismatch(got.values, want.values)).toBe(-1);
+		expect(got.draw).toEqual([4, keys.length, 0, 0]);
+	});
+
+	for (const key of [0, 0x555555, 0xaaaaaa, 0xffffff]) {
+		it(`keeps identical keys ${key.toString(16)} stable across full and partial blocks`, async () => {
+			const keys = new Uint32Array(4097).fill(key);
+			const got = await gpuSort(keys, keys.length, keys.length);
+			const want = cpuSort(keys);
+			expect(mismatch(got.keys, want.keys)).toBe(-1);
+			expect(mismatch(got.values, want.values)).toBe(-1);
+		});
+	}
 });

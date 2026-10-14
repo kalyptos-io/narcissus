@@ -22,12 +22,20 @@ const {
 	VIEW_DISTANCE = '1500',
 	SKY = '0.62,0.72,0.8',
 	PORT = '9351',
-	PROFILE
+	PROFILE,
+	CPU_RATE = '1',
+	FRAME_LIMIT_MS = '100',
+	SNAPSHOT
 } = process.env;
 // a hung frame would leave an evaluate waiting forever
 const TIMEOUT_MS = 120_000;
 const port = Number(PORT);
 const baselineFile = join(out, 'baseline.json');
+const cpuRate = Number(CPU_RATE);
+const frameLimitMs = Number(FRAME_LIMIT_MS);
+if (!Number.isFinite(cpuRate) || cpuRate < 1) throw new Error('CPU_RATE must be at least 1');
+if (!Number.isFinite(frameLimitMs) || frameLimitMs <= 0)
+	throw new Error('FRAME_LIMIT_MS must be positive');
 
 if (process.argv.includes('--stop')) {
 	console.log((await stop(port)) ? 'chrome closed' : `no chrome on port ${port}`);
@@ -38,15 +46,19 @@ setTimeout(() => {
 	process.exit(1);
 }, TIMEOUT_MS);
 
+const marks = [['start', performance.now()]];
+const mark = (/** @type {string} */ name) => marks.push([name, performance.now()]);
+
 // build
 const site = join(out, 'site');
 const stamp = join(out, 'stamp');
 /** @param {string} dir */
 function newest(dir) {
 	let time = lstatSync(dir).mtimeMs;
-	for (const entry of readdirSync(dir, { recursive: true, withFileTypes: true })) {
-		const path = join(entry.parentPath, entry.name);
-		if (!path.includes('/node_modules')) time = Math.max(time, lstatSync(path).mtimeMs);
+	for (const entry of readdirSync(dir, { withFileTypes: true })) {
+		if (entry.name === 'runs' || entry.name === 'node_modules') continue;
+		const path = join(dir, entry.name);
+		time = Math.max(time, entry.isDirectory() ? newest(path) : lstatSync(path).mtimeMs);
 	}
 	return time;
 }
@@ -67,6 +79,7 @@ if (changed > built || !existsSync(join(site, 'quick.html'))) {
 	});
 	writeFileSync(stamp, String(started));
 }
+mark('built');
 
 // serve
 const server = createServer(files(site, resolve(WORLD)));
@@ -75,12 +88,21 @@ const address = /** @type {AddressInfo} */ (server.address());
 const url = `http://127.0.0.1:${address.port}/quick.html`;
 
 // measure
-const marks = [['start', performance.now()]];
-const mark = (/** @type {string} */ name) => marks.push([name, performance.now()]);
-mark('built');
 await launch(port, out, []);
 const page = await attach(port);
-await onConsole(page, (type, text) => console.error(`page ${type}: ${text}`));
+await page.send('Emulation.setCPUThrottlingRate', { rate: cpuRate });
+/** @type {Set<string>} */
+const errors = new Set();
+await page.send('Log.enable');
+await page.send('Log.clear');
+page.on('Log.entryAdded', ({ entry }) => {
+	if (entry.source === 'rendering' && ['warning', 'error'].includes(entry.level))
+		errors.add(`rendering: ${entry.text}`);
+});
+await onConsole(page, (type, text) => {
+	console.error(`page ${type}: ${text}`);
+	if (type === 'error' || type === 'exception') errors.add(`page ${type}: ${text}`);
+});
 await page.send('Page.navigate', { url });
 await until('the page', 10_000, () =>
 	page.evaluate(`location.href === '${url}' && 'bench' in window`).catch(() => false)
@@ -93,7 +115,8 @@ const options = {
 	viewDistance: Number(VIEW_DISTANCE),
 	sky: /** @type {[number, number, number]} */ (SKY.split(',').map(Number)),
 	source: /** @type {Options['source']} */ (SOURCE),
-	world: WORLD_URL
+	world: WORLD_URL,
+	frameLimitMs
 };
 mark('chrome');
 const { idleMs, adapter } = await page.evaluate(`bench.ready(${JSON.stringify(options)})`);
@@ -101,6 +124,10 @@ mark('ready');
 /** @type {Repetition[]} */
 const repetitions = await page.evaluate('bench.run()');
 mark('poses');
+if (SNAPSHOT) {
+	const shot = await page.send('Page.captureScreenshot', { format: 'png' });
+	writeFileSync(SNAPSHOT, Buffer.from(shot.data, 'base64'));
+}
 // live objects only, else the reading follows the gc's timing
 await page.send('HeapProfiler.collectGarbage');
 const heap = await page.send('Runtime.getHeapUsage');
@@ -145,10 +172,11 @@ for (const name of new Set(repetitions.flatMap((r) => Object.keys(r.metrics)))) 
 	metrics[name] = median(repetitions.map((r) => r.metrics[name] ?? 0));
 }
 Object.assign(metrics, moves.metrics, { idleMs });
-const reasons = [...new Set([...repetitions, moves].flatMap((r) => r.reasons))];
+const reasons = [...new Set([...errors, ...[...repetitions, moves].flatMap((r) => r.reasons)])];
 const result = {
 	time: new Date().toISOString(),
 	adapter,
+	cpuRate,
 	valid: reasons.length === 0,
 	reasons,
 	world: resolve(WORLD),
@@ -158,9 +186,17 @@ const result = {
 console.log(JSON.stringify(result));
 
 /** @type {typeof result | undefined} */
-const baseline = existsSync(baselineFile)
-	? JSON.parse(readFileSync(baselineFile, 'utf8'))
-	: undefined;
+const saved = existsSync(baselineFile) ? JSON.parse(readFileSync(baselineFile, 'utf8')) : undefined;
+const baseline =
+	saved &&
+	saved.adapter === adapter &&
+	saved.cpuRate === cpuRate &&
+	saved.world === result.world &&
+	JSON.stringify(saved.options) === JSON.stringify(options)
+		? saved
+		: undefined;
+if (saved && !baseline)
+	console.error('baseline skipped: adapter, world or benchmark settings differ');
 /** @param {number} v */
 const fixed = (v) => v.toFixed(Math.abs(v) >= 100 ? 0 : 2);
 const rows = [['metric', 'now', 'baseline', 'delta']];

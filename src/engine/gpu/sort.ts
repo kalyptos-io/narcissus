@@ -24,9 +24,7 @@ export class Sort {
 	#kernels: GPUComputePipeline[];
 	#prepareGroup: GPUBindGroup;
 	#groups: GPUBindGroup[];
-	/** workgroups over every block of a full buffer, and over its chunks */
-	#blocks: [number, number];
-	#chunks: number;
+	#blocks: number;
 
 	constructor(device: GPUDevice, buffers: FrameBuffers) {
 		const { capacity } = buffers;
@@ -35,10 +33,9 @@ export class Sort {
 		this.values = capacity * 12;
 
 		const blocks = Math.max(1, Math.ceil(capacity / BLOCK));
-		// fixed sizes: chrome validates indirect args on its gpu process's main thread, a cost every
-		// dispatch; kernels skip the blocks and chunks past the count
-		this.#blocks = groups(blocks);
-		this.#chunks = Math.ceil(blocks / CHUNK);
+		// direct dispatch avoids chrome's per-dispatch indirect validation on the gpu process
+		this.#blocks = blocks;
+		const chunks = Math.ceil(blocks / CHUNK);
 		const make = (label: string, size: number, usage: number) =>
 			device.createBuffer({ label, size, usage });
 		const storage = GPUBufferUsage.STORAGE;
@@ -48,7 +45,8 @@ export class Sort {
 			GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
 		);
 		const hist = make('sort histograms', blocks * DIGITS * 4, storage);
-		const sums = make('sort chunk sums', this.#chunks * DIGITS * 4, storage);
+		// the last word holds bits that vary across nonempty digits
+		const sums = make('sort chunk sums', (chunks * DIGITS + 1) * 4, storage);
 		const state = make('sort state', 12, storage);
 		this.#owned = [params, hist, sums, state];
 		this.bytes = this.#owned.reduce((sum, b) => sum + b.size, 0);
@@ -120,9 +118,18 @@ export class Sort {
 		);
 	}
 
-	encode(encoder: GPUCommandEncoder, timestamps?: GPUComputePassTimestampWrites): void {
+	encode(
+		encoder: GPUCommandEncoder,
+		maxSplats: number,
+		drawn: number,
+		timestamps?: GPUComputePassTimestampWrites
+	): void {
 		const [histogram, reduce, top, down, scatter] = this.#kernels;
-		const blocks = this.#blocks;
+		const count = Math.max(1, Math.min(this.#blocks, Math.ceil(maxSplats / BLOCK)));
+		// a stale count may trail a camera jump, so reduce workgroups by at most fourfold
+		const expected = Math.max(count / 16, (drawn || maxSplats) / BLOCK);
+		const blocks = groups(Math.min(Math.ceil(count / 4), Math.ceil(expected)));
+		const chunks = Math.ceil(count / CHUNK);
 		const pass = encoder.beginComputePass({ label: 'sort', timestampWrites: timestamps });
 		pass.setPipeline(this.#prepare);
 		pass.setBindGroup(0, this.#prepareGroup);
@@ -132,11 +139,11 @@ export class Sort {
 			pass.setPipeline(histogram);
 			pass.dispatchWorkgroups(...blocks);
 			pass.setPipeline(reduce);
-			pass.dispatchWorkgroups(this.#chunks);
+			pass.dispatchWorkgroups(chunks);
 			pass.setPipeline(top);
 			pass.dispatchWorkgroups(1);
 			pass.setPipeline(down);
-			pass.dispatchWorkgroups(this.#chunks);
+			pass.dispatchWorkgroups(chunks);
 			pass.setPipeline(scatter);
 			pass.dispatchWorkgroups(...blocks);
 		}

@@ -1,6 +1,10 @@
 // screen footprint of a box
 
+const ORIGIN = [0, 0, 0] as const;
+
 export interface Footprint {
+	/** overlaps the viewport without the fringe */
+	shown: boolean;
 	/** unclipped projected area in pixels */
 	pixels: number;
 	/** 1 at the edges up to 16 at the centre */
@@ -15,10 +19,7 @@ export function centreWeight(left: number, right: number, bottom: number, top: n
 	return 1 + 15 * Math.max(0, 1 - radius) ** 2;
 }
 
-/**
- * box is min x, y, z then max x, y, z in the frame of the column-major view matrix m; tan is
- * tan(fov / 2); margin widens the screen (1.1 keeps a 10% fringe)
- */
+/** box shifted by origin into view m; tan is tan(fov / 2), margin widens the viewport */
 export function footprint(
 	box: ArrayLike<number>,
 	m: ArrayLike<number>,
@@ -28,11 +29,12 @@ export function footprint(
 	near: number,
 	far: number,
 	margin = 1,
-	out: Footprint = { pixels: 0, weight: 1 }
+	out: Footprint = { shown: false, pixels: 0, weight: 1 },
+	origin: readonly [number, number, number] = ORIGIN
 ): Footprint {
-	const cx = (box[0] + box[3]) / 2;
-	const cy = (box[1] + box[4]) / 2;
-	const cz = (box[2] + box[5]) / 2;
+	const cx = (box[0] + box[3]) / 2 - origin[0];
+	const cy = (box[1] + box[4]) / 2 - origin[1];
+	const cz = (box[2] + box[5]) / 2 - origin[2];
 	const ex = (box[3] - box[0]) / 2;
 	const ey = (box[4] - box[1]) / 2;
 	const ez = (box[5] - box[2]) / 2;
@@ -44,10 +46,12 @@ export function footprint(
 	const hz = Math.abs(m[2]) * ex + Math.abs(m[6]) * ey + Math.abs(m[10]) * ez;
 	out.pixels = 0;
 	out.weight = 1;
+	out.shown = false;
 	if (z + hz < near || z - hz > far) return out;
 	const front = Math.max(near, z - hz);
 	const back = Math.max(near, z + hz);
 	const tx = (tan * width) / height;
+	if (Math.abs(x) - hx > margin * tx * back || Math.abs(y) - hy > margin * tan * back) return out;
 	const x0 = Math.min((x - hx) / front, (x - hx) / back) / tx;
 	const x1 = Math.max((x + hx) / front, (x + hx) / back) / tx;
 	const y0 = Math.min((y - hy) / front, (y - hy) / back) / tan;
@@ -60,6 +64,7 @@ export function footprint(
 	const area = (x1 - x0) * (y1 - y0);
 	const visibleArea = (right - left) * (top - bottom);
 	if (area <= 0 || visibleArea <= 0) return out;
+	out.shown = x1 > -1 && x0 < 1 && y1 > -1 && y0 < 1;
 	// use unclipped density so a partly visible region keeps the same detail
 	out.pixels = (area * width * height) / 4;
 	out.weight = centreWeight(left, right, bottom, top);
