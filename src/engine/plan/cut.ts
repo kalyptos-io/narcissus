@@ -100,8 +100,8 @@ export class Planner {
 			// rank by need alone: ranked up by the margin, it would meet the budget before what freed it
 			const ratio = target / Math.max(1, count);
 			if (wanted.length && m.pixels > 0) priority.set(page.id, ratio);
-			const recent = now - (this.#seen.get(page.id) ?? -Infinity) <= HOLD;
-			const held = was && !m.shown && recent ? handed : null;
+			const held =
+				was && !m.shown && now - (this.#seen.get(page.id) ?? -Infinity) <= HOLD ? handed : null;
 			if ((count < target * (was ? MARGIN : 1) || held !== null) && refinable(page, resident))
 				queue.push({ page, shown: m.shown, held, ratio });
 		};
