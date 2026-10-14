@@ -258,6 +258,24 @@ describe('Pool', () => {
 		pool.destroy();
 	});
 
+	it('prefers a later contiguous run and then reuses the earlier gap', async () => {
+		const device = await testDevice();
+		const pool = new Pool(device, 8 * CLUSTER);
+		for (const id of [1, 2, 3, 4]) pool.add(id, page(2 * CLUSTER), [0, 0], none);
+		for (const id of [1, 3, 4]) pool.remove(id);
+		pool.add(5, page(3 * CLUSTER), [0, 0], none);
+		pool.add(6, page(2 * CLUSTER), [0, 0], none);
+		pool.add(7, page(CLUSTER), [0, 0], none);
+		pool.remove(2);
+		pool.add(8, page(2 * CLUSTER), [0, 0], none);
+		pool.upload(Infinity);
+		pool.draw([5, 6, 7, 8].map((id) => ({ id, factors: 1 })));
+		expect(slice((await read(device, pool.list)).u, 0, pool.listed)).toEqual([
+			4, 5, 6, 0, 1, 7, 2, 3
+		]);
+		pool.destroy();
+	});
+
 	it('updates repeated draws after factor changes, reordering and slot reuse', async () => {
 		const device = await testDevice();
 		const pool = new Pool(device, 8 * CLUSTER);

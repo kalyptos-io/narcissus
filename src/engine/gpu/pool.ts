@@ -366,18 +366,22 @@ export class Pool {
 	#take(need: number): number[] {
 		const taken = this.#taken;
 		let at = -1;
-		for (let s = this.#firstFree, run = 0; s < taken.length; s++) {
-			run = taken[s] ? 0 : run + 1;
-			if (run === need) {
-				at = s - need + 1;
+		for (let start = this.#firstFree; start <= taken.length - need;) {
+			let end = start;
+			while (end < start + need && !taken[end]) end++;
+			if (end === start + need) {
+				at = start;
 				break;
 			}
+			start = taken.indexOf(0, end + 1);
+			if (start < 0) break;
 		}
 		const out: number[] = [];
 		if (at >= 0) for (let s = at; s < at + need; s++) out.push(s);
-		else for (let s = this.#firstFree; out.length < need; s++) if (!taken[s]) out.push(s);
+		else for (let s = this.#firstFree; out.length < need; s = taken.indexOf(0, s + 1)) out.push(s);
 		for (const s of out) taken[s] = 1;
-		while (this.#firstFree < taken.length && taken[this.#firstFree]) this.#firstFree++;
+		const next = taken.indexOf(0, this.#firstFree);
+		this.#firstFree = next < 0 ? taken.length : next;
 		this.#free -= need;
 		return out;
 	}
