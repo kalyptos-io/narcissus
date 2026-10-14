@@ -46,15 +46,19 @@ setTimeout(() => {
 	process.exit(1);
 }, TIMEOUT_MS);
 
+const marks = [['start', performance.now()]];
+const mark = (/** @type {string} */ name) => marks.push([name, performance.now()]);
+
 // build
 const site = join(out, 'site');
 const stamp = join(out, 'stamp');
 /** @param {string} dir */
 function newest(dir) {
 	let time = lstatSync(dir).mtimeMs;
-	for (const entry of readdirSync(dir, { recursive: true, withFileTypes: true })) {
-		const path = join(entry.parentPath, entry.name);
-		if (!path.includes('/node_modules')) time = Math.max(time, lstatSync(path).mtimeMs);
+	for (const entry of readdirSync(dir, { withFileTypes: true })) {
+		if (entry.name === 'runs' || entry.name === 'node_modules') continue;
+		const path = join(dir, entry.name);
+		time = Math.max(time, entry.isDirectory() ? newest(path) : lstatSync(path).mtimeMs);
 	}
 	return time;
 }
@@ -75,6 +79,7 @@ if (changed > built || !existsSync(join(site, 'quick.html'))) {
 	});
 	writeFileSync(stamp, String(started));
 }
+mark('built');
 
 // serve
 const server = createServer(files(site, resolve(WORLD)));
@@ -83,9 +88,6 @@ const address = /** @type {AddressInfo} */ (server.address());
 const url = `http://127.0.0.1:${address.port}/quick.html`;
 
 // measure
-const marks = [['start', performance.now()]];
-const mark = (/** @type {string} */ name) => marks.push([name, performance.now()]);
-mark('built');
 await launch(port, out, []);
 const page = await attach(port);
 await page.send('Emulation.setCPUThrottlingRate', { rate: cpuRate });
