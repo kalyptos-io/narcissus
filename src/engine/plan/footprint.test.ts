@@ -45,4 +45,18 @@ describe('footprint', () => {
 			expect(fringe.shown).toBe(plain.pixels > 0);
 		}
 	});
+
+	it('keeps boxes crossing the near plane at each edge of a wide viewport', () => {
+		for (const axis of [0, 1]) {
+			for (const sign of [-1, 1]) {
+				const b = [-1, -1, -11, 1, 1, 1];
+				b[axis] += sign * (axis === 0 ? 22.5 : 11.5);
+				b[axis + 3] += sign * (axis === 0 ? 22.5 : 11.5);
+				expect(footprint(b, identity(), 2000, 1000, 1, 0.1, 1000).pixels).toBeGreaterThan(0);
+				b[axis] += sign * 3;
+				b[axis + 3] += sign * 3;
+				expect(footprint(b, identity(), 2000, 1000, 1, 0.1, 1000).pixels).toBe(0);
+			}
+		}
+	});
 });

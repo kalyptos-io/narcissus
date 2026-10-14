@@ -51,6 +51,7 @@ export function footprint(
 	const front = Math.max(near, z - hz);
 	const back = Math.max(near, z + hz);
 	const tx = (tan * width) / height;
+	if (Math.abs(x) - hx > margin * tx * back || Math.abs(y) - hy > margin * tan * back) return out;
 	const x0 = Math.min((x - hx) / front, (x - hx) / back) / tx;
 	const x1 = Math.max((x + hx) / front, (x + hx) / back) / tx;
 	const y0 = Math.min((y - hy) / front, (y - hy) / back) / tan;
