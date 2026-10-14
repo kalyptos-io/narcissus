@@ -50,6 +50,7 @@ export interface Plan {
 }
 
 interface Measure {
+	page: PageNode;
 	/** on screen at margin 1 */
 	shown: boolean;
 	/** on screen now or ahead, at margin 1 */
@@ -86,7 +87,8 @@ export class Planner {
 		let planned = 0;
 		let kept = 0;
 
-		const enter = (page: PageNode, m: Measure) => {
+		const enter = (m: Measure) => {
+			const page = m.page;
 			const count = page.row.count;
 			order.push(page);
 			visibility.push((m.shown ? 1 : 0) | (m.near ? 2 : 0));
@@ -104,27 +106,28 @@ export class Planner {
 				queue.push({ page, shown: m.shown, held, ratio });
 		};
 
-		for (const root of tree.roots) enter(root, this.#measure(root, view, predicted));
+		for (const root of tree.roots) enter(this.#measure(root, view, predicted));
 		// once a refinement on screen misses the budget, only off-screen ones go on
 		let full = false;
 		while (queue.size) {
 			const { page, shown, held } = queue.pop();
 			// quadrants off even the fringe stay with the page, which draws them unseen, so off budget
-			const parts: { child: PageNode; m: Measure }[] = [];
+			const parts: Measure[] = [];
 			let quadrants = 0;
-			page.children.forEach((child, q) => {
-				if (!child) return;
+			for (let q = 0; q < page.children.length; q++) {
+				const child = page.children[q];
+				if (!child) continue;
 				const m = this.#measure(child, view, predicted);
-				if (m.pixels <= 0 && !((held ?? 0) & (1 << q))) return;
-				parts.push({ child, m });
+				if (m.pixels <= 0 && !((held ?? 0) & (1 << q))) continue;
+				parts.push(m);
 				quadrants |= 1 << q;
-			});
+			}
 			if (!parts.length) continue;
 			let grow = 0;
 			let delta = shown ? -page.row.count : 0;
-			for (const { child, m } of parts) {
-				grow += slots(child.row.count);
-				if (m.shown) delta += child.row.count;
+			for (const m of parts) {
+				grow += slots(m.page.row.count);
+				if (m.shown) delta += m.page.row.count;
 			}
 			if (kept + grow > capacity) break;
 			if (delta > 0 && (full || planned + delta > budget)) {
@@ -135,7 +138,7 @@ export class Planner {
 			const last = shown ? now : this.#seen.get(page.id);
 			if (last !== undefined) seen.set(page.id, last);
 			if (shown) planned -= page.row.count;
-			for (const { child, m } of parts) enter(child, m);
+			for (const m of parts) enter(m);
 		}
 		this.#refined = refined;
 		this.#seen = seen;
@@ -185,7 +188,7 @@ export class Planner {
 			if (ahead.pixels > pixels) ({ pixels, weight } = ahead);
 			near ||= ahead.shown;
 		}
-		return { shown, near, pixels, weight };
+		return { page, shown, near, pixels, weight };
 	}
 
 	#project(page: PageNode, view: View, margin: number): Footprint {
