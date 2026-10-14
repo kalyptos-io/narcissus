@@ -39,7 +39,7 @@ var<workgroup> totals: array<u32, DIGITS>;
 var<workgroup> sk: array<u32, BLOCK>;
 var<workgroup> sv: array<u32, BLOCK>;
 // three 10-bit counts; the fourth follows from the number of items
-var<workgroup> counts: array<u32, THREADS>;
+var<workgroup> counts: array<u32, THREADS * 2u>;
 var<workgroup> tail: u32;
 var<workgroup> starts: array<u32, DIGITS>;
 var<workgroup> offsets: array<u32, DIGITS>;
@@ -186,20 +186,23 @@ fn scatter(
 			tail = counts[t];
 		}
 		workgroupBarrier();
+		// separate reads and writes need only one barrier per scan step
+		var source = 0u;
 		for (var o = 1u; o < THREADS; o *= 2u) {
-			var x = 0u;
+			var x = counts[source + t];
 			if (t >= o) {
-				x = counts[t - o];
+				x += counts[source + t - o];
 			}
+			let dest = source ^ THREADS;
+			counts[dest + t] = x;
 			workgroupBarrier();
-			counts[t] += x;
-			workgroupBarrier();
+			source = dest;
 		}
 		// prefixes stop at 1016 items, so no count carries into its neighbour
-		let total = unpack(counts[THREADS - 2u], BLOCK - ITEMS) + unpack(tail, ITEMS);
+		let total = unpack(counts[source + THREADS - 2u], BLOCK - ITEMS) + unpack(tail, ITEMS);
 		var prior = vec4u(0u);
 		if (t > 0u) {
-			prior = unpack(counts[t - 1u], t * ITEMS);
+			prior = unpack(counts[source + t - 1u], t * ITEMS);
 		}
 		let base = vec4u(0u, total.x, total.x + total.y, total.x + total.y + total.z);
 		for (var k = 0u; k < ITEMS; k++) {
