@@ -165,7 +165,7 @@ function covering(cut: PageNode[], resident: (id: number) => boolean): Map<numbe
 		for (let q = 0; q < 4; q++) {
 			const child = page.children[q];
 			// an empty quadrant hides once its page is refined past it
-			if (child && resident(child.id) && planned.has(child)) {
+			if (child && planned.has(child) && resident(child.id)) {
 				descend(child);
 			} else if (child !== null || ends.has(page)) {
 				cover.set(page.id * 4 + q, page);
