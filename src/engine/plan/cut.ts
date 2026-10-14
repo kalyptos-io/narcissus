@@ -194,7 +194,12 @@ export class Planner {
 /** resident, with every child known and at least one there */
 function refinable(page: PageNode, resident: (id: number) => boolean): boolean {
 	const { children } = page;
-	return resident(page.id) && !children.includes(undefined) && children.some((c) => c !== null);
+	return (
+		page.g > 0 &&
+		resident(page.id) &&
+		!children.includes(undefined) &&
+		children.some((c) => c !== null)
+	);
 }
 
 /** max-heap of steps: on screen first, then by ratio */
