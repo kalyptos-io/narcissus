@@ -45,7 +45,8 @@ export class Sort {
 			GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
 		);
 		const hist = make('sort histograms', blocks * DIGITS * 4, storage);
-		const sums = make('sort chunk sums', chunks * DIGITS * 4, storage);
+		// the last word holds bits that vary across nonempty digits
+		const sums = make('sort chunk sums', (chunks * DIGITS + 1) * 4, storage);
 		const state = make('sort state', 12, storage);
 		this.#owned = [params, hist, sums, state];
 		this.bytes = this.#owned.reduce((sum, b) => sum + b.size, 0);

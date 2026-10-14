@@ -66,6 +66,16 @@ describe('Sort', () => {
 		});
 	}
 
+	for (const mask of [0x3f3f3f, 0x030303, 0xcccccc]) {
+		it(`sorts shared digit bits ${mask.toString(16)} across a partial block`, async () => {
+			const keys = testKeys(4097).map((key) => (key & mask) | (0xa0a0a0 & ~mask));
+			const got = await gpuSort(keys, keys.length, keys.length);
+			const want = cpuSort(keys);
+			expect(mismatch(got.keys, want.keys)).toBe(-1);
+			expect(mismatch(got.values, want.values)).toBe(-1);
+		});
+	}
+
 	it('sorts only the keys that fit when more were projected', async () => {
 		const keys = testKeys(300);
 		const got = await gpuSort(keys, 300, 200);

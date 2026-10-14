@@ -36,6 +36,8 @@ struct SortState {
 
 var<workgroup> bins: array<atomic<u32>, DIGITS>;
 var<workgroup> totals: array<u32, DIGITS>;
+var<workgroup> bitValues: atomic<u32>;
+var<workgroup> activeBits: u32;
 var<workgroup> sk: array<u32, BLOCK>;
 var<workgroup> sv: array<u32, BLOCK>;
 // three 10-bit counts; the fourth follows from the number of items
@@ -107,7 +109,15 @@ fn top(@builtin(local_invocation_index) t: u32) {
 		run += x;
 	}
 	totals[t] = run;
+	// a bit varies only when both zero and one occur in nonempty digits
+	if (run > 0u) {
+		atomicOr(&bitValues, t | ((255u ^ t) << 8u));
+	}
 	workgroupBarrier();
+	if (t == 0u) {
+		let values = atomicLoad(&bitValues);
+		sums[arrayLength(&sums) - 1u] = values & (values >> 8u);
+	}
 	for (var o = 1u; o < DIGITS; o *= 2u) {
 		var x = 0u;
 		if (t >= o) {
@@ -140,7 +150,15 @@ fn scatter(
 	@builtin(num_workgroups) groups: vec3u,
 	@builtin(local_invocation_index) t: u32
 ) {
-	for (var block = wid.y * groups.x + wid.x; block < state.blocks; block += groups.x * groups.y) {
+	let first = wid.y * groups.x + wid.x;
+	if (first >= state.blocks) {
+		return;
+	}
+	if (t == 0u) {
+		activeBits = sums[arrayLength(&sums) - 1u];
+	}
+	let bits = workgroupUniformLoad(&activeBits);
+	for (var block = first; block < state.blocks; block += groups.x * groups.y) {
 		let head = block * BLOCK;
 		let valid = min(BLOCK, state.count - head);
 		// padding has digit 255 at every shift, so it sorts behind the valid keys and is never written
@@ -162,6 +180,9 @@ fn scatter(
 
 		// stable local sort by the digit, two bits a split; thread t owns positions t ITEMS + k
 		for (var bit = 0u; bit < 8u; bit += 2u) {
+			if ((bits & (3u << bit)) == 0u) {
+				continue;
+			}
 			var keys: array<u32, ITEMS>;
 			var values: array<u32, ITEMS>;
 			var before: array<u32, ITEMS>;
