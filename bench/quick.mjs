@@ -186,9 +186,17 @@ const result = {
 console.log(JSON.stringify(result));
 
 /** @type {typeof result | undefined} */
-const baseline = existsSync(baselineFile)
-	? JSON.parse(readFileSync(baselineFile, 'utf8'))
-	: undefined;
+const saved = existsSync(baselineFile) ? JSON.parse(readFileSync(baselineFile, 'utf8')) : undefined;
+const baseline =
+	saved &&
+	saved.adapter === adapter &&
+	saved.cpuRate === cpuRate &&
+	saved.world === result.world &&
+	JSON.stringify(saved.options) === JSON.stringify(options)
+		? saved
+		: undefined;
+if (saved && !baseline)
+	console.error('baseline skipped: adapter, world or benchmark settings differ');
 /** @param {number} v */
 const fixed = (v) => v.toFixed(Math.abs(v) >= 100 ? 0 : 2);
 const rows = [['metric', 'now', 'baseline', 'delta']];
