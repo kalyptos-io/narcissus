@@ -5,8 +5,8 @@ import { view as viewMatrix } from '../math/mat4.ts';
 import { unit, world } from '../world/test-tree.ts';
 import { square, Tree, type PageNode } from '../world/tree.ts';
 import { HOLD, MARGIN, Planner, type Plan, type PlanOptions, type View } from './cut.ts';
-import { FADE_MS, Fader } from './draw.ts';
-import { footprint } from './footprint.ts';
+import { FADE_MS, Fader, quadrantSplats } from './draw.ts';
+import { footprint, shownQuadrants } from './footprint.ts';
 
 const E = 720000;
 const N = 6176000;
@@ -90,6 +90,23 @@ describe('planner', () => {
 		const plan = settle(twoKm(), oblique, { ...UNBOUND, budget });
 		expect(plan.planned).toBeGreaterThan(0);
 		expect(plan.planned).toBeLessThanOrEqual(budget);
+	});
+
+	it('spends the budget that refining a page at the edge frees', () => {
+		const budget = 800_000;
+		const plan = settle(twoKm(), look([E + 700, N + 600, 20], 30, -15), { ...UNBOUND, budget });
+		// short by less than one refinement, which adds at most three pages
+		expect(plan.planned).toBeGreaterThan(budget - 3 * COUNT);
+		expect(plan.planned).toBeLessThanOrEqual(budget);
+	});
+
+	it('counts only the quadrants of a page on screen', () => {
+		const tree = rooted({ level: 0, e: E, n: N });
+		const [root] = tree.roots;
+		// above the root's south-west quadrant, nothing resident to refine
+		const plan = new Planner().plan(tree, look([E + 40, N + 40, 40], 0, -90), () => false, UNBOUND);
+		expect(plan.cut).toEqual([root]);
+		expect(plan.planned).toBe(quadrantSplats(root.row, 0));
 	});
 
 	it('plans the same cut again once settled under a budget', () => {
@@ -185,12 +202,20 @@ describe('planner', () => {
 			return footprint(box, oblique.view, 1000, 1000, 1, 0.5, 2000, 1).pixels > 0;
 		};
 		const fringe = ({ load }: Plan) => load.filter((page) => !onScreen(page));
+		const visible = (page: PageNode) => {
+			const { view, origin } = oblique;
+			const mask = shownQuadrants(page.box, square(page), view, 1000, 1000, 1, 0.5, 2000, origin);
+			return [0, 1, 2, 3].reduce(
+				(sum, q) => sum + (mask & (1 << q) ? quadrantSplats(page.row, q) : 0),
+				0
+			);
+		};
 		let loads = 0;
 		const moving = { ...UNBOUND, predicted: oblique };
 		const plan = settle(twoKm(), oblique, moving, (step) => {
 			loads += step.load.length;
 			expect(fringe(step)).toEqual([]);
-			expect(step.missing).toBe(step.load.reduce((sum, page) => sum + page.row.count, 0));
+			expect(step.missing).toBe(step.load.reduce((sum, page) => sum + visible(page), 0));
 		});
 		expect(loads).toBeGreaterThan(0);
 		expect(plan.missing).toBe(0);

@@ -70,3 +70,42 @@ export function footprint(
 	out.weight = centreWeight(left, right, bottom, top);
 	return out;
 }
+
+const quarter = new Float64Array(6);
+const scratch: Footprint = { shown: false, pixels: 0, weight: 1 };
+
+/**
+ * bit q set where quadrant q of a page overlaps the viewport: quarter q of its square (x, y, side),
+ * within the box; arguments as footprint's
+ */
+export function shownQuadrants(
+	box: ArrayLike<number>,
+	[x, y, side]: readonly [number, number, number],
+	m: ArrayLike<number>,
+	width: number,
+	height: number,
+	tan: number,
+	near: number,
+	far: number,
+	origin: readonly [number, number, number] = ORIGIN
+): number {
+	const half = side / 2;
+	// splats reach past their quadrant as far as the box reaches past the square
+	const pad = Math.max(0, x - box[0], y - box[1], box[3] - x - side, box[4] - y - side);
+	quarter[2] = box[2];
+	quarter[5] = box[5];
+	let mask = 0;
+	for (let q = 0; q < 4; q++) {
+		const e = x + (q & 1) * half;
+		const n = y + (q >> 1) * half;
+		quarter[0] = Math.max(box[0], e - pad);
+		quarter[1] = Math.max(box[1], n - pad);
+		quarter[3] = Math.min(box[3], e + half + pad);
+		quarter[4] = Math.min(box[4], n + half + pad);
+		if (quarter[0] > quarter[3] || quarter[1] > quarter[4]) continue;
+		if (footprint(quarter, m, width, height, tan, near, far, 1, scratch, origin).shown) {
+			mask |= 1 << q;
+		}
+	}
+	return mask;
+}

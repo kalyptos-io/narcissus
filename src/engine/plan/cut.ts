@@ -1,8 +1,9 @@
 // which pages the view should draw and load, inside the draw budget and the pool
 
 import { slots } from '../gpu/layout.ts';
-import { footprint, type Footprint } from './footprint.ts';
-import type { PageNode, Tree, Wanted } from '../world/tree.ts';
+import { quadrantSplats } from './draw.ts';
+import { footprint, shownQuadrants, type Footprint } from './footprint.ts';
+import { square, type PageNode, type Tree, type Wanted } from '../world/tree.ts';
 
 /** a page refined in the last plan stays refined until its count reaches the target times this */
 export const MARGIN = 1 / 0.8 ** 2;
@@ -43,7 +44,7 @@ export interface Plan {
 	idx: Wanted[];
 	/** ids the pool must keep: the cut, its ancestors and held pages */
 	keep: Set<number>;
-	/** splats of the cut inside the frustum */
+	/** splats of the cut's quadrants inside the frustum */
 	planned: number;
 	/** of planned, the splats not resident yet */
 	missing: number;
@@ -55,6 +56,8 @@ interface Measure {
 	shown: boolean;
 	/** on screen now or ahead, at margin 1 */
 	near: boolean;
+	/** splats of its quadrants on screen */
+	visible: number;
 	pixels: number;
 	weight: number;
 }
@@ -64,6 +67,7 @@ interface Step {
 	shown: boolean;
 	/** refined last plan and on screen within HOLD: the quadrants it handed down stay */
 	held: number | null;
+	visible: number;
 	ratio: number;
 }
 
@@ -78,7 +82,8 @@ export class Planner {
 	plan(tree: Tree, view: View, resident: (id: number) => boolean, options: PlanOptions): Plan {
 		const { budget, capacity, now, predicted } = options;
 		const order: PageNode[] = [];
-		const visibility: number[] = [];
+		const visible: number[] = [];
+		const near: boolean[] = [];
 		const refined = new Map<number, number>();
 		const seen = new Map<number, number>();
 		const wanted = tree.wanted();
@@ -91,9 +96,10 @@ export class Planner {
 			const page = m.page;
 			const count = page.row.count;
 			order.push(page);
-			visibility.push((m.shown ? 1 : 0) | (m.near ? 2 : 0));
+			visible.push(m.visible);
+			near.push(m.near);
 			kept += slots(count);
-			if (m.shown) planned += count;
+			planned += m.visible;
 			const handed = this.#refined.get(page.id);
 			const was = handed !== undefined;
 			const target = m.pixels * m.weight;
@@ -103,14 +109,15 @@ export class Planner {
 			const held =
 				was && !m.shown && now - (this.#seen.get(page.id) ?? -Infinity) <= HOLD ? handed : null;
 			if ((count < target * (was ? MARGIN : 1) || held !== null) && refinable(page, resident))
-				queue.push({ page, shown: m.shown, held, ratio });
+				queue.push({ page, shown: m.shown, held, visible: m.visible, ratio });
 		};
 
 		for (const root of tree.roots) enter(this.#measure(root, view, predicted));
-		// once a refinement on screen misses the budget, only off-screen ones go on
-		let full = false;
+		// once a refinement on screen misses the budget, only off-screen ones go on until one frees budget
+		const blocked: Step[] = [];
 		while (queue.size) {
-			const { page, shown, held } = queue.pop();
+			const step = queue.pop();
+			const { page, shown, held } = step;
 			// quadrants off even the fringe stay with the page, which draws them unseen, so off budget
 			const parts: Measure[] = [];
 			let quadrants = 0;
@@ -124,20 +131,22 @@ export class Planner {
 			}
 			if (!parts.length) continue;
 			let grow = 0;
-			let delta = shown ? -page.row.count : 0;
+			let delta = -step.visible;
 			for (const m of parts) {
 				grow += slots(m.page.row.count);
-				if (m.shown) delta += m.page.row.count;
+				delta += m.visible;
 			}
 			if (kept + grow > capacity) break;
-			if (delta > 0 && (full || planned + delta > budget)) {
-				full = true;
+			if (delta > 0 && (blocked.length || planned + delta > budget)) {
+				blocked.push(step);
 				continue;
 			}
+			// a page at the edge frees budget when its children show less of it
+			if (delta < 0) for (const b of blocked.splice(0)) queue.push(b);
 			refined.set(page.id, quadrants);
 			const last = shown ? now : this.#seen.get(page.id);
 			if (last !== undefined) seen.set(page.id, last);
-			if (shown) planned -= page.row.count;
+			planned -= step.visible;
 			for (const m of parts) enter(m);
 		}
 		this.#refined = refined;
@@ -153,8 +162,8 @@ export class Planner {
 			cut.push(page);
 			keep.add(page.id);
 			if (!resident(page.id)) {
-				if (visibility[i] & 1) missing += page.row.count;
-				pending.push({ page, near: !!(visibility[i] & 2) });
+				missing += visible[i];
+				pending.push({ page, near: near[i] });
 			}
 		}
 		const ranked: { wanted: Wanted; rank: number }[] = [];
@@ -188,7 +197,7 @@ export class Planner {
 			if (ahead.pixels > pixels) ({ pixels, weight } = ahead);
 			near ||= ahead.shown;
 		}
-		return { page, shown, near, pixels, weight };
+		return { page, shown, near, visible: shown ? visibleSplats(page, view) : 0, pixels, weight };
 	}
 
 	#project(page: PageNode, view: View, margin: number): Footprint {
@@ -206,6 +215,24 @@ export class Planner {
 			view.origin
 		);
 	}
+}
+
+function visibleSplats(page: PageNode, view: View): number {
+	const { width, height, tan, near, far, origin } = view;
+	const mask = shownQuadrants(
+		page.box,
+		square(page),
+		view.view,
+		width,
+		height,
+		tan,
+		near,
+		far,
+		origin
+	);
+	let splats = 0;
+	for (let q = 0; q < 4; q++) if (mask & (1 << q)) splats += quadrantSplats(page.row, q);
+	return splats;
 }
 
 /** resident, with every child known and at least one there */

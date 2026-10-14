@@ -198,7 +198,7 @@ function entry(page: PageNode, q: number, now: number): Entry {
 const cellKey = (level: number, col: number, row: number) =>
 	((level + 1) * 2 ** 21 + col) * 2 ** 21 + row;
 
-function quadrantSplats({ count, quadrants }: PageRow, q: number): number {
+export function quadrantSplats({ count, quadrants }: PageRow, q: number): number {
 	return (q < 3 ? quadrants[q] : count) - (q > 0 ? quadrants[q - 1] : 0);
 }
 
