@@ -85,6 +85,7 @@ export class Renderer {
 	#count: GPUBuffer;
 	#counting = false;
 	#drawn = 0;
+	#visible = 0;
 
 	/**
 	 * capacity is the splats one frame may project; frames write the canvas of context, whose
@@ -104,8 +105,8 @@ export class Renderer {
 		this.#heights = new Heights(device, pool);
 		this.#timing = new Timing(device, gpu.timestamps, PASSES);
 		this.#count = device.createBuffer({
-			label: 'drawn readback',
-			size: 4,
+			label: 'counts readback',
+			size: (WORK.projected + 1) * 4,
 			usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
 		});
 		this.#width = Math.max(1, context.canvas.width);
@@ -173,7 +174,7 @@ export class Renderer {
 		const encoder = device.createCommandEncoder({ label: 'frame' });
 		encoder.clearBuffer(this.#buffers.work, 0, WORK.list * 4);
 		this.#cull.encode(encoder, timing.writes('cull'));
-		this.#project.encode(encoder, timing.writes('project'));
+		this.#project.encode(encoder, this.#visible, timing.writes('project'));
 		this.#sort.encode(encoder, this.#pool.listed * CLUSTER, this.#drawn, timing.writes('sort'));
 		this.#raster.encode(encoder, colour, depth, sky, timing.writes('raster'));
 		const reads = depthTexture
@@ -213,7 +214,7 @@ export class Renderer {
 		timing.resolve(encoder);
 		const count = !this.#counting;
 		if (count) {
-			encoder.copyBufferToBuffer(this.#buffers.work, WORK.projected * 4, this.#count, 0, 4);
+			encoder.copyBufferToBuffer(this.#buffers.work, 0, this.#count, 0, this.#count.size);
 		}
 		device.queue.submit([encoder.finish()]);
 		timing.read();
@@ -323,8 +324,9 @@ export class Renderer {
 		buffer
 			.mapAsync(GPUMapMode.READ)
 			.then(() => {
-				const projected = new Uint32Array(buffer.getMappedRange())[0];
-				this.#drawn = Math.min(projected, this.#buffers.capacity);
+				const counts = new Uint32Array(buffer.getMappedRange());
+				this.#visible = counts[WORK.visible];
+				this.#drawn = Math.min(counts[WORK.projected], this.#buffers.capacity);
 				buffer.unmap();
 			})
 			.catch(() => {})

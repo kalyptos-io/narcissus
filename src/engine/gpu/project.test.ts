@@ -294,13 +294,16 @@ async function setup(copies = 1, capacity = CAPACITY) {
 }
 
 /** the drawn clusters as the visible list, then the projection alone */
-async function run({ device, pool, buffers, project }: Awaited<ReturnType<typeof setup>>) {
+async function run(
+	{ device, pool, buffers, project }: Awaited<ReturnType<typeof setup>>,
+	visible = pool.listed
+) {
 	const header = new Uint32Array(WORK.list);
 	header[WORK.visible] = pool.listed;
 	device.queue.writeBuffer(buffers.work, 0, header);
 	const encoder = device.createCommandEncoder();
 	encoder.copyBufferToBuffer(pool.list, 0, buffers.work, WORK.list * 4, pool.listed * 4);
-	project.encode(encoder);
+	project.encode(encoder, visible);
 	device.queue.submit([encoder.finish()]);
 	const work = new Uint32Array(await readBuffer(device, buffers.work, 0, WORK.list * 4));
 	const projected = await readBuffer(device, buffers.projected);
@@ -313,8 +316,8 @@ describe('Project', () => {
 		const copies = 769;
 		const context = await setup(copies, copies * 4);
 		const want = SPLATS.map((_, t) => expected(t, context.uniforms)).filter((e) => e !== null);
-		for (let frame = 0; frame < 2; frame++) {
-			const { count, projected, sort } = await run(context);
+		for (const visible of [0, 1, copies * 4]) {
+			const { count, projected, sort } = await run(context, visible);
 			expect(count).toBe(copies * want.length);
 			const floats = new Float32Array(projected);
 			const counts = new Array(want.length).fill(0);
@@ -344,8 +347,8 @@ describe('Project', () => {
 			removed++;
 		}
 		const want = SPLATS.map((_, t) => expected(t, context.uniforms)).filter((e) => e !== null);
-		for (let frame = 0; frame < 2; frame++) {
-			const { count, projected, sort } = await run(context);
+		for (const visible of [0, 1, copies * 4]) {
+			const { count, projected, sort } = await run(context, visible);
 			expect(count).toBe((copies - removed) * want.length);
 			const floats = new Float32Array(projected);
 			for (let i = 0; i < CAPACITY; i++) {

@@ -54,10 +54,18 @@ export class Project {
 		this.#pipeline = undefined;
 	}
 
-	encode(encoder: GPUCommandEncoder, timestamps?: GPUComputePassTimestampWrites): void {
+	encode(
+		encoder: GPUCommandEncoder,
+		visible: number,
+		timestamps?: GPUComputePassTimestampWrites
+	): void {
 		// a uniform count keeps the loop uniform across each workgroup
 		encoder.copyBufferToBuffer(this.#work, WORK.visible * 4, this.#visible, 0, 4);
-		const count = Math.max(1, Math.min(128, this.#pool.listed));
+		// a stale count changes parallelism only; the shader still visits every current cluster
+		const count = Math.max(
+			1,
+			Math.min(128, this.#pool.listed, visible ? Math.max(32, Math.ceil(visible / 16)) : 128)
+		);
 		const pass = encoder.beginComputePass({ label: 'project', timestampWrites: timestamps });
 		pass.setPipeline((this.#pipeline ??= this.#build()));
 		pass.setBindGroup(0, this.#group);
