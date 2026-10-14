@@ -268,7 +268,7 @@ class GpuEngine implements Engine {
 	#heading = false;
 	#arrived = false;
 	#fading = false;
-	#drawn = 0;
+	#drawn: Drawn[] = [];
 	#lastFrame = -Infinity;
 	#warmUntil = -Infinity;
 	#movedAt = -Infinity;
@@ -432,7 +432,7 @@ class GpuEngine implements Engine {
 			missing: this.#plan?.missing ?? 0,
 			pages: {
 				resident: Array.from(pool.ids()).length,
-				drawn: this.#drawn,
+				drawn: this.#drawn.length,
 				loading: feed?.loading ?? 0,
 				queued: feed?.queued ?? 0
 			},
@@ -636,7 +636,8 @@ class GpuEngine implements Engine {
 		// plan
 		const tree = this.#tree;
 		const feed = this.#feed;
-		let plan = this.#plan;
+		const previous = this.#plan;
+		let plan = previous;
 		if (tree && feed) {
 			const due = !feed.idle && now - this.#plannedAt >= REPLAN_MS;
 			const stale = this.#dirty || this.#arrived || this.#fading || this.#heading;
@@ -646,16 +647,19 @@ class GpuEngine implements Engine {
 		}
 
 		// draw
-		let drawn: Drawn[] = [];
-		let fading = false;
+		let drawn = this.#drawn;
+		let fading = this.#fading;
 		if (plan && feed) {
-			({ drawn, fading } = this.#fader.update(plan.cut, this.#has, now, this.#budget));
+			// arrivals and active fades force a new plan
+			if (plan !== previous) {
+				({ drawn, fading } = this.#fader.update(plan.cut, this.#has, now, this.#budget));
+			}
 			feed.update(plan, new Set(drawn.map((d) => d.id)), now);
 		}
 		if (pool.upload(UPLOAD_BYTES) > 0) this.#arrived = true;
-		pool.draw(drawn);
+		if (drawn !== this.#drawn || this.#arrived) pool.draw(drawn);
 		this.#fading = fading;
-		this.#drawn = drawn.length;
+		this.#drawn = drawn;
 		const picks = this.#picks.splice(0).map((picking) => this.#pick(picking, frame));
 		const heights = this.#measures.splice(0).map((measuring) => this.#measure(measuring, origin));
 		const done = this.#renderer.render(frame, this.#planes, this.#options.sky, picks, heights);
