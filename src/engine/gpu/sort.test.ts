@@ -29,7 +29,7 @@ async function gpuSort(keys: Uint32Array, projected: number, capacity: number) {
 	);
 	device.queue.writeBuffer(buffers.work, WORK.projected * 4, new Uint32Array([projected]));
 	const encoder = device.createCommandEncoder();
-	sort.encode(encoder);
+	sort.encode(encoder, projected);
 	device.queue.submit([encoder.finish()]);
 	const read = async (offset: number) =>
 		new Uint32Array(await readBuffer(device, buffers.sort, offset, capacity * 4));
@@ -73,6 +73,15 @@ describe('Sort', () => {
 		expect(mismatch(got.keys, want.keys)).toBe(-1);
 		expect(mismatch(got.values, want.values)).toBe(-1);
 		expect(got.draw).toEqual([4, 200, 0, 0]);
+	});
+
+	it('sorts a small projected list in a larger frame buffer', async () => {
+		const keys = testKeys(1025);
+		const got = await gpuSort(keys, keys.length, 131_072);
+		const want = cpuSort(keys);
+		expect(mismatch(got.keys, want.keys)).toBe(-1);
+		expect(mismatch(got.values, want.values)).toBe(-1);
+		expect(got.draw).toEqual([4, keys.length, 0, 0]);
 	});
 
 	for (const key of [0, 0x555555, 0xaaaaaa, 0xffffff]) {

@@ -1,5 +1,6 @@
 // one frame on the gpu: cull, project, sort, raster, posts, present
 
+import { CLUSTER } from '../../format/index.ts';
 import { FRAME_UNIFORM_BYTES, LOW_PASS, PLUGIN_VEC4S, WORK } from './layout.ts';
 import { multiply } from '../math/mat4.ts';
 import type { Frame, Post, PostPass, Shade } from '../plugin.ts';
@@ -173,7 +174,7 @@ export class Renderer {
 		encoder.clearBuffer(this.#buffers.work, 0, WORK.list * 4);
 		this.#cull.encode(encoder, timing.writes('cull'));
 		this.#project.encode(encoder, timing.writes('project'));
-		this.#sort.encode(encoder, timing.writes('sort'));
+		this.#sort.encode(encoder, this.#pool.listed * CLUSTER, timing.writes('sort'));
 		this.#raster.encode(encoder, colour, depth, sky, timing.writes('raster'));
 		const reads = depthTexture
 			? picks.map(({ x, y, resolve }) => ({
