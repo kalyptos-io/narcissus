@@ -211,10 +211,11 @@ class Queue {
 		let i = items.length - 1;
 		while (i > 0) {
 			const up = (i - 1) >> 1;
-			if (!before(items[i], items[up])) break;
-			[items[i], items[up]] = [items[up], items[i]];
+			if (!before(step, items[up])) break;
+			items[i] = items[up];
 			i = up;
 		}
+		items[i] = step;
 	}
 
 	pop(): Step {
@@ -222,17 +223,15 @@ class Queue {
 		const top = items[0];
 		const last = items.pop()!;
 		if (items.length) {
-			items[0] = last;
 			let i = 0;
-			for (;;) {
-				const l = 2 * i + 1;
-				let best = i;
-				if (l < items.length && before(items[l], items[best])) best = l;
-				if (l + 1 < items.length && before(items[l + 1], items[best])) best = l + 1;
-				if (best === i) break;
-				[items[i], items[best]] = [items[best], items[i]];
-				i = best;
+			while (2 * i + 1 < items.length) {
+				let child = 2 * i + 1;
+				if (child + 1 < items.length && before(items[child + 1], items[child])) child++;
+				if (!before(items[child], last)) break;
+				items[i] = items[child];
+				i = child;
 			}
+			items[i] = last;
 		}
 		return top;
 	}
