@@ -75,13 +75,13 @@ The viewer needs WebGPU. The content of the element shows when the browser has n
 
 With a bundler, `import '@kalyptos/narcissus/element'` defines the element. Import it in the browser only; a server that renders the page has no DOM for it.
 
-| attribute       | value                                              | default                                                                                       |
-| --------------- | -------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `src`           | the URL of a `world.json`                          |                                                                                               |
-| `budget`        | the splats one frame may draw; set, it stays fixed | from 4,000,000, adapting between 2,000,000 and 6,000,000 to hold 30 FPS; 2,000,000 on a phone |
-| `view-distance` | metres                                             | 4000                                                                                          |
-| `camera`        | the view to open on: `E,N,H,yaw,pitch,distance`    | above the middle of the world                                                                 |
-| `sky`           | the colour behind the world: `r,g,b`, each 0 to 1  | a pale blue                                                                                   |
+| attribute       | value                                                                                                                    | default                                                                                       |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| `src`           | the URL of a `world.json`                                                                                                |                                                                                               |
+| `budget`        | the splats one frame may draw; set, it stays fixed                                                                       | from 4,000,000, adapting between 2,000,000 and 6,000,000 to hold 30 FPS; 2,000,000 on a phone |
+| `view-distance` | metres                                                                                                                   | 4000                                                                                          |
+| `camera`        | the view to open on: `E,N,H,yaw,pitch,distance`; with `H` empty, `E,N,,yaw,pitch,distance`, it looks at the ground there | above the middle of the world, looking at its ground                                          |
+| `sky`           | the colour behind the world: `r,g,b`, each 0 to 1                                                                        | a pale blue                                                                                   |
 
 The element sends a `ready` event when a world is open and an `error` event with a message when it cannot go on. Its `engine` and `controls` properties give the page the full API.
 

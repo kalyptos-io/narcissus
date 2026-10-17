@@ -132,6 +132,27 @@ describe('tree', () => {
 		expect(tree.ground(E - 1, N)).toBeUndefined();
 	});
 
+	it('loads the units over a point, and only those', async () => {
+		const key = { level: 2, e: E, n: N };
+		const tree = new Tree(world(key));
+		tree.add(unit(key), 'r');
+		const leaf = unit({ level: 0, e: E + 250, n: N });
+		for (const row of leaf.rows) row.box[2] = 7;
+		const units = [unit({ level: 1, e: E, n: N }), leaf];
+		const path = (idx: (typeof units)[number]) => unitPath(idx, hash(idx), 'idx');
+		const fetched: string[] = [];
+		const fetch = async (asked: string) => {
+			fetched.push(asked);
+			const found = units.find((idx) => path(idx) === asked);
+			if (!found) throw new Error(`no ${asked}`);
+			return found;
+		};
+		expect(tree.ground(E + 300, N + 10)).toBe(0);
+		await tree.load(E + 300, N + 10, fetch);
+		expect(tree.ground(E + 300, N + 10)).toBe(7);
+		expect(fetched.sort()).toEqual(units.map(path).sort());
+	});
+
 	it('prunes a leaf unit, then its parent, and never a root', () => {
 		const key = { level: 2, e: E, n: N };
 		const tree = new Tree(world(key));

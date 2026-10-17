@@ -172,6 +172,16 @@ export class Tree {
 		return undefined;
 	}
 
+	/** adds every unit over (e, n) that the tree knows of and lacks, each .idx read by fetch */
+	async load(e: number, n: number, fetch: (path: string) => Promise<Idx>): Promise<void> {
+		for (;;) {
+			const over = this.wanted().filter((key) => holds(key, e, n));
+			if (over.length === 0) return;
+			const fetched = await Promise.all(over.map((key) => fetch(key.path)));
+			fetched.forEach((idx, k) => this.add(idx, over[k].path));
+		}
+	}
+
 	/**
 	 * removes every non-root unit with no page in keep and no added unit below it, deepest first;
 	 * returns the ids of the pages it removed
@@ -274,6 +284,12 @@ export function unitKey(key: UnitKey): string {
 function ancestor(key: UnitKey, level: number): UnitKey {
 	const side = LEAF * 2 ** level;
 	return { level, e: Math.floor(key.e / side) * side, n: Math.floor(key.n / side) * side };
+}
+
+/** whether key's square holds (e, n) */
+function holds(key: UnitKey, e: number, n: number): boolean {
+	const side = LEAF * 2 ** key.level;
+	return e >= key.e && e < key.e + side && n >= key.n && n < key.n + side;
 }
 
 /** south-west corner and side of a page's square, world metres */

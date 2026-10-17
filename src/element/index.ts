@@ -25,8 +25,8 @@ function mobile(): boolean {
 /**
  * attributes: src, the url of a world.json; budget, the splats a frame may draw, which otherwise
  * adapts to the frame rate; view-distance in metres; camera, the pose to open on as
- * E,N,H,yaw,pitch,dist; sky as r,g,b from 0 to 1. camera and sky are read when a world opens and
- * when the element starts.
+ * E,N,H,yaw,pitch,dist, its focus on the ground there when H is left empty, as the opening view's;
+ * sky as r,g,b from 0 to 1. camera and sky are read when a world opens and when the element starts.
  * events: ready, with the World as its detail, and error, with a message.
  * after an error, such as a browser without webgpu, its own content shows in place of the canvas,
  * or the message when it has none.
@@ -123,10 +123,16 @@ export class NarcissusViewer extends HTMLElement {
 		}
 		if (turn !== this.#turn) return;
 		const ground = (e: number, n: number) => engine.ground(e, n) ?? world.extent.h[0];
-		const pose = parsePose(this.getAttribute('camera') ?? '') ?? {
-			...opening(world),
-			...defaultView
-		};
+		const parts = (this.getAttribute('camera') ?? '').split(',');
+		const grounded = parts.length === 6 && parts[2].trim() === '';
+		const asked = parsePose((grounded ? parts.with(2, '0') : parts).join(','));
+		const pose = asked ?? { ...opening(world), ...defaultView };
+		if (grounded || !asked) {
+			// just after open the ground is the roots' coarse pages', often far below the real one
+			const h = await engine.groundAt(pose.e, pose.n).catch(() => undefined);
+			if (turn !== this.#turn) return;
+			pose.h = h ?? world.extent.h[0];
+		}
 		this.#controls?.destroy();
 		this.#controls = new Controls(this.#canvas, engine, ground, pose);
 		this.dispatchEvent(new CustomEvent('ready', { detail: world }));

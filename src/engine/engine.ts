@@ -56,6 +56,8 @@ export interface Engine {
 	/** world point under canvas css pixel (x, y), or null over nothing */
 	pick(x: number, y: number): Promise<[number, number, number] | null>;
 	ground(e: number, n: number): number | undefined;
+	/** ground(e, n) once every .idx over (e, n) is read */
+	groundAt(e: number, n: number): Promise<number | undefined>;
 	/**
 	 * tops, as world heights, of the solid splats the next frame draws over cells x cells of 1 m from the
 	 * south-west corner (west, south), rows south to north, NaN where none; null if no frame comes
@@ -414,6 +416,16 @@ class GpuEngine implements Engine {
 
 	ground(e: number, n: number): number | undefined {
 		return this.#tree?.ground(e, n);
+	}
+
+	async groundAt(e: number, n: number): Promise<number | undefined> {
+		const tree = this.#tree;
+		const loader = this.#loader;
+		if (!tree || !loader) return undefined;
+		await tree.load(e, n, (path) => loader.idx(path));
+		this.#arrived = true;
+		this.requestFrame();
+		return tree.ground(e, n);
 	}
 
 	heights(west: number, south: number, cells: number): Promise<Float32Array | null> {
