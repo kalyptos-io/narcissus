@@ -473,6 +473,8 @@ class GpuEngine implements Engine {
 			planned: this.#plan?.planned ?? 0,
 			missing: this.#plan?.missing ?? 0,
 			detail: this.#plan?.detail ?? 0,
+			projected: this.#plan?.projected ?? 0,
+			planMs: this.#plan?.ms ?? 0,
 			pages: {
 				resident: Array.from(pool.ids()).length,
 				drawn: pool.drawn,

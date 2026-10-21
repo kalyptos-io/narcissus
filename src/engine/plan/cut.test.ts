@@ -319,11 +319,11 @@ describe('cut', () => {
 		const request = { views: [OVER, look([260, -120, 290])], budget: 500, capacity: 1e9 };
 		const a = cutOf(f);
 		const first = a.plan(request);
-		expect(cutOf(f).plan(request)).toEqual(first);
+		expect(cutOf(f).plan(request)).toEqual({ ...first, ms: expect.any(Number) });
 		a.verdict(true);
 		const again = a.plan(request);
 		expect(again.masks).toEqual([]);
-		expect({ ...again, masks: first.masks }).toEqual(first);
+		expect({ ...again, masks: first.masks, ms: first.ms }).toEqual(first);
 	});
 
 	it('sends the changes against the masks the pool took', () => {
@@ -418,7 +418,7 @@ describe('cut', () => {
 		const request = (views: CutView[]) => ({ views, budget: 400, capacity: 1e9 });
 		const alone = cutOf(f).plan(request([here]));
 		const both = cutOf(f).plan(request([here, ahead]));
-		expect(cutOf(f).plan(request([ahead, here]))).toEqual(both);
+		expect(cutOf(f).plan(request([ahead, here]))).toEqual({ ...both, ms: expect.any(Number) });
 		const fits: Node[] = [];
 		const gather = (node: Node) => (node.family ? node.family.forEach(gather) : fits.push(node));
 		f.tops.forEach(gather);

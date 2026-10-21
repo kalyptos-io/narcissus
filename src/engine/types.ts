@@ -42,6 +42,10 @@ export interface Stats {
 	missing: number;
 	/** px: nodes of this size on screen or smaller stay unrefined */
 	detail: number;
+	/** nodes of the pages drawn, which the gpu projects and masks */
+	projected: number;
+	/** ms the last plan took in its worker */
+	planMs: number;
 	pages: { resident: number; drawn: number; loading: number; queued: number };
 	/** bytes */
 	memory: { pool: number; buffers: number };

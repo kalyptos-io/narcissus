@@ -24,6 +24,8 @@ const START = 1000;
 const FLOOR = 0.05;
 /** a link into an unknown child this many thresholds large also wants the .idx files under it */
 const DEEP = 4;
+/** a parent this share of the threshold or larger has the page it refines into fetched ahead of need */
+const AHEAD = 0.5;
 
 /** a unit as the cut knows it */
 export interface UnitInfo {
@@ -77,6 +79,10 @@ export interface CutResult {
 	missing: number;
 	/** px, the last round's threshold */
 	detail: number;
+	/** nodes of the pages drawn, which the gpu projects and masks */
+	projected: number;
+	/** ms the plan took */
+	ms: number;
 }
 
 interface Unit extends UnitInfo {
@@ -269,6 +275,7 @@ export class Cut {
 	}
 
 	plan({ views, budget, capacity }: CutRequest): CutResult {
+		const started = performance.now();
 		const stamp = ++this.#stamp;
 		const cap = Math.floor(CAP * budget);
 		// per view: the rotation's rows, the projection's scales and the focal length in pixels
@@ -433,15 +440,39 @@ export class Cut {
 			threshold = Math.max(T_MIN, threshold / 2, 0.99 * threshold * Math.sqrt(used / budget));
 		}
 
+		// a page arriving late is drawn at once, so the parents nearest the threshold want theirs now, below every refinement
+		const near = threshold * AHEAD;
+		for (let b = queue.top; b >= 0 && b >= bucket(near); b--) {
+			for (let k = queue.pop(b); k >= 0; k = queue.pop(b)) {
+				const s = queue.sizes[k];
+				if (s <= near) continue;
+				const page = touched[queue.pages[k]];
+				const link = page.nodes.links[queue.ranks[k]];
+				const quadrant = linkUnit(link) - 1;
+				const unit = quadrant < 0 ? page.unit : this.#units.get(page.unit.keys[quadrant]);
+				if (!unit) {
+					const path = page.unit.children[quadrant];
+					if (path && room(page.nodes.counts.length)) fetch(path, s);
+					continue;
+				}
+				const row = unit.rows[linkRow(link)];
+				if (row && !this.#pages.has(row.id)) want(row.id, row.count, s);
+			}
+		}
+
 		const masks: [number, Uint32Array<ArrayBuffer>][] = [];
 		const pending = new Map<number, Uint32Array>();
+		let projected = 0;
 		for (const page of touched) {
 			const { seen, refined } = page;
 			const mask = new Uint32Array(seen.length);
 			let any = 0;
 			for (let w = 0; w < seen.length; w++) any |= mask[w] = seen[w] & ~refined[w];
 			const before = this.#applied.get(page.id);
-			if (any) pending.set(page.id, mask);
+			if (any) {
+				pending.set(page.id, mask);
+				projected += page.nodes.counts.length;
+			}
 			if (before ? !same(before, mask) : any)
 				masks.push([page.id, any ? mask : new Uint32Array(0)]);
 		}
@@ -458,7 +489,9 @@ export class Cut {
 			idx: ranked(files),
 			planned: used,
 			missing,
-			detail: threshold
+			detail: threshold,
+			projected,
+			ms: performance.now() - started
 		};
 	}
 }
