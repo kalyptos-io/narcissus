@@ -1,276 +1,430 @@
 import { describe, expect, it } from 'vitest';
-import type { UnitKey } from '../../format/index.ts';
+import { link, mulberry32 } from '../../format/encode.ts';
+import type { PageNodes } from '../../format/index.ts';
 import { slots } from '../gpu/layout.ts';
 import { view as viewMatrix } from '../math/mat4.ts';
-import { unit, world } from '../world/test-tree.ts';
-import { square, Tree, type PageNode } from '../world/tree.ts';
-import { HOLD, MARGIN, Planner, type Plan, type PlanOptions, type View } from './cut.ts';
-import { FADE_MS, Fader, quadrantSplats } from './draw.ts';
-import { footprint, shownQuadrants } from './footprint.ts';
+import { CAP, Cut, T_MIN, type CutResult, type CutView, type UnitInfo } from './cut.ts';
 
-const E = 720000;
-const N = 6176000;
-const COUNT = 20_000;
-const UNBOUND = { budget: 1e12, capacity: 1e12, now: 0 };
 const rad = Math.PI / 180;
 
-/** a world of one root with its extra levels down to one page, nothing below it added yet */
-function rooted(root: UnitKey, count = COUNT): Tree {
-	const tree = new Tree(world(root));
-	tree.add(unit(root, { count, extra: 3 }), 'root.idx');
-	return tree;
+/** a node of the test forest, world metres */
+interface Node {
+	centre: [number, number, number];
+	radius: number;
+	family: Node[] | null;
+	/** where it is stored: page id and index */
+	page: number;
+	index: number;
 }
 
-const twoKm = () => rooted({ level: 3, e: E, n: N });
-
-/** a 1000 px square view with a 90 degree fov, in a floating origin under the eye */
-function look(eye: readonly [number, number, number], yaw: number, pitch: number): View {
-	const origin = [Math.round(eye[0]), Math.round(eye[1]), 0] as const;
-	const local = [eye[0] - origin[0], eye[1] - origin[1], eye[2]] as const;
-	const view = viewMatrix(new Float64Array(16), local, yaw * rad, pitch * rad);
-	return { origin, view, width: 1000, height: 1000, tan: 1, near: 0.5, far: 2000 };
+interface Forest {
+	units: UnitInfo[];
+	pages: Map<number, PageNodes>;
+	/** page id to its unit corner */
+	corners: Map<number, [number, number]>;
+	tops: Node[];
+	fits: number;
+	/** the root's top page */
+	top: number;
 }
 
-/** plans, loads and fetches what each plan asks for until nothing is left to ask */
-function settle(
-	tree: Tree,
-	view: View,
-	options: PlanOptions,
-	check?: (plan: Plan, resident: Set<number>) => void
-): Plan {
-	const planner = new Planner();
-	const resident = new Set<number>();
-	for (let round = 0; round < 64; round++) {
-		const plan = planner.plan(tree, view, (id) => resident.has(id), options);
-		check?.(plan, resident);
-		if (!plan.load.length && !plan.idx.length) return plan;
-		for (const page of plan.load) resident.add(page.id);
-		for (const wanted of plan.idx) tree.add(unit(wanted, { count: COUNT }), wanted.path);
+/** families of 1 to 5 consecutive nodes */
+function chunk(nodes: Node[], next: () => number): Node[][] {
+	const families: Node[][] = [];
+	for (let at = 0; at < nodes.length;) {
+		const count = 1 + Math.floor(5 * next());
+		families.push(nodes.slice(at, at + count));
+		at += count;
 	}
-	throw new Error('the plan did not settle');
+	return families;
 }
 
-function at(cut: PageNode[], e: number, n: number): PageNode {
-	const found = cut.find((page) => {
-		const [x, y, side] = square(page);
-		return e >= x && e < x + side && n >= y && n < y + side;
-	});
-	if (!found) throw new Error(`no page over ${e} ${n}`);
-	return found;
+function parentOf(family: Node[]): Node {
+	const centre = [0, 1, 2].map((a) => family.reduce((s, m) => s + m.centre[a], 0) / family.length);
+	const spread = Math.max(
+		...family.map((m) => Math.hypot(...m.centre.map((c, a) => c - centre[a])))
+	);
+	const radius = 1.6 * Math.max(...family.map((m) => m.radius)) + spread;
+	return { centre: centre as Node['centre'], radius, family, page: -1, index: -1 };
 }
 
-/** the cut's pages within 200 m of (e, n), by level and global grid position */
-function around(cut: PageNode[], e: number, n: number): string[] {
-	const keys: string[] = [];
-	for (const page of cut) {
-		const [x, y, side] = square(page);
-		if (x >= e + 200 || x + side <= e - 200 || y >= n + 200 || y + side <= n - 200) continue;
-		keys.push(`${page.g}/${x / side}/${y / side}`);
+/**
+ * a root at level 1 over four leaves of `fits` fit splats each: leaf families in bands 0 and 1,
+ * the leaves' tops copied into the root's band 2, its own tops in its top page; every band split
+ * over pages of whole families
+ */
+function forest(seed: number, fits = 300): Forest {
+	const next = mulberry32(seed);
+	const pages = new Map<number, PageNodes>();
+	const corners = new Map<number, [number, number]>();
+	let id = 0;
+	/** families into pages of a unit, rows appended to info */
+	const place = (info: UnitInfo, families: Node[][], top = false) => {
+		const split = top ? 1 : 1 + Math.floor(3 * next());
+		const per = Math.ceil(families.length / split);
+		for (let p = 0; p < split; p++) {
+			const members = families.slice(p * per, (p + 1) * per).flat();
+			if (!members.length) continue;
+			const page = id++;
+			members.forEach((node, index) => Object.assign(node, { page, index }));
+			info.rows.push({ id: page, count: members.length, top });
+			corners.set(page, [info.e, info.n]);
+			pages.set(page, { members } as unknown as PageNodes);
+		}
+	};
+	const sorted = (nodes: Node[]) =>
+		nodes.sort((a, b) => a.centre[0] - b.centre[0] || a.centre[1] - b.centre[1]);
+
+	const root: UnitInfo = {
+		level: 1,
+		e: 0,
+		n: 0,
+		root: true,
+		rows: [],
+		children: [],
+		descendants: [[], [], [], []]
+	};
+	const leaves: UnitInfo[] = [];
+	const tops: Node[] = [];
+	const fams3: Node[][] = [];
+	for (let q = 0; q < 4; q++) {
+		const leaf: UnitInfo = {
+			level: 0,
+			e: 250 * (q & 1),
+			n: 250 * (q >> 1),
+			root: false,
+			rows: [],
+			children: [null, null, null, null],
+			descendants: [[], [], [], []]
+		};
+		const splats: Node[] = Array.from({ length: fits }, () => ({
+			centre: [leaf.e + 250 * next(), leaf.n + 250 * next(), 10 * next()],
+			radius: 0.2 + 0.2 * next(),
+			family: null,
+			page: -1,
+			index: -1
+		}));
+		const fams1 = chunk(sorted(splats), next);
+		const parents1 = fams1.map(parentOf);
+		const fams2 = chunk(sorted(parents1), next);
+		const parents2 = fams2.map(parentOf);
+		place(leaf, fams1);
+		place(leaf, fams2);
+		leaves.push(leaf);
+		tops.push(...parents2);
 	}
-	return keys.sort();
+	fams3.push(...chunk(sorted(tops), next));
+	const parents3 = fams3.map(parentOf);
+	place(root, fams3);
+	place(root, [parents3], true);
+	root.children = leaves.map((leaf) => `u/0/${leaf.e}/${leaf.n}.idx`);
+
+	// each stored node's count and link, each page's arrays
+	const unitOf = new Map<number, UnitInfo>();
+	for (const info of [root, ...leaves]) for (const row of info.rows) unitOf.set(row.id, info);
+	const rowOf = (page: number) => unitOf.get(page)!.rows.findIndex((row) => row.id === page);
+	for (const [page, holder] of pages) {
+		const members = (holder as unknown as { members: Node[] }).members;
+		const corner = corners.get(page)!;
+		const parents = members.filter((m) => m.family);
+		const nodes: PageNodes = {
+			counts: Uint8Array.from(members, (m) => m.family?.length ?? 0),
+			centres: Float32Array.from(
+				parents.flatMap((m) => [m.centre[0] - corner[0], m.centre[1] - corner[1], m.centre[2]])
+			),
+			radii: Float32Array.from(parents, (m) => m.radius),
+			links: Uint32Array.from(parents, (m) => {
+				const first = m.family![0];
+				const own = unitOf.get(page)!;
+				const there = unitOf.get(first.page)!;
+				const q = there === own ? -1 : (there.e - own.e) / 250 + (2 * (there.n - own.n)) / 250;
+				return link(q + 1, rowOf(first.page), first.index);
+			})
+		};
+		pages.set(page, nodes);
+	}
+	return {
+		units: [root, ...leaves],
+		pages,
+		corners,
+		tops: parents3,
+		fits: 4 * fits,
+		top: root.rows.at(-1)!.id
+	};
 }
 
-const oblique = look([E + 500, N + 200, 20], 0, -15);
-const down = look([E + 1100, N + 1100, 300], 0, -90);
+/** a 1920 x 1080 view at the viewer's fov from eye, yaw and pitch in degrees */
+function look(eye: [number, number, number], yaw = 0, pitch = -60): CutView {
+	const m = viewMatrix(new Float64Array(16), [0, 0, 0], yaw * rad, pitch * rad);
+	const p11 = 1 / Math.tan(22.5 * rad);
+	return {
+		eye,
+		rotation: [m[0], m[4], m[8], m[1], m[5], m[9], m[2], m[6], m[10]],
+		p00: (p11 * 1080) / 1920,
+		p11,
+		width: 1920,
+		height: 1080
+	};
+}
 
-describe('planner', () => {
-	it('refines toward the camera', () => {
-		const plan = settle(twoKm(), oblique, UNBOUND);
-		expect(at(plan.cut, E + 500, N + 230).g).toBeLessThan(at(plan.cut, E + 500, N + 1700).g);
-	});
+/** the size the cut gives a node, from format.md's radius and the brief's weight */
+function size(node: Node, view: CutView): number {
+	const d = [0, 1, 2].map((a) => node.centre[a] - view.eye[a]);
+	const r = view.rotation;
+	const depth = -(r[6] * d[0] + r[7] * d[1] + r[8] * d[2]);
+	let weight = 0.05;
+	if (depth > 0) {
+		const x = Math.abs(view.p00 * (r[0] * d[0] + r[1] * d[1] + r[2] * d[2]));
+		const y = Math.abs(view.p11 * (r[3] * d[0] + r[4] * d[1] + r[5] * d[2]));
+		weight += 0.95 * (depth / Math.max(depth, x, y)) ** 2;
+	}
+	const focal = Math.max(view.p00 * view.width, view.p11 * view.height) / 2;
+	return (2 * node.radius * focal * weight) / Math.hypot(...d);
+}
 
-	it('refines toward the screen centre', () => {
-		const plan = settle(twoKm(), down, UNBOUND);
-		expect(at(plan.cut, E + 1100, N + 1100).g).toBeLessThan(at(plan.cut, E + 1370, N + 1100).g);
-	});
+const OVER = look([250, -150, 300]);
 
-	it('keeps the splats on screen inside the budget', () => {
-		const budget = 200_000;
-		expect(settle(twoKm(), oblique, UNBOUND).planned).toBeGreaterThan(budget);
-		const plan = settle(twoKm(), oblique, { ...UNBOUND, budget });
-		expect(plan.planned).toBeGreaterThan(0);
-		expect(plan.planned).toBeLessThanOrEqual(budget);
-	});
+/** a cut told of every unit and of the pages resident says */
+function cutOf(f: Forest, resident: (page: number) => boolean = () => true): Cut {
+	const cut = new Cut();
+	for (const info of f.units) cut.unit(info);
+	for (const [id, nodes] of f.pages) if (resident(id)) cut.page(id, nodes);
+	return cut;
+}
 
-	it('spends the budget that refining a page at the edge frees', () => {
-		const budget = 800_000;
-		const plan = settle(twoKm(), look([E + 700, N + 600, 20], 30, -15), { ...UNBOUND, budget });
-		// short by less than one refinement, which adds at most three pages
-		expect(plan.planned).toBeGreaterThan(budget - 3 * COUNT);
-		expect(plan.planned).toBeLessThanOrEqual(budget);
-	});
-
-	it('counts only the quadrants of a page on screen', () => {
-		const tree = rooted({ level: 0, e: E, n: N });
-		const [root] = tree.roots;
-		// above the root's south-west quadrant, nothing resident to refine
-		const plan = new Planner().plan(tree, look([E + 40, N + 40, 40], 0, -90), () => false, UNBOUND);
-		expect(plan.cut).toEqual([root]);
-		expect(plan.planned).toBe(quadrantSplats(root.row, 0));
-	});
-
-	it('plans the same cut again once settled under a budget', () => {
-		// a page refined last plan must not rank ahead of the refinements that freed its budget
-		const view = look([E + 700, N + 600, 20], 30, -15);
-		const options = { ...UNBOUND, budget: 240_000 };
-		const tree = twoKm();
-		const planner = new Planner();
-		const resident = new Set<number>();
-		const plan = () => planner.plan(tree, view, (id) => resident.has(id), options);
-		let last = plan();
-		for (let round = 0; round < 64 && (last.load.length || last.idx.length); round++) {
-			for (const page of last.load) resident.add(page.id);
-			for (const wanted of last.idx) tree.add(unit(wanted, { count: COUNT }), wanted.path);
-			last = plan();
+/** drawn bits of every page the plans so far left set */
+function drawn(results: CutResult[]): Map<number, Uint32Array> {
+	const masks = new Map<number, Uint32Array>();
+	for (const { masks: changed } of results) {
+		for (const [id, mask] of changed) {
+			if (mask.length) masks.set(id, mask);
+			else masks.delete(id);
 		}
-		expect(plan().cut).toEqual(last.cut);
-	});
+	}
+	return masks;
+}
 
-	it('keeps the kept pages inside the capacity', () => {
-		const capacity = 300_000;
-		const tree = twoKm();
-		const plan = settle(tree, oblique, { ...UNBOUND, capacity });
-		const kept = [...plan.keep].reduce((sum, id) => sum + slots(tree.pages.get(id)!.row.count), 0);
-		expect(kept).toBeGreaterThan(0);
-		expect(kept).toBeLessThanOrEqual(capacity);
-	});
+const isDrawn = (masks: Map<number, Uint32Array>, node: Node) =>
+	((masks.get(node.page)?.[node.index >> 5] ?? 0) >>> (node.index & 31)) & 1;
 
-	it('loads a page only once its parent is resident', () => {
-		let loads = 0;
-		settle(twoKm(), oblique, UNBOUND, (plan, resident) => {
-			for (const page of plan.load) {
-				loads++;
-				expect(page.parent === null || resident.has(page.parent.id)).toBe(true);
+/** drawn nodes under node, after checking each path holds one drawn node */
+function walk(
+	node: Node,
+	masks: Map<number, Uint32Array>,
+	resident: (page: number) => boolean
+): number {
+	const here = isDrawn(masks, node);
+	const below = node.family && resident(node.family[0].page);
+	if (here) {
+		if (below)
+			for (const m of node.family!) expect(under(m, masks), 'drawn under a drawn node').toBe(0);
+		return 1;
+	}
+	expect(below, 'a path with no drawn node').toBeTruthy();
+	return node.family!.reduce((sum, m) => sum + walk(m, masks, resident), 0);
+}
+
+function under(node: Node, masks: Map<number, Uint32Array>): number {
+	let count = isDrawn(masks, node);
+	for (const m of node.family ?? []) if (m.page >= 0) count += under(m, masks);
+	return count;
+}
+
+describe('cut', () => {
+	it('draws one node on every path from the top page to a fit splat, within the cap', () => {
+		for (let seed = 1; seed <= 12; seed++) {
+			const f = forest(seed);
+			const next = mulberry32(seed + 100);
+			const absent = new Set([...f.pages.keys()].filter((id) => id !== f.top && next() < 0.3));
+			const resident = (id: number) => !absent.has(id);
+			for (const budget of [60, 200, 700, 5000]) {
+				const result = cutOf(f, resident).plan({ views: [OVER], budget, capacity: 1e9 });
+				const masks = drawn([result]);
+				const total = f.tops.reduce((sum, top) => sum + walk(top, masks, resident), 0);
+				expect(result.planned).toBe(total);
+				expect(result.planned).toBeLessThanOrEqual(
+					Math.max(f.tops.length, Math.floor(CAP * budget))
+				);
+				expect(result.load.every((id) => absent.has(id))).toBe(true);
 			}
-		});
-		expect(loads).toBeGreaterThan(0);
-	});
-
-	it('keeps the cut and every ancestor of it', () => {
-		const plan = settle(twoKm(), oblique, UNBOUND);
-		for (const page of plan.cut) {
-			expect(plan.keep.has(page.id)).toBe(true);
-			for (let up = page.parent; up; up = up.parent) expect(plan.keep.has(up.id)).toBe(true);
 		}
 	});
 
-	it('keeps a refinement through the margin so it does not flip at the threshold', () => {
-		const near = look([E + 125, N + 125, 400], 0, -90);
-		const high = look([E + 125, N + 125, 440], 0, -90);
-		const need = (view: View) => {
-			const box = [-125, -125, 0, 125, 125, 5];
-			const { pixels, weight } = footprint(box, view.view, 1000, 1000, 1, 0.5, 2000, 1.1);
-			return pixels * weight;
-		};
-		const count = Math.round((need(near) + need(high)) / 2);
-		expect(count).toBeLessThan(need(near));
-		expect(count).toBeGreaterThan(need(high));
-		expect(count).toBeLessThan(need(high) * MARGIN);
-
-		const tree = rooted({ level: 0, e: E, n: N }, count);
-		const [root] = tree.roots;
-		const resident = (id: number) => id === root.id;
-		const refined = (planner: Planner, view: View) =>
-			!planner.plan(tree, view, resident, UNBOUND).cut.includes(root);
-		const planner = new Planner();
-		expect(refined(planner, near)).toBe(true);
-		expect(refined(planner, high)).toBe(true);
-		expect(refined(new Planner(), high)).toBe(false);
+	it('refines to every fit splat when the budget holds them, and to the budget when it does not', () => {
+		const f = forest(3);
+		const all = cutOf(f).plan({ views: [OVER], budget: 10_000, capacity: 1e9 });
+		expect(all).toMatchObject({ planned: f.fits, missing: 0, load: [], idx: [], detail: T_MIN });
+		const some = cutOf(f).plan({ views: [OVER], budget: 400, capacity: 1e9 });
+		expect(some.planned).toBeGreaterThanOrEqual(400);
+		expect(some.planned).toBeLessThanOrEqual(440);
+		expect(some.detail).toBeGreaterThan(T_MIN);
 	});
 
-	it('refines only the quadrants in view, and the page draws the rest', () => {
-		const tree = rooted({ level: 0, e: E, n: N });
-		const [root] = tree.roots;
-		// a corner of the root's south-west quadrant from 40 m up, the fringe inside that quadrant
-		const plan = settle(tree, look([E + 40, N + 40, 40], 0, -90), UNBOUND);
-		expect(plan.keep.has(root.id)).toBe(true);
-		expect(plan.cut.includes(root)).toBe(false);
-		expect(plan.cut.every((page) => square(page)[0] < E + 125 && square(page)[1] < N + 125)).toBe(
-			true
-		);
-		const fader = new Fader();
-		const resident = (id: number) => plan.keep.has(id);
-		fader.update(plan.cut, resident, 0, 1e12);
-		const { drawn } = fader.update(plan.cut, resident, FADE_MS, 1e12);
-		// factors by quadrant from the low byte: the south-west one handed to its child
-		expect(drawn.find((d) => d.id === root.id)?.factors).toBe(0xffffff00);
-	});
-
-	it('loads the fringe once the screen has its detail and the camera rests', () => {
-		const onScreen = (page: PageNode) => {
-			const box = Array.from(page.box, (v, k) => v - oblique.origin[k % 3]);
-			return footprint(box, oblique.view, 1000, 1000, 1, 0.5, 2000, 1).pixels > 0;
-		};
-		const fringe = ({ load }: Plan) => load.filter((page) => !onScreen(page));
-		const visible = (page: PageNode) => {
-			const { view, origin } = oblique;
-			const mask = shownQuadrants(page.box, square(page), view, 1000, 1000, 1, 0.5, 2000, origin);
-			return [0, 1, 2, 3].reduce(
-				(sum, q) => sum + (mask & (1 << q) ? quadrantSplats(page.row, q) : 0),
-				0
-			);
-		};
-		let loads = 0;
-		const moving = { ...UNBOUND, predicted: oblique };
-		const plan = settle(twoKm(), oblique, moving, (step) => {
-			loads += step.load.length;
-			expect(fringe(step)).toEqual([]);
-			expect(step.missing).toBe(step.load.reduce((sum, page) => sum + visible(page), 0));
+	it('keeps a parent whose family is not resident drawn, and wants the page', () => {
+		const f = forest(4);
+		const fine = f.units[1].rows[0].id;
+		const result = cutOf(f, (id) => id !== fine).plan({
+			views: [OVER],
+			budget: 10_000,
+			capacity: 1e9
 		});
-		expect(loads).toBeGreaterThan(0);
-		expect(plan.missing).toBe(0);
-		let fringed = false;
-		settle(twoKm(), oblique, UNBOUND, (step) => {
-			if (step.missing > 0) expect(fringe(step)).toEqual([]);
-			else if (fringe(step).length) fringed = true;
-		});
-		expect(fringed).toBe(true);
+		expect(result.load).toEqual([fine]);
+		const masks = drawn([result]);
+		let blocked = 0;
+		const visit = (node: Node) => {
+			if (!node.family) return;
+			if (node.family[0].page === fine) {
+				expect(isDrawn(masks, node)).toBe(1);
+				blocked++;
+			} else node.family.forEach(visit);
+		};
+		f.tops.forEach(visit);
+		expect(result.missing).toBe(blocked);
+		expect(blocked).toBeGreaterThan(0);
 	});
 
-	it('holds an off-screen refinement for HOLD ms, then lets it go', () => {
-		const tree = rooted({ level: 0, e: E, n: N }, 1);
-		const [root] = tree.roots;
-		const resident = (id: number) => id === root.id;
-		const below = look([E + 125, N + 125, 400], 0, -90);
-		const away = look([E + 125, N + 125, 400], 0, 90);
-		const planner = new Planner();
-		const refined = (view: View, now: number) =>
-			!planner.plan(tree, view, resident, { ...UNBOUND, now }).cut.includes(root);
-		expect(refined(below, 0)).toBe(true);
-		expect(refined(away, 1000)).toBe(true);
-		expect(refined(away, HOLD)).toBe(true);
-		expect(refined(away, HOLD + 1)).toBe(false);
-	});
-
-	it('plans the same cut near the camera over a 2 km and a 64 km world', () => {
-		const small = around(settle(twoKm(), down, UNBOUND).cut, E + 1100, N + 1100);
-		const big = rooted({ level: 8, e: 704000, n: 6144000 });
-		const large = around(settle(big, down, UNBOUND).cut, E + 1100, N + 1100);
-		expect(small.length).toBeGreaterThan(0);
-		expect(large).toEqual(small);
-	});
-
-	it('keeps the tree bounded over a 20 km flight that prunes each step', () => {
-		const tree = rooted({ level: 8, e: 704000, n: 6144000 });
-		const planner = new Planner();
-		let resident = new Set<number>();
-		const sizes: number[] = [];
-		for (let step = 0; step < 40; step++) {
-			const view = look([E + 500 * step, N + 1100, 300], 0, -90);
-			// each step outlasts HOLD, so what the camera left behind is let go
-			const options = { ...UNBOUND, now: step * 2 * HOLD };
-			const plan = () => planner.plan(tree, view, (id) => resident.has(id), options);
-			let last = plan();
-			for (let round = 0; round < 64 && (last.load.length || last.idx.length); round++) {
-				for (const page of last.load) resident.add(page.id);
-				for (const wanted of last.idx) tree.add(unit(wanted, { count: COUNT }), wanted.path);
-				last = plan();
+	it('keeps what it reads and wants within the pool, and counts as missing what waits on a page', () => {
+		for (let seed = 1; seed <= 6; seed++) {
+			const f = forest(seed);
+			const next = mulberry32(seed + 200);
+			const absent = new Set([...f.pages.keys()].filter((id) => id !== f.top && next() < 0.3));
+			const resident = (id: number) => !absent.has(id);
+			const pageSlots = (id: number) => slots(f.pages.get(id)!.counts.length);
+			for (let capacity = pageSlots(f.top); capacity < 64 * pageSlots(f.top); capacity *= 2) {
+				const result = cutOf(f, resident).plan({ views: [OVER], budget: 10_000, capacity });
+				const taken = [...result.touched, ...result.load].reduce(
+					(sum, id) => sum + pageSlots(id),
+					0
+				);
+				expect(taken).toBeLessThanOrEqual(capacity);
+				const masks = drawn([result]);
+				f.tops.forEach((top) => walk(top, masks, resident));
+				const load = new Set(result.load);
+				let waiting = 0;
+				const visit = (node: Node) => {
+					if (!node.family) return;
+					if (isDrawn(masks, node)) waiting += load.has(node.family[0].page) ? 1 : 0;
+					else node.family.forEach(visit);
+				};
+				f.tops.forEach(visit);
+				// a node too small to refine draws on beside a wanted family, and is not missing
+				expect(result.missing).toBeLessThanOrEqual(waiting);
+				expect(result.missing > 0).toBe(result.load.length > 0);
 			}
-			// the pool keeps only what the plan keeps
-			resident = new Set(last.keep);
-			tree.prune(resident);
-			sizes.push(tree.pages.size);
 		}
-		expect(Math.max(...sizes.slice(30))).toBeLessThanOrEqual(2 * Math.max(...sizes.slice(0, 10)));
+	});
+
+	it('plans the same cut from the same messages, and sends no masks for the same view again', () => {
+		const f = forest(6);
+		const request = { views: [OVER, look([260, -120, 290])], budget: 500, capacity: 1e9 };
+		const a = cutOf(f);
+		const first = a.plan(request);
+		expect(cutOf(f).plan(request)).toEqual(first);
+		a.verdict(true);
+		const again = a.plan(request);
+		expect(again.masks).toEqual([]);
+		expect({ ...again, masks: first.masks }).toEqual(first);
+	});
+
+	it('sends the changes against the masks the pool took', () => {
+		const f = forest(7);
+		const cut = cutOf(f);
+		const near = { views: [look([100, 50, 80])], budget: 300, capacity: 1e9 };
+		const far = { views: [look([250, -900, 900])], budget: 300, capacity: 1e9 };
+		const first = cut.plan(near);
+		cut.verdict(true);
+		const moved = cut.plan(far);
+		expect(moved.masks.length).toBeGreaterThan(0);
+		// the pool dropped it, so the same plan's changes come again
+		cut.verdict(false);
+		expect(cut.plan(far).masks).toEqual(moved.masks);
+		cut.verdict(true);
+		const back = cut.plan(near);
+		expect(drawn([first])).toEqual(drawn([first, moved, back]));
+	});
+
+	it('forgets an evicted page, which then draws its parents in its place', () => {
+		const f = forest(8);
+		const cut = cutOf(f);
+		const request = { views: [OVER], budget: 10_000, capacity: 1e9 };
+		const before = cut.plan(request);
+		cut.verdict(true);
+		const fine = f.units[2].rows[0].id;
+		cut.evict(fine);
+		const after = cut.plan(request);
+		expect(after.load).toEqual([fine]);
+		expect(after.masks.some(([id]) => id === fine)).toBe(false);
+		const masks = drawn([before, after]);
+		masks.delete(fine);
+		f.tops.forEach((top) => walk(top, masks, (id) => id !== fine));
+	});
+
+	it('ranks the pages it wants by the largest node waiting on each', () => {
+		const f = forest(9);
+		const leaves = new Set(f.units.slice(1).flatMap((u) => u.rows.map((row) => row.id)));
+		const view = look([30, 20, 60], 45, -40);
+		const result = cutOf(f, (id) => !leaves.has(id)).plan({
+			views: [view],
+			budget: 10_000,
+			capacity: 1e9
+		});
+		const priority = new Map<number, number>();
+		const visit = (node: Node) => {
+			if (!node.family) return;
+			const page = node.family[0].page;
+			if (leaves.has(page)) {
+				const s = size(node, view);
+				if (s > T_MIN) priority.set(page, Math.max(priority.get(page) ?? 0, s));
+			} else node.family.forEach(visit);
+		};
+		f.tops.forEach(visit);
+		const expected = [...priority].sort((a, b) => b[1] - a[1] || a[0] - b[0]).map(([id]) => id);
+		expect(result.load).toEqual(expected);
+	});
+
+	it('wants a root top page that is not resident, and draws nothing', () => {
+		const f = forest(10);
+		const result = cutOf(f, (id) => id !== f.top).plan({
+			views: [OVER],
+			budget: 500,
+			capacity: 1e9
+		});
+		expect(result).toMatchObject({ load: [f.top], planned: 0, masks: [], touched: [] });
+	});
+
+	it('wants an unknown child .idx, and the ones below it for a node far above the threshold', () => {
+		const f = forest(11);
+		const [root] = f.units;
+		const deep = { ...root, descendants: [['u/below/0'], [], [], []] };
+		const cut = new Cut();
+		cut.unit(deep);
+		for (const row of root.rows) cut.page(row.id, f.pages.get(row.id)!);
+		const far = cut.plan({
+			views: [look([125, 125, 3000], 0, -89)],
+			budget: 10_000,
+			capacity: 1e9
+		});
+		expect(far.idx).toEqual(expect.arrayContaining(root.children as string[]));
+		expect(far.idx).not.toContain('u/below/0');
+		expect(far.missing).toBeGreaterThan(0);
+		const near = cut.plan({ views: [look([125, 125, 20], 0, -89)], budget: 10_000, capacity: 1e9 });
+		expect(near.idx.indexOf('u/below/0')).toBeGreaterThan(near.idx.indexOf(root.children[0]!));
+	});
+
+	it('takes the larger size over the camera and the one ahead', () => {
+		const f = forest(12);
+		const here = look([250, -900, 900]);
+		const ahead = look([200, 100, 60]);
+		const request = (views: CutView[]) => ({ views, budget: 400, capacity: 1e9 });
+		const alone = cutOf(f).plan(request([here]));
+		const both = cutOf(f).plan(request([here, ahead]));
+		expect(cutOf(f).plan(request([ahead, here]))).toEqual(both);
+		const fits: Node[] = [];
+		const gather = (node: Node) => (node.family ? node.family.forEach(gather) : fits.push(node));
+		f.tops.forEach(gather);
+		const near = (masks: Map<number, Uint32Array>) =>
+			fits.filter((n) => isDrawn(masks, n) && Math.hypot(n.centre[0] - 200, n.centre[1] - 100) < 60)
+				.length;
+		expect(near(drawn([both]))).toBeGreaterThan(near(drawn([alone])));
 	});
 });

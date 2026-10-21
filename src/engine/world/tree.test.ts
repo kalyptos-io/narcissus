@@ -1,70 +1,34 @@
 import { describe, expect, it } from 'vitest';
 import { unitPath } from '../../format/index.ts';
 import { hash, unit, world } from './test-tree.ts';
-import { Tree, unitKey, type PageNode, type UnitNode } from './tree.ts';
+import { Tree, unitKey, type UnitNode } from './tree.ts';
 
 const E = 720000;
 const N = 6176000;
-const OPEN = ['unknown', 'unknown', 'unknown', 'unknown'];
-const NONE = ['none', 'none', 'none', 'none'];
 
-function page(unit: UnitNode, g: number, i: number, j: number): PageNode {
-	const found = unit.pages.find((p) => p.g === g && p.row.i === i && p.row.j === j);
-	if (!found) throw new Error(`no page ${g}/${i}/${j}`);
-	return found;
-}
-
-/** ids of the four pages at the south-west corner of a unit's level g, by quadrant */
-function corner(unit: UnitNode, g: number): number[] {
-	return [0, 1, 2, 3].map((q) => page(unit, g, q & 1, q >> 1).id);
-}
-
-const links = (p: PageNode) =>
-	p.children.map((c) => (c === undefined ? 'unknown' : c === null ? 'none' : c.id));
+const children = (node: UnitNode) =>
+	node.children.map((c) => (c === undefined ? 'unknown' : c === null ? 'none' : unitKey(c)));
 
 describe('tree', () => {
-	it('links a leaf under its parent and leaves unknown children open', () => {
+	it('links a leaf under its parent and leaves named children open', () => {
 		const key = { level: 1, e: E, n: N };
 		const tree = new Tree(world(key));
-		const parent = tree.add(unit(key, { children: [0, 1, 2] }), 'p');
-		expect(tree.roots).toHaveLength(64);
-		expect(links(page(parent, 2, 0, 0))).toEqual(OPEN);
-		expect(links(page(parent, 2, 7, 7))).toEqual(NONE);
+		const parent = tree.add(unit(key, { top: true, children: [0, 1, 2] }), 'p');
+		expect(tree.roots).toEqual([parent]);
+		expect(children(parent)).toEqual(['unknown', 'unknown', 'unknown', 'none']);
+		expect(parent.pages.map((p) => p.row.g)).toEqual([...new Array(64).fill(2), 3]);
 
-		const idx = unit({ level: 0, e: E, n: N });
-		idx.rows = idx.rows.filter((row) => !(row.g === 1 && row.i === 3 && row.j === 0));
-		const leaf = tree.add(idx, 'l');
-		const top = page(parent, 2, 0, 0);
+		const leaf = tree.add(unit({ level: 0, e: E + 250, n: N }), 'l');
 		expect(leaf.parent).toBe(parent);
-		expect(links(top)).toEqual(corner(leaf, 1));
-		expect(page(leaf, 1, 0, 0).parent).toBe(top);
-		const next = page(parent, 2, 1, 0);
-		expect(next.children[0]).toBe(page(leaf, 1, 2, 0));
-		expect(next.children[1]).toBeNull();
-		expect(page(leaf, 1, 1, 1).children[3]).toBe(page(leaf, 0, 3, 3));
-		expect(links(page(leaf, 0, 3, 3))).toEqual(NONE);
-		expect(page(leaf, 0, 3, 3).box).toEqual(
-			Float64Array.of(E + 46.875, N + 46.875, 0, E + 62.5, N + 62.5, 5)
+		expect(parent.children[1]).toBe(leaf);
+		expect(children(leaf)).toEqual(['none', 'none', 'none', 'none']);
+		expect(leaf.pages).toHaveLength(256 + 64);
+		expect(leaf.pages[3].row).toMatchObject({ g: 0, i: 1, j: 1 });
+		expect(leaf.pages[3].box).toEqual(
+			Float64Array.of(E + 250 + 15.625, N + 15.625, 0, E + 250 + 31.25, N + 31.25, 5)
 		);
-
-		const east = tree.add(unit({ level: 0, e: E + 250, n: N }), 'e');
-		expect(page(east, 1, 0, 0).parent).toBe(page(parent, 2, 4, 0));
-		expect(page(parent, 2, 4, 0).children[0]).toBe(page(east, 1, 0, 0));
 		expect([...tree.pages].every(([id, p]) => p.id === id)).toBe(true);
-		expect(tree.pages.size).toBe(64 + 319 + 320);
-	});
-
-	it('links the extra levels of a root inside its unit', () => {
-		const key = { level: 1, e: E, n: N };
-		const tree = new Tree(world(key));
-		const root = tree.add(unit(key, { extra: 3 }), 'r');
-		expect(tree.roots.map((p) => p.g)).toEqual([5]);
-		const [top] = tree.roots;
-		expect(top.parent).toBeNull();
-		expect(links(top)).toEqual(corner(root, 4));
-		expect(page(root, 3, 3, 3).parent).toBe(page(root, 4, 1, 1));
-		expect(page(root, 2, 0, 0).parent).toBe(page(root, 3, 0, 0));
-		expect(links(page(root, 2, 0, 0))).toEqual(OPEN);
+		expect(tree.pages.size).toBe(65 + 320);
 	});
 
 	it('links descendants that arrive before their parents', () => {
@@ -72,55 +36,53 @@ describe('tree', () => {
 		const tree = new Tree(world(key));
 		const leaf = tree.add(unit({ level: 0, e: E, n: N }), 'l');
 		expect(leaf.parent).toBeNull();
-		expect(page(leaf, 1, 0, 0).parent).toBeNull();
 		expect(tree.roots).toHaveLength(0);
 
 		const mid = tree.add(unit({ level: 1, e: E, n: N }), 'm');
 		expect(leaf.parent).toBe(mid);
-		expect(page(leaf, 1, 0, 0).parent).toBe(page(mid, 2, 0, 0));
-		expect(page(mid, 2, 0, 0).children[0]).toBe(page(leaf, 1, 0, 0));
-		expect(page(mid, 2, 0, 0).parent).toBeNull();
+		expect(mid.children[0]).toBe(leaf);
+		expect(mid.parent).toBeNull();
 
-		const root = tree.add(unit(key), 'r');
+		const root = tree.add(unit(key, { top: true }), 'r');
 		expect(mid.parent).toBe(root);
-		expect(page(mid, 2, 0, 0).parent).toBe(page(root, 3, 0, 0));
-		expect(page(root, 3, 0, 0).children[0]).toBe(page(mid, 2, 0, 0));
-		expect(tree.roots).toHaveLength(64);
+		expect(root.children[0]).toBe(mid);
+		expect(tree.roots).toEqual([root]);
 		const named = tree.wanted().map(unitKey);
 		expect(named).not.toContain(unitKey(leaf));
 		expect(named).not.toContain(unitKey(mid));
 	});
 
-	it('wants named units not yet added, over the pages of their nearest added ancestor', () => {
+	it('wants named units not yet added, through their nearest added namer', () => {
 		const key = { level: 2, e: E, n: N };
 		const tree = new Tree(world(key));
-		const root = tree.add(unit(key), 'r');
+		tree.add(unit(key, { top: true }), 'r');
 		const wanted = () => new Map(tree.wanted().map((w) => [unitKey(w), w]));
 		expect(wanted().size).toBe(20);
-
 		const childKey = { level: 1, e: E + 500, n: N };
-		const child = wanted().get(unitKey(childKey))!;
-		expect(child.path).toBe(unitPath(childKey, hash(childKey), 'idx'));
-		expect(child.over).toHaveLength(16);
-		for (const p of child.over) {
-			expect(p.unit).toBe(root);
-			expect(p.row.i >= 4 && p.row.j < 4).toBe(true);
-		}
-		const leafKey = { level: 0, e: E + 250, n: N + 250 };
-		expect(wanted().get(unitKey(leafKey))!.over).toHaveLength(4);
+		expect(wanted().get(unitKey(childKey))!.path).toBe(unitPath(childKey, hash(childKey), 'idx'));
 
-		const mid = tree.add(unit({ level: 1, e: E, n: N }), 'm');
+		tree.add(unit({ level: 1, e: E, n: N }), 'm');
 		expect(wanted().size).toBe(19);
-		const leaf = wanted().get(unitKey(leafKey))!;
-		expect(leaf.over).toHaveLength(16);
-		expect(leaf.over.every((p) => p.unit === mid)).toBe(true);
-		expect(wanted().get(unitKey({ level: 0, e: E + 750, n: N }))!.over[0].unit).toBe(root);
+		expect(wanted().has(unitKey({ level: 0, e: E + 250, n: N + 250 }))).toBe(true);
+	});
+
+	it('tells its listener of every unit it adds and prunes', () => {
+		const key = { level: 1, e: E, n: N };
+		const heard: string[] = [];
+		const tree = new Tree(world(key), {
+			added: (node, root) => heard.push(`+${unitKey(node)}${root ? ' root' : ''}`),
+			pruned: (units) => heard.push(`-${units.map(unitKey).join(',')}`)
+		});
+		tree.add(unit(key, { top: true }), 'r');
+		tree.add(unit({ level: 0, e: E, n: N }), 'l');
+		tree.prune(new Set());
+		expect(heard).toEqual([`+1/${E}/${N} root`, `+0/${E}/${N}`, `-0/${E}/${N}`]);
 	});
 
 	it('finds the ground under the finest page over a point', () => {
 		const key = { level: 1, e: E, n: N };
 		const tree = new Tree(world(key));
-		const parent = unit(key, { children: [0, 1, 2] });
+		const parent = unit(key, { top: true, children: [0, 1, 2] });
 		for (const row of parent.rows) row.box[2] = 1;
 		tree.add(parent, 'p');
 		const leaf = unit({ level: 0, e: E, n: N });
@@ -135,7 +97,7 @@ describe('tree', () => {
 	it('loads the units over a point, and only those', async () => {
 		const key = { level: 2, e: E, n: N };
 		const tree = new Tree(world(key));
-		tree.add(unit(key), 'r');
+		tree.add(unit(key, { top: true }), 'r');
 		const leaf = unit({ level: 0, e: E + 250, n: N });
 		for (const row of leaf.rows) row.box[2] = 7;
 		const units = [unit({ level: 1, e: E, n: N }), leaf];
@@ -156,28 +118,26 @@ describe('tree', () => {
 	it('prunes a leaf unit, then its parent, and never a root', () => {
 		const key = { level: 2, e: E, n: N };
 		const tree = new Tree(world(key));
-		const root = tree.add(unit(key), 'r');
+		const root = tree.add(unit(key, { top: true }), 'r');
 		const mid = tree.add(unit({ level: 1, e: E, n: N }), 'm');
 		const leaf = tree.add(unit({ level: 0, e: E, n: N }), 'l');
-		const top = page(mid, 2, 0, 0);
-		expect(tree.prune(new Set([top.id]))).toEqual(leaf.pages.map((p) => p.id));
+		expect(tree.prune(new Set([mid.pages[0].id]))).toEqual([leaf]);
 		expect(tree.units.has(unitKey(leaf))).toBe(false);
-		expect(links(top)).toEqual(OPEN);
-		expect(tree.pages.size).toBe(64 + 64);
+		expect(mid.children[0]).toBeUndefined();
+		expect(tree.pages.size).toBe(65 + 64);
 
-		expect(tree.prune(new Set())).toEqual(mid.pages.map((p) => p.id));
-		expect(links(page(root, 3, 0, 0))).toEqual(OPEN);
+		expect(tree.prune(new Set())).toEqual([mid]);
+		expect(root.children[0]).toBeUndefined();
 		expect(tree.prune(new Set())).toEqual([]);
 		expect(tree.units.size).toBe(1);
-		expect(tree.pages.size).toBe(64);
-		expect(tree.roots.every((p) => tree.pages.get(p.id) === p)).toBe(true);
+		expect(tree.pages.size).toBe(65);
 	});
 
 	it('keeps a unit with a kept page and every unit above it', () => {
 		const key = { level: 3, e: E, n: N };
 		const tree = new Tree(world(key));
 		const chain = [
-			tree.add(unit(key), 'r'),
+			tree.add(unit(key, { top: true }), 'r'),
 			tree.add(unit({ level: 2, e: E, n: N }), 'l2'),
 			tree.add(unit({ level: 1, e: E, n: N }), 'l1'),
 			tree.add(unit({ level: 0, e: E, n: N }), 'l0')
@@ -186,36 +146,29 @@ describe('tree', () => {
 		// a leaf waiting for its parent still holds the unit two levels up
 		const east = tree.add(unit({ level: 2, e: E + 1000, n: N }), 'e2');
 		const waiting = tree.add(unit({ level: 0, e: E + 1000, n: N }), 'w');
-		const keep = new Set([page(chain[3], 0, 5, 5).id, page(waiting, 0, 0, 0).id]);
-		expect(tree.prune(keep)).toEqual(sibling.pages.map((p) => p.id));
+		const keep = new Set([chain[3].pages[100].id, waiting.pages[0].id]);
+		expect(tree.prune(keep)).toEqual([sibling]);
 		for (const node of [...chain, east, waiting]) expect(tree.units.get(unitKey(node))).toBe(node);
 	});
 
 	it('wants a pruned unit again and links it again on add', () => {
 		const key = { level: 2, e: E, n: N };
 		const tree = new Tree(world(key));
-		const root = tree.add(unit(key), 'r');
+		tree.add(unit(key, { top: true }), 'r');
 		const mid = tree.add(unit({ level: 1, e: E, n: N }), 'm');
 		const leafKey = { level: 0, e: E, n: N };
 		const leaf = tree.add(unit(leafKey), 'l');
 		const find = () => tree.wanted().find((w) => unitKey(w) === unitKey(leafKey));
 		expect(find()).toBeUndefined();
 
-		tree.prune(new Set([page(mid, 2, 0, 0).id]));
+		tree.prune(new Set([mid.pages[0].id]));
 		const back = find()!;
 		expect(back.path).toBe(unitPath(leafKey, hash(leafKey), 'idx'));
-		expect(back.over).toHaveLength(16);
-		expect(back.over.every((p) => p.unit === mid)).toBe(true);
 
 		const again = tree.add(unit(leafKey), back.path);
 		expect(find()).toBeUndefined();
-		expect(page(mid, 2, 0, 0).children[0]).toBe(page(again, 1, 0, 0));
+		expect(mid.children[0]).toBe(again);
 		const first = Math.max(...leaf.pages.map((p) => p.id));
 		expect(Math.min(...again.pages.map((p) => p.id))).toBeGreaterThan(first);
-
-		tree.prune(new Set());
-		const over = find()!.over;
-		expect(over).toHaveLength(4);
-		expect(over.every((p) => p.unit === root)).toBe(true);
 	});
 });

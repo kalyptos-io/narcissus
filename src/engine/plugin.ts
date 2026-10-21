@@ -19,7 +19,8 @@ export interface Frame {
 
 /**
  * a per-splat hook in the projection pass. wgsl defines `fn <name>(s: ptr<function, Splat>,
- * u: array<vec4f, <uniforms>>)` over common.wgsl's Splat; opacity 0 culls the splat.
+ * u: array<vec4f, <uniforms>>)` over common.wgsl's Splat; opacity 0 culls the splat. opacity may
+ * exceed 1, up to 1000: a merged splat that stands for many is flat-topped (docs/format.md).
  */
 export interface Shade {
 	name: string;

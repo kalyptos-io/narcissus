@@ -6,7 +6,7 @@ import type { Pool } from './pool.ts';
 /** threads per cull workgroup, as in cull.wgsl */
 const GROUP = 64;
 
-/** the pool's drawn clusters against the frustum and zero quadrants, into the work list */
+/** the pool's drawn clusters against the frustum, into the work list */
 export class Cull {
 	#pool: Pool;
 	#cull: GPUComputePipeline;

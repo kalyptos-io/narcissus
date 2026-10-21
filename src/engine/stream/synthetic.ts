@@ -1,23 +1,27 @@
-// a deterministic world, built in memory on request
+// a deterministic world, built in memory on request: a lattice of fit splats merged four to one up to two roots
 
 import { Missing, type Fetch } from '../../ports.ts';
 import {
 	parseUnitPath,
+	sigmas,
 	unitPath,
 	BASE_PLANES,
 	C0,
 	LEAF,
+	LINK_PLANES,
 	PACK_TRAILER,
 	PAGE_HEADER,
 	PAGE_SIDE,
 	ROW_BYTES,
 	SH_COEFFS,
+	TOP_PAGE,
 	VERSION,
 	type Idx,
+	type PageNodes,
 	type PageRow,
 	type UnitKey
 } from '../../format/index.ts';
-import { contentName, encodeIdx, encodePage, mulberry32 } from '../../format/encode.ts';
+import { contentName, encodeIdx, encodePage, link, mulberry32 } from '../../format/encode.ts';
 
 interface Page {
 	g: number;
@@ -25,25 +29,20 @@ interface Page {
 	j: number;
 }
 
-interface Named {
-	column: number;
-	row: number;
-	unit: UnitKey;
-}
-
 type Range = readonly [number, number] | null;
 
-/** a page is a GRID x GRID lattice of splats, so each quadrant holds a quarter */
+/** a page is a GRID x GRID lattice of nodes in morton order, so a family is four in a row */
 const GRID = 128;
-const PAGE_SPLATS = GRID * GRID;
-/** codebook entries, sized for PAGE_SPLATS as format.md writes them */
-const BOOK = Math.min(PAGE_SPLATS, 2048, Math.max(256, Math.ceil(PAGE_SPLATS / 12 / 64) * 64));
-const PAYLOAD = PAGE_HEADER + (BASE_PLANES + 2) * PAGE_SPLATS + BOOK * SH_COEFFS;
+const PAGE_NODES = GRID * GRID;
+/** codebook entries, sized for PAGE_NODES as format.md writes them */
+const BOOK = Math.min(PAGE_NODES, 2048, Math.max(256, Math.ceil(PAGE_NODES / 12 / 64) * 64));
+/** payload bytes of a page of fit splats and of a page of parents */
+const PAYLOAD = PAGE_HEADER + (BASE_PLANES + 2) * PAGE_NODES + BOOK * SH_COEFFS;
+const PARENTS_PAYLOAD = PAYLOAD + LINK_PLANES * PAGE_NODES;
 /** data bytes of a deflate stored block at most, and its byte-aligned header */
 const STORED = 65535;
 const STORED_HEADER = 5;
-/** bytes of every page blob */
-const BLOB = PAYLOAD + Math.ceil(PAYLOAD / STORED) * STORED_HEADER;
+const blob = (payload: number) => payload + Math.ceil(payload / STORED) * STORED_HEADER;
 /** the level of both roots */
 const TOP = 12;
 
@@ -56,6 +55,9 @@ const FLAT = 0.15;
 const TILT = 0.1;
 /** sh1 magnitude at most */
 const SH = 0.04;
+/** share of parents flat-topped past opacity 1, and their opacity at most */
+const FLAT_TOPPED = 0.1;
+const OPACITY = 3;
 
 /** amplitude in metres, then wavenumber and phase east, then north; amplitudes sum to MID */
 const WAVES: [number, number, number, number, number][] = [
@@ -81,6 +83,7 @@ const PALETTE = Float32Array.from({ length: BOOK * SH_COEFFS }, (_, k) => {
 const text = new TextEncoder();
 
 const ROOTS: UnitKey[] = [5120000, 6144000].map((n) => ({ level: TOP, e: 0, n }));
+const SIDE = LEAF * 2 ** TOP;
 
 const WORLD = {
 	version: VERSION,
@@ -88,7 +91,7 @@ const WORLD = {
 	height: 'synthetic',
 	leaf: LEAF,
 	roots: ROOTS.map((key) => ({ ...key, idx: unitPath(key, nameOf(key, 'idx'), 'idx') })),
-	extent: { e: [440000, 900000], n: [6050000, 6410000], h: [0, 80] }
+	extent: { e: [0, SIDE], n: [ROOTS[0].n, ROOTS[1].n + SIDE], h: [0, 80] }
 };
 
 const WORLD_JSON = text.encode(JSON.stringify(WORLD));
@@ -112,6 +115,33 @@ export function synthetic(): Fetch {
 	};
 }
 
+/**
+ * the nodes the cut reads of row of unit key, straight from the lattice without its jitter or
+ * flat tops: for tests that cover more pages than they could build
+ */
+export function latticeNodes(key: UnitKey, row: number): PageNodes {
+	const page = pagesOf(key.level)[row];
+	const { g, i, j } = page;
+	const cell = (PAGE_SIDE * 2 ** g) / GRID;
+	const parents = g > 0 ? PAGE_NODES : 0;
+	const centres = new Float32Array(3 * parents);
+	const links = new Uint32Array(parents);
+	for (let t = 0; t < parents; t++) {
+		const cx = even(t);
+		const cy = even(t >> 1);
+		const x = (i * GRID + cx + 0.5) * cell;
+		const y = (j * GRID + cy + 0.5) * cell;
+		centres.set([x, y, ground(key.e + x, key.n + y)], 3 * t);
+		links[t] = familyOf(key.level, page, cx, cy);
+	}
+	return {
+		counts: new Uint8Array(PAGE_NODES).fill(parents ? 4 : 0),
+		centres,
+		radii: new Float32Array(parents).fill((cell * (WIDE_MIN + WIDE_MAX + 0.75 * FLAT)) / 3),
+		links
+	};
+}
+
 /** metres, the synthetic ground under (e, n), between 0 and 2 MID */
 export function ground(e: number, n: number): number {
 	let h = MID;
@@ -127,70 +157,93 @@ function part(bytes: Uint8Array, range: Range): Uint8Array {
 
 /** hashes follow from the unit alone, so a parent names its children without building them */
 function nameOf(key: UnitKey, ext: string): string {
-	return contentName(text.encode(`${key.level}/${key.e}/${key.n}.${ext}`));
+	return contentName(text.encode(`${VERSION}/${key.level}/${key.e}/${key.n}.${ext}`));
 }
 
-/** the square of side metres at (e, n) overlaps the extent */
-function meets(e: number, n: number, side: number): boolean {
-	const { e: east, n: north } = WORLD.extent;
-	return e < east[1] && e + side > east[0] && n < north[1] && n + side > north[0];
-}
-
+/** every unit under a root */
 function exists({ level, e, n }: UnitKey): boolean {
 	const side = LEAF * 2 ** level;
-	return level <= TOP && e % side === 0 && n % side === 0 && meets(e, n, side);
+	const root = ROOTS.find((key) => n >= key.n && n < key.n + SIDE);
+	return (
+		level <= TOP && e % side === 0 && n % side === 0 && e >= 0 && e < SIDE && root !== undefined
+	);
 }
 
-/** page levels of a unit, coarsest first */
-function levels(level: number): number[] {
-	if (level === 0) return [1, 0];
-	if (level === TOP) return [TOP + 4, TOP + 3, TOP + 2, TOP + 1];
+/** a unit's bands in row order, fine to coarse; a root's last is its top page */
+function bands(level: number): number[] {
+	if (level === 0) return [0, 1];
+	if (level === TOP) return [TOP + 1, TOP + 2, TOP + 3, TOP + 4];
 	return [level + 1];
+}
+
+/** pages a side of band g in a unit of level */
+const span = (level: number, g: number) => (LEAF * 2 ** level) / (PAGE_SIDE * 2 ** g);
+
+/** the morton code of (x, y), x in the even bits */
+function morton(x: number, y: number): number {
+	let m = 0;
+	for (let b = 0; b < 10; b++) m |= (((x >> b) & 1) << (2 * b)) | (((y >> b) & 1) << (2 * b + 1));
+	return m;
 }
 
 /** the even bits of m packed together: column then row of morton code m and m >> 1 */
 function even(m: number): number {
 	let v = 0;
-	for (let b = 0; b < 8; b++) v |= ((m >> (2 * b)) & 1) << b;
+	for (let b = 0; b < 10; b++) v |= ((m >> (2 * b)) & 1) << b;
 	return v;
 }
 
-/** a unit's pages that meet the extent, in pack order: coarsest level first, morton within */
-function pagesOf(key: UnitKey): Page[] {
+/** a unit's pages in row order: each band fine to coarse, morton within */
+function pagesOf(level: number): Page[] {
 	const pages: Page[] = [];
-	for (const g of levels(key.level)) {
-		const side = PAGE_SIDE * 2 ** g;
-		const span = (LEAF * 2 ** key.level) / side;
-		for (let m = 0; m < span * span; m++) {
-			const i = even(m);
-			const j = even(m >> 1);
-			if (meets(key.e + i * side, key.n + j * side, side)) pages.push({ g, i, j });
-		}
+	for (const g of bands(level)) {
+		const pagesSide = span(level, g);
+		for (let m = 0; m < pagesSide * pagesSide; m++) pages.push({ g, i: even(m), j: even(m >> 1) });
 	}
 	return pages;
 }
 
-/** the units depth levels down inside key that meet the extent, by column and row */
-function below(key: UnitKey, depth: number): Named[] {
-	const level = key.level - depth;
-	const side = LEAF * 2 ** level;
-	const found: Named[] = [];
-	for (let row = 0; level >= 0 && row < 2 ** depth; row++) {
-		for (let column = 0; column < 2 ** depth; column++) {
-			const unit = { level, e: key.e + column * side, n: key.n + row * side };
-			if (meets(unit.e, unit.n, side)) found.push({ column, row, unit });
-		}
+/** the row of page (g, i, j) in a unit of level */
+function rowOf(level: number, g: number, i: number, j: number): number {
+	let row = 0;
+	for (const b of bands(level)) {
+		if (b === g) return row + morton(i, j);
+		row += span(level, b) ** 2;
 	}
-	return found;
+	throw new Error(`band ${g} is not a band of a level ${level} unit`);
 }
 
-/** the row of a page, its box from the ground's slope and the splats' largest extents */
+/** the family of cell (x, y) of page (g, i, j) in a unit of level: the four cells under it a band down */
+function familyOf(level: number, { g, i, j }: Page, x: number, y: number): number {
+	const band = g - 1;
+	let cx = 2 * (i * GRID + x);
+	let cy = 2 * (j * GRID + y);
+	let unit = 0;
+	let at = level;
+	if (!bands(level).includes(band)) {
+		const half = ((LEAF * 2 ** (level - 1)) / (PAGE_SIDE * 2 ** band)) * GRID;
+		const a = cx >= half ? 1 : 0;
+		const b = cy >= half ? 1 : 0;
+		cx -= a * half;
+		cy -= b * half;
+		unit = 1 + a + 2 * b;
+		at = level - 1;
+	}
+	const row = rowOf(at, band, cx >> 7, cy >> 7);
+	return link(unit, row, morton(cx & (GRID - 1), cy & (GRID - 1)));
+}
+
+const isTop = (level: number, g: number) => level === TOP && g === TOP + 4;
+const blobOf = (g: number) => blob(g === 0 ? PAYLOAD : PARENTS_PAYLOAD);
+
+/** the row of a page, its box from the ground's slope and the nodes' largest extents */
 function pageRow(key: UnitKey, { g, i, j }: Page, offset: number): PageRow {
 	const side = PAGE_SIDE * 2 ** g;
 	const cell = side / GRID;
-	const wide = 3 * WIDE_MAX * cell;
+	const k = g === 0 ? 3 : sigmas(OPACITY);
+	const wide = k * WIDE_MAX * cell;
 	// twice the tilt also covers the error of the 8-bit rotation
-	const deep = 3 * (FLAT + 2 * TILT * WIDE_MAX) * cell;
+	const deep = k * (FLAT + 2 * TILT * WIDE_MAX) * cell;
 	const mid = ground(key.e + (i + 0.5) * side, key.n + (j + 0.5) * side);
 	const reach = (SLOPE * side) / 2;
 	const box = Float32Array.of(
@@ -201,31 +254,53 @@ function pageRow(key: UnitKey, { g, i, j }: Page, offset: number): PageRow {
 		(j + 1) * side + wide,
 		Math.min(2 * MID, mid + reach) + deep
 	);
-	const quarter = PAGE_SPLATS / 4;
-	const quadrants: [number, number, number] = [quarter, 2 * quarter, 3 * quarter];
-	return { g, i, j, count: PAGE_SPLATS, quadrants, box, offset, length: BLOB };
+	const flags = isTop(key.level, g) ? TOP_PAGE : 0;
+	return { g, i, j, flags, count: PAGE_NODES, box, offset, length: blobOf(g) };
+}
+
+/** the units depth levels down inside key, by column and row */
+function below(key: UnitKey, depth: number): { column: number; row: number; unit: UnitKey }[] {
+	const level = key.level - depth;
+	const side = LEAF * 2 ** level;
+	const found = [];
+	for (let row = 0; level >= 0 && row < 2 ** depth; row++) {
+		for (let column = 0; column < 2 ** depth; column++) {
+			found.push({ column, row, unit: { level, e: key.e + column * side, n: key.n + row * side } });
+		}
+	}
+	return found;
+}
+
+function rowsOf(key: UnitKey): PageRow[] {
+	let offset = 0;
+	return pagesOf(key.level).map((page) => {
+		const row = pageRow(key, page, offset);
+		offset += row.length;
+		return row;
+	});
 }
 
 function idxBytes(key: UnitKey): Promise<Uint8Array> {
-	const pages = pagesOf(key);
-	const children: Idx['children'] = [];
-	for (const { column, row, unit } of below(key, 1)) {
-		children.push({ quadrant: column + 2 * row, idx: nameOf(unit, 'idx') });
-	}
+	const rows = rowsOf(key);
+	const children: Idx['children'] = below(key, 1).map(({ column, row, unit }) => ({
+		quadrant: column + 2 * row,
+		idx: nameOf(unit, 'idx')
+	}));
 	const descendants: Idx['descendants'] = [];
 	for (const depth of [2, 3]) {
 		for (const { column, row, unit } of below(key, depth)) {
 			descendants.push({ depth, column, row, idx: nameOf(unit, 'idx') });
 		}
 	}
+	const last = rows[rows.length - 1];
 	return encodeIdx({
 		level: key.level,
 		e: key.e,
 		n: key.n,
 		pack: nameOf(key, 'pack'),
-		packSize: pages.length * (BLOB + ROW_BYTES) + PACK_TRAILER,
+		packSize: last.offset + last.length + rows.length * ROW_BYTES + PACK_TRAILER,
 		col: null,
-		rows: pages.map((page, r) => pageRow(key, page, r * BLOB)),
+		rows,
 		children,
 		descendants
 	});
@@ -233,20 +308,15 @@ function idxBytes(key: UnitKey): Promise<Uint8Array> {
 
 /** the blobs of the pages range covers; it must start and end on page boundaries */
 function packBytes(key: UnitKey, range: Range, url: string): Uint8Array {
-	const pages = pagesOf(key);
-	if (
-		!range ||
-		range[0] % BLOB !== 0 ||
-		range[1] % BLOB !== 0 ||
-		range[0] >= range[1] ||
-		range[1] > pages.length * BLOB
-	) {
+	const pages = pagesOf(key.level);
+	const rows = rowsOf(key);
+	const first = range ? rows.findIndex((row) => row.offset === range[0]) : -1;
+	const last = range ? rows.findIndex((row) => row.offset + row.length === range[1]) : -1;
+	if (!range || first < 0 || last < first) {
 		throw new Error(`${url}: the synthetic world serves whole pages only`);
 	}
 	const out = new Uint8Array(range[1] - range[0]);
-	for (let at = 0; at < out.length; at += BLOB) {
-		store(payload(key, pages[(range[0] + at) / BLOB]), out, at);
-	}
+	for (let r = first; r <= last; r++) store(payload(key, pages[r]), out, rows[r].offset - range[0]);
 	return out;
 }
 
@@ -269,20 +339,25 @@ function store(payload: Uint8Array, out: Uint8Array, offset: number): void {
 /** mulberry32 seeded from text */
 const numbers = (seed: string) => mulberry32(parseInt(contentName(text.encode(seed)).slice(8), 16));
 
-/** the payload of a page of unit key: a jittered lattice draped over the ground */
-function payload(key: UnitKey, { g, i, j }: Page): Uint8Array {
-	const count = PAGE_SPLATS;
+/** the payload of a page of unit key: a jittered lattice draped over the ground, each node a family of four a band down */
+function payload(key: UnitKey, page: Page): Uint8Array {
+	const { g, i, j } = page;
+	const count = PAGE_NODES;
 	const cell = (PAGE_SIDE * 2 ** g) / GRID;
 	const next = numbers(`${key.level}/${key.e}/${key.n}/${g}/${i}/${j}`);
 	const position = new Float64Array(3 * count);
 	const rotation = new Float32Array(4 * count);
 	const scale = new Float32Array(3 * count);
-	const alpha = new Float32Array(count);
+	const opacity = new Float32Array(count);
 	const dc = new Float32Array(3 * count);
 	const sh = new Float32Array(SH_COEFFS * count);
+	const children = new Uint8Array(count);
+	const links = new Uint32Array(count);
 	for (let t = 0; t < count; t++) {
-		const x = (i * GRID + (t % GRID) + 0.5 + JITTER * (2 * next() - 1)) * cell;
-		const y = (j * GRID + Math.floor(t / GRID) + 0.5 + JITTER * (2 * next() - 1)) * cell;
+		const cx = even(t);
+		const cy = even(t >> 1);
+		const x = (i * GRID + cx + 0.5 + JITTER * (2 * next() - 1)) * cell;
+		const y = (j * GRID + cy + 0.5 + JITTER * (2 * next() - 1)) * cell;
 		const z = ground(key.e + x, key.n + y);
 		position[3 * t] = x;
 		position[3 * t + 1] = y;
@@ -299,7 +374,8 @@ function payload(key: UnitKey, { g, i, j }: Page): Uint8Array {
 			scale[3 * t + a] = Math.log(cell * (WIDE_MIN + (WIDE_MAX - WIDE_MIN) * next()));
 		}
 		scale[3 * t + 2] = Math.log(cell * FLAT * (0.5 + 0.5 * next()));
-		alpha[t] = 0.35 + 0.65 * next();
+		const flat = g > 0 && next() < FLAT_TOPPED;
+		opacity[t] = flat ? 1 + (OPACITY - 1) * next() : 0.35 + 0.65 * next();
 
 		// displayed colour from height and broad patches, stored as f_dc
 		const rise = z / (2 * MID);
@@ -309,6 +385,11 @@ function payload(key: UnitKey, { g, i, j }: Page): Uint8Array {
 		dc[3 * t + 2] = (0.25 + 0.1 * rise + 0.04 * next() - 0.5) / C0;
 		const label = t % BOOK;
 		sh.set(PALETTE.subarray(SH_COEFFS * label, SH_COEFFS * (label + 1)), SH_COEFFS * t);
+		if (g > 0) {
+			children[t] = 4;
+			links[t] = familyOf(key.level, page, cx, cy);
+		}
 	}
-	return encodePage({ count, position, rotation, scale, alpha, dc, sh }, { g, i, j }).payload;
+	const nodes = { count, position, rotation, scale, opacity, dc, sh, children, links };
+	return encodePage(nodes, page).payload;
 }

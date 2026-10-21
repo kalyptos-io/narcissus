@@ -1,9 +1,9 @@
 // data shared across engine modules
 
-/** a page to draw and its quadrant opacities, 0-255, quadrant k at bits 8k */
+/** a page's cut mask: bit t of word t >> 5 draws node t; empty for none */
 export interface Drawn {
 	id: number;
-	factors: number;
+	mask: Uint32Array;
 }
 
 /** degrees; yaw clockwise from north, pitch negative looks down, fov vertical */
@@ -36,10 +36,12 @@ export interface Stats {
 	passes: Record<string, number>;
 	/** splats drawn after culling, last measured frame */
 	drawn: number;
-	/** splats of the cut inside the frustum */
+	/** nodes the cut draws */
 	planned: number;
-	/** of planned, the splats not resident yet */
+	/** of planned, the nodes whose finer family is not resident yet */
 	missing: number;
+	/** px: nodes of this size on screen or smaller stay unrefined */
+	detail: number;
 	pages: { resident: number; drawn: number; loading: number; queued: number };
 	/** bytes */
 	memory: { pool: number; buffers: number };

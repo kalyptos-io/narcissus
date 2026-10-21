@@ -29,8 +29,13 @@ fn corner(v: u32, i: u32) -> Corner {
 	return Corner(vec4f(pixel / frame.viewport * 2.0 - 1.0, 0.0, 1.0), uv * r, colour);
 }
 
+// a gaussian of opacity up to 1, flat-topped past it as format.md has it
 fn alpha(uv: vec2f, opacity: f32) -> f32 {
-	return opacity * exp(-0.5 * dot(uv, uv));
+	let g = exp(-0.5 * dot(uv, uv));
+	if (opacity <= 1.0) {
+		return opacity * g;
+	}
+	return 1.0 - exp2(opacity * log2(max(1.0 - g, 1e-7)));
 }
 
 @vertex

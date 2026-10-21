@@ -18,6 +18,7 @@ struct Area {
 @group(0) @binding(3) var<storage, read> list: array<u32>;
 @group(0) @binding(4) var<storage, read> geometry: array<vec4u>;
 @group(0) @binding(5) var<storage, read_write> tops: array<atomic<u32>>;
+@group(0) @binding(6) var<storage, read> cut: array<u32>;
 
 // order-preserving bits of z, never 0, which marks an empty cell
 fn ordered(z: f32) -> u32 {
@@ -40,10 +41,12 @@ fn heights(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) t
 		return;
 	}
 	for (var k = t; k < cluster.count; k += GROUP) {
-		let g = geometry[cluster.slot + k];
-		let i = cluster.first + k;
-		let quadrant = u32(i >= page.q1) + u32(i >= page.q2) + u32(i >= page.q3);
-		let opacity = fraction(g.y, 16u) * fraction(page.factors, 8u * quadrant);
+		let rec = cluster.slot + k;
+		if ((cut[rec >> 5u] & (1u << (rec & 31u))) == 0u) {
+			continue;
+		}
+		let g = geometry[rec];
+		let opacity = opacityOf(g);
 		let level = vec3f(fraction(g.z, 24u), fraction(g.w, 0u), fraction(g.w, 8u));
 		let scale = exp(mix(page.scaleMin, page.scaleMax, level));
 		if (opacity < area.opacity || max(scale.x, max(scale.y, scale.z)) > area.scale) {

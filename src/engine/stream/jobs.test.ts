@@ -14,7 +14,7 @@ import {
 	encodeIdx,
 	encodePack,
 	encodePage,
-	type Splats
+	type Nodes
 } from '../../format/encode.ts';
 import { loadBatch, loadIdx, type Sources } from './jobs.ts';
 import { memoryCache } from '../../adapters/memory.ts';
@@ -28,8 +28,8 @@ const IDX = 'u/0/724000/6177000.00112233445566ff.idx';
 
 const none: Cache = { get: async () => undefined, put: async () => undefined };
 
-/** count splats of quadrant 0 of page column i */
-function splats(count: number, i: number): Splats {
+/** count fit splats in page column i */
+function splats(count: number, i: number): Nodes {
 	const position = new Float64Array(3 * count);
 	const rotation = new Float32Array(4 * count);
 	const dc = new Float32Array(3 * count);
@@ -39,8 +39,10 @@ function splats(count: number, i: number): Splats {
 		dc.set([0.1 * t, -0.2, 0.3], 3 * t);
 	}
 	const scale = new Float32Array(3 * count).fill(-3);
-	const alpha = new Float32Array(count).fill(0.5);
-	return { count, position, rotation, scale, alpha, dc, sh: null };
+	const opacity = new Float32Array(count).fill(0.5);
+	const children = new Uint8Array(count);
+	const links = new Uint32Array(count);
+	return { count, position, rotation, scale, opacity, dc, sh: null, children, links };
 }
 
 /** a unit of three adjacent pages with a col and an idx, served from memory */
@@ -56,7 +58,10 @@ async function world() {
 		page.row = { ...page.row, offset, length: page.blob.length };
 		offset += page.blob.length;
 	}
-	const pack = encodePack(pages.map(({ row, blob }) => ({ row, blob })));
+	const pack = encodePack(
+		pages.map(({ row, blob }) => ({ row, blob })),
+		6 + 7 + 8
+	);
 	const col: Col = { n: 2, pitch: 250, margin: 0, values: new Float32Array(48).fill(0.02) };
 	const colBytes = await encodeCol(col);
 	const idx: Idx = {

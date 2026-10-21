@@ -36,7 +36,8 @@ export class Heights {
 			'read-only-storage',
 			'read-only-storage',
 			'read-only-storage',
-			'storage'
+			'storage',
+			'read-only-storage'
 		]);
 		const module = device.createShaderModule({ label: 'heights', code: `${common}\n${source}` });
 		this.#pipeline = device.createComputePipeline({
@@ -81,7 +82,7 @@ export class Heights {
 		new Float32Array(values).set([x, y, 0, 0, OPACITY, SCALE]);
 		new Uint32Array(values).set([cells, listed], 2);
 		device.queue.writeBuffer(area, 0, values);
-		const resources = [area, pool.pages, pool.clusters, pool.list, pool.geometry, tops];
+		const resources = [area, pool.pages, pool.clusters, pool.list, pool.geometry, tops, pool.cut];
 		const group = bufferGroup(device, 'heights', this.#layout, resources);
 		const pass = encoder.beginComputePass({ label: 'heights', timestampWrites: timestamps });
 		pass.setPipeline(this.#pipeline);

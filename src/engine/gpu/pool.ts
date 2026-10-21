@@ -1,4 +1,4 @@
-// resident pages on the gpu: records in CLUSTER-splat slots, the page and cluster tables
+// resident pages on the gpu: records in CLUSTER-splat slots, the page and cluster tables, the cut mask
 
 import {
 	CLUSTER,
@@ -10,8 +10,8 @@ import {
 import { CLUSTER_WORDS, PAGE_WORDS, slots } from './layout.ts';
 import type { Drawn } from '../types.ts';
 
-/** u32 word of Page.factors */
-const FACTORS = 19;
+/** u32 words of the cut mask a cluster slot takes, a bit a record */
+const MASK_WORDS = CLUSTER / 32;
 /** a word gap below which two changed ranges of a table go up as one write */
 const MERGE_WORDS = 1024;
 
@@ -23,13 +23,12 @@ interface Entry {
 	page: DecodedPage | null;
 	/** cluster c of the page sits in slots[c] */
 	slots: number[];
+	/** the slots with a drawn record */
 	active: number[];
-	mask: number;
 	/** page-table slot */
 	table: number;
 	/** page origin in world metres */
 	base: [number, number, number];
-	factors: number;
 }
 
 /** word ranges of a cpu mirror changed since the last flush */
@@ -68,7 +67,9 @@ export class Pool {
 	pages!: GPUBuffer;
 	/** Cluster per slot */
 	clusters!: GPUBuffer;
-	// cull input excludes clusters with only zero quadrant factors
+	/** a bit per record: drawn in the cut */
+	cut!: GPUBuffer;
+	// cull input: the clusters with a drawn record
 	list!: GPUBuffer;
 	listed = 0;
 	/** splats */
@@ -93,8 +94,14 @@ export class Pool {
 	#clusterWords: Uint32Array<ArrayBuffer>;
 	#clusterFloats: Float32Array;
 	#clusterDirty = new Dirty();
+	#mask: Uint32Array<ArrayBuffer>;
+	#maskDirty = new Dirty();
 	#list: Uint32Array<ArrayBuffer>;
-	#drawn: Entry[] = [];
+	/** the entries with a drawn record, in the order they began to draw */
+	#drawing = new Set<Entry>();
+	#listDirty = false;
+	/** ids of uploaded pages removed since the last gone() */
+	#gone: number[] = [];
 
 	constructor(device: GPUDevice, capacity: number) {
 		this.capacity = capacity;
@@ -108,6 +115,7 @@ export class Pool {
 		this.#tableFloats = new Float32Array(this.#table.buffer);
 		this.#clusterWords = new Uint32Array(slots * CLUSTER_WORDS);
 		this.#clusterFloats = new Float32Array(this.#clusterWords.buffer);
+		this.#mask = new Uint32Array(slots * MASK_WORDS);
 		this.#list = new Uint32Array(slots);
 	}
 
@@ -137,8 +145,18 @@ export class Pool {
 			if (entry.page === null) yield entry.id;
 	}
 
+	/** pages with a drawn record */
+	get drawn(): number {
+		return this.#drawing.size;
+	}
+
+	/** ids of uploaded pages removed since the last call */
+	gone(): number[] {
+		return this.#gone.splice(0);
+	}
+
 	/**
-	 * queues page id of the unit with south-west corner (e, n), evicting the least recently drawn
+	 * queues page id of the unit with south-west corner (e, n), evicting the least recently kept
 	 * pages keep rejects; false when it cannot fit even then
 	 */
 	add(
@@ -159,10 +177,8 @@ export class Pool {
 			page,
 			slots: this.#take(need),
 			active: [],
-			mask: 0,
 			table: this.#tables.pop()!,
-			base: [page.params[o] + unit[0], page.params[o + 1] + unit[1], page.params[o + 2]],
-			factors: 0
+			base: [page.params[o] + unit[0], page.params[o + 1] + unit[1], page.params[o + 2]]
 		};
 		this.#entries.set(id, entry);
 		this.#touch(entry);
@@ -180,8 +196,10 @@ export class Pool {
 		this.#firstFree = Math.min(this.#firstFree, entry.slots[0]);
 		this.#free += entry.slots.length;
 		this.#tables.push(entry.table);
+		if (entry.page !== null) return;
+		this.#gone.push(id);
 		// the gpu list may name its clusters until the next draw
-		if (entry.page === null && entry.factors !== 0) this.#setFactors(entry, 0);
+		this.#setMask(entry, null);
 	}
 
 	clear(): void {
@@ -193,41 +211,47 @@ export class Pool {
 		return this.#queue.size;
 	}
 
-	/** writes queued pages until about maxBytes went up; returns the bytes written */
-	upload(maxBytes: number): number {
+	/** writes queued pages until about maxBytes went up, each to uploaded; returns the bytes written */
+	upload(maxBytes: number, uploaded?: (id: number, page: DecodedPage) => void): number {
 		let written = 0;
 		for (const id of this.#queue) {
 			if (written >= maxBytes) break;
-			written += this.#write(this.#entries.get(id)!);
+			const entry = this.#entries.get(id)!;
+			const page = entry.page!;
+			written += this.#write(entry);
 			this.#queue.delete(id);
+			uploaded?.(id, page);
 		}
 		return written;
 	}
 
-	/** the pages to draw with their quadrant factors; rewrites the factors and the cluster list */
-	draw(drawn: Drawn[]): void {
-		let listed = 0;
-		let count = 0;
-		let changed = false;
-		for (const { id, factors } of drawn) {
+	/** the cut masks that changed, and every change since the last draw onto the gpu */
+	draw(changes: readonly Drawn[]): void {
+		for (const { id, mask } of changes) {
 			const entry = this.#entries.get(id);
-			if (!entry || entry.page !== null) continue;
-			const active = entry.active;
-			if (entry.factors !== factors) this.#setFactors(entry, factors);
-			changed ||= active !== entry.active;
-			this.#touch(entry);
-			changed ||= this.#drawn[count] !== entry;
-			this.#drawn[count++] = entry;
-			if (changed) this.#list.set(entry.active, listed);
-			listed += entry.active.length;
+			if (entry && entry.page === null) this.#setMask(entry, mask);
 		}
-		changed ||= this.#drawn.length !== count;
-		this.#drawn.length = count;
-		this.listed = listed;
 		const queue = this.#device.queue;
 		this.#tableDirty.flush(queue, this.pages, this.#table);
 		this.#clusterDirty.flush(queue, this.clusters, this.#clusterWords);
-		if (changed && listed) queue.writeBuffer(this.list, 0, this.#list, 0, listed);
+		this.#maskDirty.flush(queue, this.cut, this.#mask);
+		if (!this.#listDirty) return;
+		this.#listDirty = false;
+		let listed = 0;
+		for (const entry of this.#drawing) {
+			this.#list.set(entry.active, listed);
+			listed += entry.active.length;
+		}
+		this.listed = listed;
+		if (listed) queue.writeBuffer(this.list, 0, this.#list, 0, listed);
+	}
+
+	/** marks ids as just used, so the least recently kept pages go first */
+	keep(ids: Iterable<number>): void {
+		for (const id of ids) {
+			const entry = this.#entries.get(id);
+			if (entry) this.#touch(entry);
+		}
 	}
 
 	/** world position of the floating origin; rewrites every page origin */
@@ -267,6 +291,9 @@ export class Pool {
 		clusterWords.set(this.#clusterWords);
 		this.#clusterWords = clusterWords;
 		this.#clusterFloats = new Float32Array(clusterWords.buffer);
+		const mask = new Uint32Array(slots * MASK_WORDS);
+		mask.set(this.#mask);
+		this.#mask = mask;
 		const list = new Uint32Array(slots);
 		list.set(this.#list);
 		this.#list = list;
@@ -277,7 +304,7 @@ export class Pool {
 	}
 
 	#buffers(): GPUBuffer[] {
-		return [this.geometry, this.colour, this.pages, this.clusters, this.list];
+		return [this.geometry, this.colour, this.pages, this.clusters, this.cut, this.list];
 	}
 
 	#allocate(): void {
@@ -289,6 +316,7 @@ export class Pool {
 		this.colour = make('pool colour', capacity * COLOUR_WORDS * 4);
 		this.pages = make('pool pages', slots * PAGE_WORDS * 4);
 		this.clusters = make('pool clusters', slots * CLUSTER_WORDS * 4);
+		this.cut = make('pool cut', slots * MASK_WORDS * 4);
 		this.list = make('pool list', slots * 4);
 	}
 
@@ -310,7 +338,7 @@ export class Pool {
 		this.#newest = entry;
 	}
 
-	/** frees the least recently drawn uploaded pages keep rejects until need slots are free */
+	/** frees the least recently kept uploaded pages keep rejects until need slots are free */
 	#fit(need: number, keep: (id: number) => boolean): boolean {
 		let free = this.#free;
 		if (free >= need) return true;
@@ -378,16 +406,12 @@ export class Pool {
 		const table = this.#table;
 		const f = this.#tableFloats;
 		const p = page.params;
-		const [q1, q2, q3] = page.quadrants;
 		table.fill(0, w, w + PAGE_WORDS);
 		this.#place(entry);
 		table[w + 3] = page.count;
 		f.set(p.subarray(PARAMS.step, PARAMS.step + 3), w + 4);
-		table[w + 7] = q1;
 		f.set(p.subarray(PARAMS.scaleMin, PARAMS.scaleMin + 3), w + 8);
-		table[w + 11] = q2;
 		f.set(p.subarray(PARAMS.scaleMax, PARAMS.scaleMax + 3), w + 12);
-		table[w + 15] = q3;
 		f.set(p.subarray(PARAMS.dcMin, PARAMS.dcMin + 3), w + 16);
 		f.set(p.subarray(PARAMS.dcMax, PARAMS.dcMax + 3), w + 20);
 		f.set(p.subarray(PARAMS.shScale, PARAMS.shScale + 9), w + 24);
@@ -404,38 +428,26 @@ export class Pool {
 		for (let k = 0; k < 3; k++) this.#tableFloats[w + k] = entry.base[k] - this.#origin[k];
 	}
 
-	#setFactors(entry: Entry, factors: number): void {
-		let mask = 0;
-		for (let q = 0; q < 4; q++) if ((factors >>> (8 * q)) & 255) mask |= 1 << q;
-		if (mask !== entry.mask) {
-			entry.mask = mask;
-			if (mask === 15 && this.#table[entry.table * PAGE_WORDS + 3] > 0) entry.active = entry.slots;
-			else {
-				const active: number[] = [];
-				const page = entry.table * PAGE_WORDS;
-				let first = 0;
-				let last = -1;
-				for (let q = 0; q < 4; q++) {
-					const end = this.#table[page + (q === 3 ? 3 : 7 + 4 * q)];
-					if (mask & (1 << q) && end > first) {
-						for (
-							let c = Math.max(last + 1, Math.floor(first / CLUSTER));
-							c < Math.ceil(end / CLUSTER);
-							c++
-						) {
-							active.push(entry.slots[c]);
-							last = c;
-						}
-					}
-					first = end;
-				}
-				entry.active = active;
+	/** the page's cut mask, a bit a record from its first; null or empty for none drawn */
+	#setMask(entry: Entry, mask: Uint32Array | null): void {
+		const words = this.#mask;
+		const active: number[] = [];
+		for (let c = 0; c < entry.slots.length; c++) {
+			const at = entry.slots[c] * MASK_WORDS;
+			let any = 0;
+			for (let k = 0; k < MASK_WORDS; k++) {
+				const bits = mask?.[c * MASK_WORDS + k] ?? 0;
+				words[at + k] = bits;
+				any |= bits;
 			}
+			if (any) active.push(entry.slots[c]);
+			this.#maskDirty.mark(at, at + MASK_WORDS);
 		}
-		entry.factors = factors;
-		const word = entry.table * PAGE_WORDS + FACTORS;
-		this.#table[word] = factors;
-		this.#tableDirty.mark(word, word + 1);
+		const was = entry.active.length > 0;
+		entry.active = active;
+		if (active.length) this.#drawing.add(entry);
+		else this.#drawing.delete(entry);
+		this.#listDirty ||= was || active.length > 0;
 	}
 
 	/** need free slots: one run when the pool has one, else the lowest free ones */

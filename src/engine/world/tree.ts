@@ -1,4 +1,4 @@
-// the page quadtree of an open world, grown as .idx files arrive
+// the unit tree of an open world, grown as .idx files arrive
 
 import {
 	namedUnits,
@@ -16,9 +16,10 @@ export interface UnitNode extends UnitKey {
 	/** world.json-relative path of its .idx */
 	path: string;
 	parent: UnitNode | null;
+	/** by quadrant a + 2b: null where its .idx names none, undefined while named and not added */
+	children: (UnitNode | null | undefined)[];
+	/** by row, as links name them */
 	pages: PageNode[];
-	/** its pages by slot */
-	grid: Map<number, PageNode>;
 }
 
 export interface PageNode {
@@ -26,30 +27,24 @@ export interface PageNode {
 	id: number;
 	unit: UnitNode;
 	row: PageRow;
-	g: number;
 	/** extent box in world ENU metres: min e, n, h then max e, n, h */
 	box: Float64Array;
-	/** the page at g + 1 over it; null for a root's coarsest pages */
-	parent: PageNode | null;
-	/**
-	 * by quadrant a + 2b: the page at g - 1, null where none exists, undefined while the unit
-	 * holding it is known but its .idx not added; all null at g = 0
-	 */
-	children: (PageNode | null | undefined)[];
 }
 
 /** an .idx the tree knows of and lacks */
 export interface Wanted extends UnitKey {
 	path: string;
-	/** pages over it, the nearest level up; the planner ranks the fetch by them */
-	over: PageNode[];
 }
 
-const slot = (g: number, i: number, j: number) => (g * 256 + i) * 256 + j;
+/** hears of every unit the tree adds and prunes */
+export interface TreeListener {
+	added(unit: UnitNode, root: boolean): void;
+	pruned(units: UnitNode[]): void;
+}
 
 export class Tree {
-	/** the coarsest pages of every root */
-	readonly roots: PageNode[] = [];
+	/** the units with no parent */
+	readonly roots: UnitNode[] = [];
 	readonly pages = new Map<number, PageNode>();
 	readonly units = new Map<string, UnitNode>();
 	#rootKeys: Set<string>;
@@ -60,18 +55,20 @@ export class Tree {
 	#wanted = new Map<string, { wanted: Wanted; from: number }>();
 	/** by unit key, added units below it; absent for none */
 	#below = new Map<string, number>();
+	#listener: TreeListener | undefined;
 
-	constructor(world: World) {
+	constructor(world: World, listener?: TreeListener) {
 		this.#rootKeys = new Set(world.roots.map(unitKey));
 		this.#top = Math.max(...world.roots.map((root) => root.level));
+		this.#listener = listener;
 	}
 
-	/** links a fetched .idx under its parent unit (a root has none); returns its node */
+	/** links a fetched .idx to its parent and children units; returns its node */
 	add(idx: Idx, path: string): UnitNode {
 		const key = unitKey(idx);
 		const known = this.units.get(key);
 		if (known) return known;
-		const grid = new Map<number, PageNode>();
+		const named = new Set(idx.children.map((child) => child.quadrant));
 		const unit: UnitNode = {
 			level: idx.level,
 			e: idx.e,
@@ -79,8 +76,8 @@ export class Tree {
 			idx,
 			path,
 			parent: null,
-			pages: [],
-			grid
+			children: [0, 1, 2, 3].map((q) => (named.has(q) ? undefined : null)),
+			pages: []
 		};
 		for (const row of idx.rows) {
 			const b = row.box;
@@ -88,14 +85,10 @@ export class Tree {
 				id: this.#next++,
 				unit,
 				row,
-				g: row.g,
-				box: Float64Array.of(idx.e + b[0], idx.n + b[1], b[2], idx.e + b[3], idx.n + b[4], b[5]),
-				parent: null,
-				children: [null, null, null, null]
+				box: Float64Array.of(idx.e + b[0], idx.n + b[1], b[2], idx.e + b[3], idx.n + b[4], b[5])
 			};
 			this.pages.set(page.id, page);
 			unit.pages.push(page);
-			grid.set(slot(row.g, row.i, row.j), page);
 		}
 		this.units.set(key, unit);
 		this.#wanted.delete(key);
@@ -104,48 +97,28 @@ export class Tree {
 			this.#below.set(up, (this.#below.get(up) ?? 0) + 1);
 		}
 
-		// inside the unit
-		const levels = new Set(idx.rows.map((row) => row.g));
-		const top = Math.max(...levels);
-		const lowest = idx.level === 0 ? 0 : idx.level + 1;
-		const listed = new Set(idx.children.map((child) => child.quadrant));
-		for (const page of unit.pages) {
-			const { g, i, j } = page.row;
-			if (levels.has(g + 1)) page.parent = grid.get(slot(g + 1, i >> 1, j >> 1)) ?? null;
-			for (let q = 0; q < 4; q++) {
-				const col = 2 * i + (q & 1);
-				const row = 2 * j + (q >> 1);
-				if (levels.has(g - 1)) {
-					page.children[q] = grid.get(slot(g - 1, col, row)) ?? null;
-				} else if (g === lowest && g > 0) {
-					page.children[q] = listed.has((col >> 3) + 2 * (row >> 3)) ? undefined : null;
-				}
-			}
-		}
-
-		// across units, both ways
-		if (this.#rootKeys.has(key)) {
-			for (const page of unit.pages) if (page.g === top) this.roots.push(page);
-		} else {
+		const root = this.#rootKeys.has(key);
+		if (root) this.roots.push(unit);
+		else {
 			const parent = this.units.get(unitKey(ancestor(idx, idx.level + 1)));
-			if (parent) this.#link(parent, unit);
+			if (parent) link(parent, unit);
 		}
-		const named = namedUnits(unit.idx);
-		for (const { key: child } of named) {
-			const node = child.level === idx.level - 1 ? this.units.get(unitKey(child)) : undefined;
-			if (node) this.#link(unit, node);
+		const names = namedUnits(idx);
+		for (const { key: child } of names.slice(0, idx.children.length)) {
+			const node = this.units.get(unitKey(child));
+			if (node) link(unit, node);
 		}
 
-		for (const { key: below, hash } of named) {
+		for (const { key: below, hash } of names) {
 			const k = unitKey(below);
 			if (this.units.has(k)) continue;
 			const entry = this.#wanted.get(k);
-			// the nearest namer's pages rank the fetch
+			// the nearest namer's word stands
 			if (entry && entry.from <= unit.level) continue;
-			const over = this.#over(unit, below);
-			const wanted = { ...below, path: unitPath(below, hash, 'idx'), over };
+			const wanted = { ...below, path: unitPath(below, hash, 'idx') };
 			this.#wanted.set(k, { wanted, from: unit.level });
 		}
+		this.#listener?.added(unit, root);
 		return unit;
 	}
 
@@ -154,20 +127,28 @@ export class Tree {
 		return Array.from(this.#wanted.values(), (entry) => entry.wanted);
 	}
 
-	/** the lowest extent minimum h of the finest page over (e, n), or undefined outside the world */
+	/** the lowest extent minimum h of the finest added page over (e, n), or undefined outside the world */
 	ground(e: number, n: number): number | undefined {
 		for (const root of this.roots) {
-			let [x, y, side] = square(root);
-			if (e < x || e >= x + side || n < y || n >= y + side) continue;
-			let page = root;
+			if (!holds(root, e, n)) continue;
+			let unit = root;
 			for (;;) {
-				const a = e >= x + side / 2 ? 1 : 0;
-				const b = n >= y + side / 2 ? 1 : 0;
-				const child = page.children[a + 2 * b];
-				if (!child) return page.box[2];
-				page = child;
-				[x, y, side] = square(page);
+				const half = (LEAF * 2 ** unit.level) / 2;
+				const q = (e >= unit.e + half ? 1 : 0) + 2 * (n >= unit.n + half ? 1 : 0);
+				const child = unit.children[q];
+				if (!child) break;
+				unit = child;
 			}
+			for (let at: UnitNode | null = unit; at; at = at.parent) {
+				let finest: PageNode | null = null;
+				for (const page of at.pages) {
+					if (finest && page.row.g >= finest.row.g) continue;
+					const [x, y, side] = square(page);
+					if (e >= x && e < x + side && n >= y && n < y + side) finest = page;
+				}
+				if (finest) return finest.box[2];
+			}
+			return undefined;
 		}
 		return undefined;
 	}
@@ -182,29 +163,18 @@ export class Tree {
 		}
 	}
 
-	/**
-	 * removes every non-root unit with no page in keep and no added unit below it, deepest first;
-	 * returns the ids of the pages it removed
-	 */
-	prune(keep: ReadonlySet<number>): number[] {
-		const removed: number[] = [];
+	/** removes every non-root unit with no page in keep and no added unit below it, deepest first */
+	prune(keep: ReadonlySet<number>): UnitNode[] {
+		const removed: UnitNode[] = [];
 		const units = [...this.units.values()].sort((a, b) => a.level - b.level);
 		for (const unit of units) {
 			const key = unitKey(unit);
 			if (this.#rootKeys.has(key) || this.#below.has(key)) continue;
 			if (unit.pages.some((page) => keep.has(page.id))) continue;
-			for (const page of unit.pages) {
-				this.pages.delete(page.id);
-				removed.push(page.id);
-			}
+			for (const page of unit.pages) this.pages.delete(page.id);
+			removed.push(unit);
 			const parent = unit.parent;
-			if (parent) {
-				const half = LEAF * 2 ** unit.level;
-				const qa = (unit.e - parent.e) / half;
-				const qb = (unit.n - parent.n) / half;
-				const open = parent.idx.children.some((child) => child.quadrant === qa + 2 * qb);
-				for (const page of this.#over(parent, unit)) page.children.fill(open ? undefined : null);
-			}
+			if (parent) parent.children[quadrant(parent, unit)] = undefined;
 			this.units.delete(key);
 			for (let level = unit.level + 1; level <= this.#top; level++) {
 				const up = unitKey(ancestor(unit, level));
@@ -215,6 +185,7 @@ export class Tree {
 			for (const { key: below } of namedUnits(unit.idx)) this.#want(below);
 			this.#want(unit);
 		}
+		if (removed.length) this.#listener?.pruned(removed);
 		return removed;
 	}
 
@@ -231,53 +202,28 @@ export class Tree {
 				level: key.level,
 				e: key.e,
 				n: key.n,
-				path: unitPath(named.key, named.hash, 'idx'),
-				over: this.#over(namer, key)
+				path: unitPath(key, named.hash, 'idx')
 			};
 			this.#wanted.set(k, { wanted, from: namer.level });
 			return;
 		}
 	}
-
-	/** child is a quadrant of parent, one level down */
-	#link(parent: UnitNode, child: UnitNode): void {
-		child.parent = parent;
-		const g = child.level + 1;
-		const half = LEAF * 2 ** child.level;
-		const qa = (child.e - parent.e) / half;
-		const qb = (child.n - parent.n) / half;
-		const over = parent.grid;
-		// the child's missing pages leave empty quadrants
-		for (const page of this.#over(parent, child)) page.children.fill(null);
-		for (const page of child.pages) {
-			if (page.g !== g) continue;
-			const col = 8 * qa + page.row.i;
-			const row = 8 * qb + page.row.j;
-			const up = over.get(slot(g + 1, col >> 1, row >> 1)) ?? null;
-			page.parent = up;
-			if (up) up.children[(col & 1) + 2 * (row & 1)] = page;
-		}
-	}
-
-	/** the pages of ancestor unit a over the square of key, at a's lowest level */
-	#over(a: UnitNode, key: UnitKey): PageNode[] {
-		const g = a.level + 1;
-		const side = PAGE_SIDE * 2 ** g;
-		const i0 = (key.e - a.e) / side;
-		const j0 = (key.n - a.n) / side;
-		const span = (LEAF * 2 ** key.level) / side;
-		const over: PageNode[] = [];
-		for (let j = j0; j < j0 + span; j++)
-			for (let i = i0; i < i0 + span; i++) {
-				const page = a.grid.get(slot(g, i, j));
-				if (page) over.push(page);
-			}
-		return over;
-	}
 }
 
 export function unitKey(key: UnitKey): string {
 	return `${key.level}/${key.e}/${key.n}`;
+}
+
+/** child is a quadrant of parent, one level down */
+function link(parent: UnitNode, child: UnitNode): void {
+	child.parent = parent;
+	parent.children[quadrant(parent, child)] = child;
+}
+
+/** the quadrant a + 2b of parent that child is */
+function quadrant(parent: UnitKey, child: UnitKey): number {
+	const half = LEAF * 2 ** child.level;
+	return (child.e - parent.e) / half + (2 * (child.n - parent.n)) / half;
 }
 
 /** the unit at level holding key's square */
@@ -294,6 +240,6 @@ function holds(key: UnitKey, e: number, n: number): boolean {
 
 /** south-west corner and side of a page's square, world metres */
 export function square(page: PageNode): [number, number, number] {
-	const side = PAGE_SIDE * 2 ** page.g;
+	const side = PAGE_SIDE * 2 ** page.row.g;
 	return [page.unit.e + page.row.i * side, page.unit.n + page.row.j * side, side];
 }

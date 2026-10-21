@@ -30,7 +30,8 @@ export class Project {
 			'storage',
 			'storage',
 			'storage',
-			'uniform'
+			'uniform',
+			'read-only-storage'
 		]);
 		this.#layout = device.createPipelineLayout({ bindGroupLayouts: [layout] });
 		const resources = [
@@ -43,7 +44,8 @@ export class Project {
 			buffers.work,
 			buffers.projected,
 			buffers.sort,
-			buffers.visible
+			buffers.visible,
+			pool.cut
 		];
 		this.#group = bufferGroup(device, 'project', layout, resources);
 	}

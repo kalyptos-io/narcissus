@@ -7,6 +7,7 @@ import {
 	PARAMS,
 	type DecodedPage
 } from '../../format/index.ts';
+import { toHalf } from '../../format/encode.ts';
 import { Heights } from './heights.ts';
 import { Pool } from './pool.ts';
 import { testDevice } from './test-device.ts';
@@ -14,14 +15,19 @@ import { testDevice } from './test-device.ts';
 const STEP = 0.01;
 const SCALES = [0.1, 3];
 
-/** splats at [x, y, z] from origin with an alpha byte and a scale byte on every axis */
+/** splats at [x, y, z] from origin with an opacity and a scale byte on every axis */
 function page(origin: number[], splats: [number[], number, number][]): DecodedPage {
 	const count = splats.length;
 	const geometry = new Uint32Array(count * GEOMETRY_WORDS);
-	splats.forEach(([p, alpha, scale], i) => {
+	splats.forEach(([p, opacity, scale], i) => {
 		const [x, y, z] = p.map((v) => Math.round(v / STEP));
 		geometry.set(
-			[x | (y << 16), z | (alpha << 16), (scale << 24) >>> 0, scale | (scale << 8)],
+			[
+				x | (y << 16),
+				z,
+				(scale << 24) >>> 0,
+				(scale | (scale << 8) | (toHalf(opacity) << 16)) >>> 0
+			],
 			i * GEOMETRY_WORDS
 		);
 	});
@@ -34,11 +40,16 @@ function page(origin: number[], splats: [number[], number, number][]): DecodedPa
 	for (let c = 0; c < clusters.length; c += 6) clusters.set([0, 0, 0, 100, 100, 100], c);
 	return {
 		count,
-		quadrants: [count, count, count],
 		geometry,
 		colour: new Uint32Array(count * COLOUR_WORDS),
 		params,
-		clusters
+		clusters,
+		nodes: {
+			counts: new Uint8Array(count),
+			centres: new Float32Array(0),
+			radii: new Float32Array(0),
+			links: new Uint32Array(0)
+		}
 	};
 }
 
@@ -51,27 +62,29 @@ async function heights(pool: Pool, x: number, y: number, cells: number) {
 }
 
 describe('Heights', () => {
-	it('keeps the highest solid small splat per cell, inside the window only', async () => {
+	it('keeps the highest solid small drawn splat per cell, inside the window only', async () => {
 		const device = await testDevice();
 		const pool = new Pool(device, 4 * CLUSTER);
 		const near = page(
 			[100, 200, -20],
 			[
-				[[5.5, 5.5, 32], 255, 0],
-				[[5.7, 5.2, 33], 255, 0],
-				[[6.5, 5.5, 50], 50, 0],
-				[[7.5, 5.5, 24], 255, 255],
-				[[8.5, 5.5, 15], 255, 0],
-				[[30, 30, 60], 255, 0]
+				[[5.5, 5.5, 32], 1, 0],
+				[[5.7, 5.2, 33], 4, 0],
+				[[6.5, 5.5, 50], 0.2, 0],
+				[[7.5, 5.5, 24], 1, 255],
+				[[8.5, 5.5, 15], 1, 0],
+				[[30, 30, 60], 1, 0],
+				[[9.5, 5.5, 40], 1, 0]
 			]
 		);
-		const far = page([1000, 1000, 0], [[[1, 1, 50], 255, 0]]);
+		const far = page([1000, 1000, 0], [[[1, 1, 50], 1, 0]]);
 		expect(pool.add(0, near, [0, 0], () => true)).toBe(true);
 		expect(pool.add(1, far, [0, 0], () => true)).toBe(true);
 		pool.upload(Infinity);
+		// the last splat of near is not in the cut
 		pool.draw([
-			{ id: 0, factors: 0xffffffff },
-			{ id: 1, factors: 0xffffffff }
+			{ id: 0, mask: Uint32Array.of(0b111111) },
+			{ id: 1, mask: Uint32Array.of(1) }
 		]);
 
 		const cells = 16;

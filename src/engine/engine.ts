@@ -1,6 +1,13 @@
 // the engine: world, planner, stream, pool and renderer behind one small api
 
-import { CLUSTER, GEOMETRY_WORDS, directory, parseWorld, type World } from '../format/index.ts';
+import {
+	CLUSTER,
+	GEOMETRY_WORDS,
+	directory,
+	parseWorld,
+	type DecodedPage,
+	type World
+} from '../format/index.ts';
 import { PROJECTED_WORDS } from './gpu/layout.ts';
 import { requestGpu, type Gpu } from './gpu/device.ts';
 import { Pool } from './gpu/pool.ts';
@@ -14,16 +21,16 @@ import {
 	view as viewMatrix,
 	type Mat4
 } from './math/mat4.ts';
-import { Planner, type Plan, type View } from './plan/cut.ts';
-import { FADE_CAP, Fader } from './plan/draw.ts';
+import { CAP, type CutResult, type CutView } from './plan/cut.ts';
+import { Planner } from './plan/planner.ts';
 import type { Fetch } from '../ports.ts';
 import type { Frame, Host, Plugin, Post, Shade } from './plugin.ts';
 import { percentile, pixelRatio, Quality } from './quality.ts';
-import { Feed } from './stream/feed.ts';
+import { Feed, type Wants } from './stream/feed.ts';
 import { http } from '../adapters/http.ts';
 import { Loader } from './stream/loader.ts';
 import type { Camera, Drawn, Settings, Stats } from './types.ts';
-import { Tree } from './world/tree.ts';
+import { Tree, type PageNode } from './world/tree.ts';
 
 export interface EngineOptions {
 	settings: Settings;
@@ -64,7 +71,7 @@ export interface Engine {
 	 */
 	heights(west: number, south: number, cells: number): Promise<Float32Array | null>;
 	stats(): Stats;
-	/** resolves once nothing loads and the cut is drawn without fades */
+	/** resolves once nothing plans or loads and the cut misses nothing */
 	idle(): Promise<void>;
 	use(plugin: Plugin): () => void;
 	/** device loss, with its reason; the engine is then dead */
@@ -74,7 +81,7 @@ export interface Engine {
 	/** the camera may soon move: after a rest, frames run a moment so the gpu is up to speed by then */
 	warm(): void;
 	requestFrame(): void;
-	/** one frame now, resolved when the gpu finished it */
+	/** one frame now, after the plan it awaits; resolved when the gpu finished it */
 	step(): Promise<StepReport>;
 	destroy(): void;
 }
@@ -117,13 +124,11 @@ const NEAR = 0.2;
 const UPLOAD_BYTES = 24 * 1024 * 1024;
 /** splats the pool holds, per splat of budget */
 const POOL_SHARE = 2.5;
-/** splats one frame may project, per splat of budget: the plan's on screen, then pages fading out */
-const FRAME_SHARE = 1 + FADE_CAP;
+/** splats one frame may project, per splat of budget: the most a cut draws */
+const FRAME_SHARE = CAP;
 /** metres: the floating origin's grid, and how far the camera may stray from it */
 const GRID = 1024;
 const REBASE = 2048;
-/** ms between plans while pages load and nothing else changes */
-const REPLAN_MS = 100;
 /** frames the gpu may still be working on; chrome itself queues any number, latency growing without bound */
 const IN_FLIGHT = 2;
 /** ms the planner looks ahead along the camera's velocity */
@@ -233,8 +238,6 @@ class GpuEngine implements Engine {
 	/** splats one frame may project */
 	#frameCapacity: number;
 	#planner = new Planner();
-	#fader = new Fader();
-	#has = (id: number) => this.#pool.has(id);
 
 	#url: string | null = null;
 	#tree: Tree | null = null;
@@ -250,7 +253,7 @@ class GpuEngine implements Engine {
 	#origin: Point = [0, 0, 0];
 	#view = new Float64Array(16);
 	#proj = new Float64Array(16);
-	#ahead = new Float64Array(16);
+	#turn = new Float64Array(16);
 	#viewProj = new Float64Array(16);
 	#planes = new Float32Array(24);
 	/** canvas css size and the device pixel ratio */
@@ -262,15 +265,24 @@ class GpuEngine implements Engine {
 	#inFlight = 0;
 	/** a frame was asked for while IN_FLIGHT were queued */
 	#behind = false;
-	#plan: Plan | null = null;
-	#plannedAt = -Infinity;
+	/** the plan the pool draws, and what it asks of the stream */
+	#plan: CutResult | null = null;
+	#wants: Wants | null = null;
+	/** a plan back from the worker and not yet applied */
+	#ready: CutResult | null = null;
+	/** the plan in flight, at most one */
+	#planning: Promise<void> | null = null;
+	/** whether the pool took the last plan, which the worker tells its next one's changes by */
+	#applied = true;
+	/** uploaded pages the pool let go of since the plan in flight was asked for */
+	#evicted = new Set<number>();
 	#moved = true;
-	#dirty = true;
+	/** the camera moved since the last plan was asked for, which then looks ahead */
+	#moving = false;
+	/** something a plan reads changed: the camera, the size, the budget, a page or an .idx */
+	#stale = true;
 	/** the last plan looked ahead of a moving camera; the first frame it rests plans again */
 	#heading = false;
-	#arrived = false;
-	#fading = false;
-	#drawn: Drawn[] = [];
 	#lastFrame = -Infinity;
 	#warmUntil = -Infinity;
 	#movedAt = -Infinity;
@@ -336,11 +348,10 @@ class GpuEngine implements Engine {
 			cache,
 			source
 		});
-		const tree = new Tree(world);
+		let roots;
 		try {
-			const roots = await Promise.all(world.roots.map((root) => loader.idx(root.idx)));
+			roots = await Promise.all(world.roots.map((root) => loader.idx(root.idx)));
 			check();
-			roots.forEach((idx, k) => tree.add(idx, world.roots[k].idx));
 		} catch (error) {
 			loader.destroy();
 			throw error;
@@ -349,16 +360,27 @@ class GpuEngine implements Engine {
 		this.#feed?.destroy();
 		this.#feed = null;
 		this.#loader?.destroy();
+		// page ids restart with the tree, so the old world's pages leave the pool and the planner
+		this.#pool.clear();
+		this.#pool.gone();
+		const planner = this.#planner;
+		planner.reset();
+		const tree = new Tree(world, {
+			added: (unit, root) => planner.unit(unit, root),
+			pruned: (units) => planner.drop(units)
+		});
+		roots.forEach((idx, k) => tree.add(idx, world.roots[k].idx));
 		this.#url = worldUrl;
 		this.#tree = tree;
 		this.#loader = loader;
 		this.#plan = null;
-		this.#planner = new Planner();
-		this.#fader = new Fader();
-		// page ids restart with the tree, so the old world's pages must leave the pool
-		this.#pool.clear();
+		this.#wants = null;
+		this.#ready = null;
+		this.#planning = null;
+		this.#applied = true;
+		this.#evicted.clear();
 		this.#feed = this.#feedFor(tree, loader);
-		this.#dirty = true;
+		this.#stale = true;
 		this.requestFrame();
 		return world;
 	}
@@ -379,6 +401,8 @@ class GpuEngine implements Engine {
 		this.#cameraAt = now;
 		this.#camera = { ...camera };
 		this.#moved = true;
+		this.#moving = true;
+		this.#stale = true;
 		if (!this.#starting) this.requestFrame();
 	}
 
@@ -423,7 +447,7 @@ class GpuEngine implements Engine {
 		const loader = this.#loader;
 		if (!tree || !loader) return undefined;
 		await tree.load(e, n, (path) => loader.idx(path));
-		this.#arrived = true;
+		this.#stale = true;
 		this.requestFrame();
 		return tree.ground(e, n);
 	}
@@ -448,9 +472,10 @@ class GpuEngine implements Engine {
 			drawn: gpu.drawn,
 			planned: this.#plan?.planned ?? 0,
 			missing: this.#plan?.missing ?? 0,
+			detail: this.#plan?.detail ?? 0,
 			pages: {
 				resident: Array.from(pool.ids()).length,
-				drawn: this.#drawn.length,
+				drawn: pool.drawn,
 				loading: feed?.loading ?? 0,
 				queued: feed?.queued ?? 0
 			},
@@ -506,6 +531,9 @@ class GpuEngine implements Engine {
 
 	async step(): Promise<StepReport> {
 		if (this.#destroyed || this.#lost) return { cpuMs: 0, gpuMs: 0, passes: {} };
+		// the plan this frame applies, so a run steps the same every time
+		this.#request();
+		await this.#planning;
 		const { done, cpuMs } = this.#frame(false);
 		await done;
 		const { gpuMs, passes } = this.#renderer.stats();
@@ -518,6 +546,7 @@ class GpuEngine implements Engine {
 		cancelAnimationFrame(this.#raf);
 		this.#feed?.destroy();
 		this.#loader?.destroy();
+		this.#planner.destroy();
 		this.#renderer.destroy();
 		this.#pool.destroy();
 		for (const { resolve } of this.#picks.splice(0)) resolve(null);
@@ -542,7 +571,7 @@ class GpuEngine implements Engine {
 	#rebudget(): void {
 		const { pool, frame } = capacities(this.#budget, this.#gpu.device.limits);
 		if (pool > this.#pool.capacity || frame > this.#frameCapacity) this.#grow(pool, frame);
-		this.#dirty = true;
+		this.#stale = true;
 		this.requestFrame();
 	}
 
@@ -560,7 +589,7 @@ class GpuEngine implements Engine {
 
 	#feedFor(tree: Tree, loader: Loader): Feed {
 		const arrive = () => {
-			this.#arrived = true;
+			this.#stale = true;
 			this.requestFrame();
 		};
 		return new Feed(tree, loader, this.#pool, arrive, this.#reopen);
@@ -603,7 +632,7 @@ class GpuEngine implements Engine {
 		this.#canvas.width = width;
 		this.#canvas.height = height;
 		this.#renderer.resize(width, height);
-		this.#dirty = true;
+		this.#stale = true;
 		this.requestFrame();
 	}
 
@@ -658,111 +687,119 @@ class GpuEngine implements Engine {
 		};
 		planes(this.#planes, multiply(this.#viewProj, frame.proj, frame.view));
 
-		// plan
-		const tree = this.#tree;
+		// plan, stream and upload
 		const feed = this.#feed;
-		const redraw = this.#arrived || this.#dirty || this.#fading;
-		const previous = this.#plan;
-		let plan = previous;
-		if (tree && feed) {
-			const due = !feed.idle && now - this.#plannedAt >= REPLAN_MS;
-			const stale = this.#dirty || this.#arrived || this.#fading || this.#heading;
-			if (!plan || moved || due || stale) {
-				plan = this.#replan(tree, now, moved);
-			}
-		}
-
-		// draw
-		let drawn = this.#drawn;
-		let fading = this.#fading;
-		if (plan && feed) {
-			// camera motion can leave the same opaque cover
-			if (
-				plan !== previous &&
-				(redraw ||
-					!previous ||
-					plan.cut.length !== previous.cut.length ||
-					plan.cut.some((page, k) => page !== previous.cut[k]))
-			) {
-				({ drawn, fading } = this.#fader.update(plan.cut, this.#has, now, this.#budget));
-			}
-			feed.update(plan, new Set(drawn.map((d) => d.id)), now);
-		}
-		if (pool.upload(UPLOAD_BYTES) > 0) this.#arrived = true;
-		if (drawn !== this.#drawn || this.#arrived) pool.draw(drawn);
-		this.#fading = fading;
-		this.#drawn = drawn;
+		const changes = this.#apply();
+		if (feed && this.#wants) feed.update(this.#wants, now);
+		const uploaded = (id: number, page: DecodedPage) => this.#planner.page(id, page.nodes);
+		if (pool.upload(UPLOAD_BYTES, uploaded) > 0) this.#stale = true;
+		if (!this.#options.manual) this.#request();
+		pool.draw(changes);
 		const picks = this.#picks.splice(0).map((picking) => this.#pick(picking, frame));
 		const heights = this.#measures.splice(0).map((measuring) => this.#measure(measuring, origin));
 		const done = this.#renderer.render(frame, this.#planes, this.#options.sky, picks, heights);
 		const cpuMs = performance.now() - now;
 
 		// what comes next
+		const plan = this.#plan;
 		const quiet =
-			!this.#arrived &&
+			!this.#stale &&
 			!this.#heading &&
-			!fading &&
+			!this.#planning &&
+			!this.#ready &&
 			pool.queued === 0 &&
 			(!feed || feed.idle) &&
-			(!plan || (plan.load.length === 0 && plan.idx.length === 0));
+			(!plan || (plan.load.length === 0 && plan.idx.length === 0 && plan.missing === 0));
 		if (quiet && this.#idlers.length) {
 			const idlers = this.#idlers.splice(0);
 			void done.then(() => idlers.forEach((resolve) => resolve()));
 		}
 		if (animated) this.#sample(now, cpuMs, moved);
-		// the feed calls onArrive for whatever it changes, so loads in flight need no frames
+		// the feed and the planner call for frames as they change things, so loads and plans in flight need none
 		const warming = now < this.#warmUntil;
-		const pending = pool.queued > 0 || this.#arrived || this.#heading;
-		if (pending || fading || quality.scale < 1 || warming) {
+		const pending = pool.queued > 0 || ((this.#stale || this.#heading) && !this.#planning);
+		if (pending || quality.scale < 1 || warming) {
 			this.requestFrame();
 		}
 		return { done, cpuMs };
 	}
 
-	/** moved: the camera moved this frame; a resting one plans for itself alone */
-	#replan(tree: Tree, now: number, moved: boolean): Plan {
-		const camera = this.#camera;
+	/** the pool's evictions to the planner, and to the plan in flight's check */
+	#evictions(): void {
+		const gone = this.#pool.gone();
+		if (!gone.length) return;
+		this.#planner.evict(gone);
+		for (const id of gone) this.#evicted.add(id);
+	}
+
+	/** asks for a plan when one is due and none is in flight */
+	#request(): void {
+		const tree = this.#tree;
+		if (!tree || !this.#feed || this.#planning || this.#ready) return;
+		if (!this.#stale && !this.#heading) return;
+		this.#evictions();
+		const views = this.#views(this.#moving);
+		this.#moving = false;
+		const request = { views, budget: this.#budget, capacity: this.#pool.capacity };
+		this.#stale = false;
+		this.#heading = views.length > 1;
+		this.#evicted.clear();
+		const planning: Promise<void> = this.#planner.plan(request, this.#applied).then((result) => {
+			if (this.#planning !== planning) return;
+			this.#planning = null;
+			this.#ready = result;
+			this.requestFrame();
+		});
+		this.#planning = planning;
+	}
+
+	/** the plan that came back, unless the pool let go of a page it reads; returns its mask changes */
+	#apply(): Drawn[] {
+		this.#evictions();
+		const result = this.#ready;
+		this.#ready = null;
+		if (!result) return [];
 		const pool = this.#pool;
+		const tree = this.#tree!;
+		this.#applied = result.touched.every((id) => pool.has(id) && !this.#evicted.has(id));
+		if (!this.#applied) {
+			this.#stale = true;
+			return [];
+		}
+		pool.keep(result.touched);
+		this.#plan = result;
+		const load: PageNode[] = [];
+		for (const id of result.load) {
+			const page = tree.pages.get(id);
+			if (page) load.push(page);
+		}
+		this.#wants = { keep: new Set(result.touched), load, idx: result.idx };
+		return result.masks.map(([id, mask]) => ({ id, mask }));
+	}
+
+	/** the camera's view for the cut, and while it moves the view AHEAD_MS along its velocity */
+	#views(moving: boolean): CutView[] {
+		const c = this.#camera;
 		const [width, height] = this.#target;
 		// the full-scale size, so a lower render scale costs sharpness, not detail
 		const scale = this.#quality.scale;
-		const budget = this.#budget;
+		const m = viewMatrix(this.#turn, [0, 0, 0], c.yaw * DEG, c.pitch * DEG);
+		const rotation = [m[0], m[4], m[8], m[1], m[5], m[9], m[2], m[6], m[10]];
+		const p11 = 1 / Math.tan((c.fov * DEG) / 2);
 		const at = {
-			origin: this.#origin,
+			rotation,
+			p00: (p11 * height) / width,
+			p11,
 			width: width / scale,
-			height: height / scale,
-			tan: Math.tan((camera.fov * DEG) / 2),
-			near: NEAR,
-			far: this.#settings.viewDistance
+			height: height / scale
 		};
-		const view: View = { ...at, view: this.#view };
-		const options = {
-			budget,
-			// pages the fader holds take up to FADE_CAP of the budget beside the plan's
-			capacity: pool.capacity - Math.ceil(FADE_CAP * budget),
-			now,
-			predicted: moved ? this.#predict(at) : undefined
-		};
-		const plan = this.#planner.plan(tree, view, this.#has, options);
-		this.#plan = plan;
-		this.#plannedAt = now;
-		this.#dirty = false;
-		this.#heading = options.predicted !== undefined;
-		this.#arrived = false;
-		return plan;
-	}
-
-	/** the view AHEAD_MS along the camera's velocity */
-	#predict(at: Omit<View, 'view'>): View | undefined {
+		const views: CutView[] = [{ ...at, eye: [c.e, c.n, c.h] }];
 		const v = this.#velocity;
-		if (v.every((x) => x === 0)) return undefined;
-		const c = this.#camera;
-		const eye: Point = [
-			c.e + v[0] * AHEAD_MS - at.origin[0],
-			c.n + v[1] * AHEAD_MS - at.origin[1],
-			c.h + v[2] * AHEAD_MS - at.origin[2]
-		];
-		return { ...at, view: viewMatrix(this.#ahead, eye, c.yaw * DEG, c.pitch * DEG) };
+		if (moving && v.some((x) => x !== 0)) {
+			const eye = [c.e + v[0] * AHEAD_MS, c.n + v[1] * AHEAD_MS, c.h + v[2] * AHEAD_MS] as const;
+			views.push({ ...at, eye });
+		}
+		return views;
 	}
 
 	/** a pick answered with this frame's matrices, which its depth belongs to */
