@@ -456,7 +456,11 @@ export class Cut {
 					continue;
 				}
 				const row = unit.rows[linkRow(link)];
-				if (row && !this.#pages.has(row.id)) want(row.id, row.count, s);
+				if (!row) continue;
+				const target = this.#pages.get(row.id);
+				// one fetched ahead is read, so the pool keeps it until its parent refines
+				if (!target) want(row.id, row.count, s);
+				else if (target.stamp !== stamp && room(row.count)) touch(target);
 			}
 		}
 
