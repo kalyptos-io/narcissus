@@ -1,4 +1,4 @@
-// usage: OUT=<dir outside the repo> [WORLD=<world dir>] [PORT=9341] [MBPS=27 megabytes/s] [RTT=30 ms] [ROUTE_MS=90000] [BUDGET=4000000] [VIEW_DISTANCE=1500] node bench/drive.mjs
+// usage: OUT=<dir outside the repo> [WORLD=<world dir>|synthetic] [PORT=9341] [MBPS=27 megabytes/s] [RTT=30 ms] [ROUTE_MS=90000] [BUDGET=4000000] [VIEW_DISTANCE=1500] node bench/drive.mjs
 /** @import { AddressInfo } from 'node:net' */
 /** @import { Options, Sample } from './drive.ts' */
 import { rmSync, writeFileSync } from 'node:fs';
@@ -11,7 +11,7 @@ import { serve } from './h2serve.mjs';
 const bench = import.meta.dirname;
 const {
 	OUT,
-	WORLD = join(bench, 'runs/world'),
+	WORLD = 'synthetic',
 	PORT = '9341',
 	MBPS = '27',
 	RTT = '30',
@@ -24,12 +24,13 @@ const out = resolve(OUT);
 if (relative(resolve(bench, '..'), out).split('/')[0] !== '..')
 	throw new Error('OUT must lie outside the repo');
 
-const overview = { e: 724000, n: 6178000, h: 3.22, yaw: 0, pitch: -60, dist: 1200 };
+// heights on the synthetic ground
+const overview = { e: 724000, n: 6178000, h: 44.57, yaw: 0, pitch: -60, dist: 1200 };
 const close = { ...overview, pitch: -35, dist: 80 };
 const back = { ...close, yaw: 180 };
-const east = { e: 724500, n: 6178400, h: 3.72, yaw: 90, pitch: -45, dist: 300 };
-const west = { e: 723500, n: 6177600, h: 8.8, yaw: 270, pitch: -35, dist: 300 };
-// eyes and focus inside world6 level 0; each move ends in a hold as long, so arrivals settle in place
+const east = { e: 724500, n: 6178400, h: 47.62, yaw: 90, pitch: -45, dist: 300 };
+const west = { e: 723500, n: 6177600, h: 38.98, yaw: 270, pitch: -35, dist: 300 };
+// each move ends in a hold as long, so arrivals settle in place
 const route = [overview, close, close, back, back, east, east, west, west, overview, overview];
 const LOAD_MS = 120_000;
 const routeMs = Number(ROUTE_MS);
@@ -56,7 +57,8 @@ await build({
 /** @type {[number, number][]} */
 const served = [];
 const link = { rttMs: Number(RTT), mbps: Number(MBPS), served };
-const server = await serve(join(out, 'site'), resolve(WORLD), out, 0, link);
+const world = WORLD === 'synthetic' ? WORLD : resolve(WORLD);
+const server = await serve(join(out, 'site'), world, out, 0, link);
 const address = /** @type {AddressInfo} */ (server.address());
 const url = `https://127.0.0.1:${address.port}/drive.html`;
 
@@ -134,7 +136,7 @@ const gpu = rows.map((s) => s.gpuMs);
 const drawn = rows.map((s) => s.drawn);
 const summary = {
 	page: url,
-	world: resolve(WORLD),
+	world,
 	mbps: Number(MBPS),
 	rttMs: Number(RTT),
 	routeMs,

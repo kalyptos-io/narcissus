@@ -1,11 +1,15 @@
-// usage: node bench/h2serve.mjs <site dir> <world dir> <cert dir> <port>; https/2 static files, the world under /world/, single closed byte ranges like the tiles worker
+// usage: node bench/h2serve.mjs <site dir> <world dir | synthetic> <cert dir> <port>; https/2 static files, the world under /world/, single closed byte ranges like the tiles worker
 /** @import { AddressInfo } from 'node:net' */
 import { execFileSync } from 'node:child_process';
 import { createReadStream, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { createSecureServer } from 'node:http2';
 import { extname, join, normalize } from 'node:path';
-import { pipeline } from 'node:stream';
+import { Readable, pipeline } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
+/* eslint-disable no-restricted-imports -- the server streams the synthetic world as a remote one */
+import { synthetic } from '../src/engine/stream/synthetic.ts';
+import { Missing } from '../src/ports.ts';
+/* eslint-enable no-restricted-imports */
 import { byteRange } from './range.ts';
 
 /** @typedef {{ rttMs: number, mbps: number, served: [number, number][] }} Link */
@@ -34,13 +38,15 @@ function throttle(mbps) {
 	return pace;
 }
 
-// for node:http and node:http2; a link adds its rtt and bandwidth to every response
+// for node:http and node:http2; a link adds its rtt and bandwidth to every response; world 'synthetic' serves the generated world
 /** @type {(site: string, world: string, link?: Link) => Handler} */
 export const files = (site, world, link) => {
 	const pace = link && throttle(link.mbps);
+	const generated = world === 'synthetic' ? synthetic() : null;
 	return async (req, res) => {
 		const path = decodeURIComponent(new URL(req.url ?? '/', 'https://local').pathname);
 		const inWorld = path.startsWith('/world/');
+		if (inWorld && generated) return serveSynthetic(generated, path.slice(7), req, res, link);
 		const [root, rest] = inWorld ? [world, path.slice(6)] : [site, path];
 		// a leading slash keeps normalize from climbing out of the root
 		const file = join(root, normalize(rest));
@@ -81,6 +87,45 @@ export const files = (site, world, link) => {
 		else pipeline(stream, res, done);
 	};
 };
+
+/**
+ * a file of the synthetic world, a range of it as the engine asks: whole pages only
+ * @param {import('../src/ports.ts').Fetch} generated
+ * @param {string} path
+ * @param {{ headers: { range?: string } }} req
+ * @param {any} res
+ * @param {Link} [link]
+ */
+async function serveSynthetic(generated, path, req, res, link) {
+	const range = byteRange(req.headers.range ?? null);
+	let bytes;
+	try {
+		bytes = await generated(`synthetic/${path}`, range && [range[0], range[1] + 1]);
+	} catch (error) {
+		if (!(error instanceof Missing)) throw error;
+	}
+	if (link) await sleep(link.rttMs);
+	if (!bytes) {
+		res.writeHead(404);
+		return res.end();
+	}
+	res.writeHead(range ? 206 : 200, {
+		'content-type': types[extname(path)] ?? 'application/octet-stream',
+		'content-length': bytes.length,
+		'cache-control': 'no-store',
+		'access-control-allow-origin': '*',
+		// the generator does not know a pack's size without building it, and the engine reads none
+		...(range && { 'content-range': `bytes ${range[0]}-${range[1]}/*` })
+	});
+	const pace = link && throttle(link.mbps);
+	/** @param {unknown} error */
+	const done = (error) => {
+		if (!error) link?.served.push([Date.now(), bytes.length]);
+	};
+	const stream = Readable.from([Buffer.from(bytes)]);
+	if (pace) pipeline(stream, pace, res, done);
+	else pipeline(stream, res, done);
+}
 
 /**
  * listens on 127.0.0.1; port 0 picks a free one, read back from server.address()

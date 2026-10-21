@@ -34,7 +34,8 @@
 		"test": "vitest --run",
 		"package": "pnpm build && publint && attw --pack --profile esm-only",
 		"bench": "node bench/quick.mjs",
-		"bench:drive": "node bench/drive.mjs"
+		"bench:drive": "node bench/drive.mjs",
+		"bench:pops": "node bench/pops.mjs"
 	},
 	"devDependencies": {
 		"@arethetypeswrong/cli": "^0.18.5",
