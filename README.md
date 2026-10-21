@@ -35,7 +35,7 @@ import { createEngine, Controls } from '@kalyptos/narcissus';
 ```sh
 npx @kalyptos/narcissus validate ./world --deep
 npx @kalyptos/narcissus info ./world
-npx @kalyptos/narcissus export ./world -o level3.ply --level 3
+npx @kalyptos/narcissus export ./world -o coarse.ply --detail 2
 npx @kalyptos/narcissus publish ./world remote:bucket/world
 ```
 

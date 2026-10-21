@@ -1,12 +1,18 @@
-import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { disk } from '../adapters/disk.ts';
-import { C0, PAGE_SIDE, type SplatValues } from '../format/index.ts';
-import { info } from './info.ts';
+import { C0, type SplatValues } from '../format/index.ts';
 import { exportPly, plySplat } from './ply.ts';
+import { build, write } from './test-world.ts';
 
-const WORLD = `${fileURLToPath(new URL('../../fixtures/tree', import.meta.url))}/world.json`;
 const FLOATS = 23;
+const dir = mkdtempSync(join(tmpdir(), 'narcissus-'));
+const WORLD = `${dir}/world.json`;
+const units = build();
+beforeAll(() => write(dir, units));
+afterAll(() => rmSync(dir, { recursive: true }));
 
 async function ply(options?: Parameters<typeof exportPly>[2]) {
 	const parts: Uint8Array[] = [];
@@ -19,32 +25,53 @@ async function ply(options?: Parameters<typeof exportPly>[2]) {
 	return { header, body };
 }
 
+const fits = units
+	.flatMap((unit) => unit.pages.flatMap((page) => page.nodes))
+	.filter((node) => !node.children);
+
 describe('exportPly', () => {
-	it('writes every splat of a level, 23 floats each, under a header with their count', async () => {
-		const { levels } = await info(disk, WORLD);
-		for (const level of [0, 2]) {
-			const { header, body } = await ply({ level });
-			expect(header).toContain(`element vertex ${levels[level].splats}\n`);
-			expect(header.endsWith('end_header\n')).toBe(true);
-			expect(header.match(/^property float /gm)).toHaveLength(FLOATS);
-			expect(body.length).toBe(levels[level].splats * FLOATS);
-			expect(body.every(Number.isFinite)).toBe(true);
+	it('writes every fit splat at detail 0, 23 floats each, under a header with their count', async () => {
+		const { header, body } = await ply();
+		expect(fits).toHaveLength(96);
+		expect(header).toContain(`element vertex ${fits.length}\n`);
+		expect(header.endsWith('end_header\n')).toBe(true);
+		expect(header.match(/^property float /gm)).toHaveLength(FLOATS);
+		expect(body.length).toBe(fits.length * FLOATS);
+		expect(body.every(Number.isFinite)).toBe(true);
+	});
+
+	it('writes fewer, coarser nodes at a coarser detail, down to the top page', async () => {
+		const counts = [];
+		for (const detail of [0, 1, 4, 1000]) {
+			const { header } = await ply({ detail });
+			counts.push(Number(/^element vertex (\d+)$/m.exec(header)![1]));
 		}
+		expect(counts[0]).toBe(96);
+		expect(counts.at(-1)).toBe(2);
+		expect(counts).toEqual([...counts].sort((a, b) => b - a));
+	});
+
+	it('warns once when it writes nodes past opacity 1', async () => {
+		const told: string[] = [];
+		await ply({ detail: 1000, warn: (message) => told.push(message) });
+		const flat = units[0].pages[2].nodes.filter((node) => node.opacity > 1).length;
+		expect(told).toEqual(
+			flat ? [`${flat} nodes past opacity 1 written at opacity 1: a ply holds no flat tops`] : []
+		);
+		const quiet: string[] = [];
+		await ply({ warn: (message) => quiet.push(message) });
+		expect(quiet).toEqual([]);
 	});
 
 	it('puts positions in the square of the root unit once its origin is added', async () => {
-		const { world } = await info(disk, WORLD);
-		const [root] = world.roots;
-		const side = world.leaf * 2 ** root.level;
-		// a centre may lie a little outside its unit, never a page side
-		const margin = PAGE_SIDE;
+		const [root] = units;
 		const { header, body } = await ply();
 		const [e, n] = /^comment origin (\S+) (\S+):/m.exec(header)!.slice(1).map(Number);
 		for (let t = 0; t < body.length; t += FLOATS) {
-			expect(body[t] + e).toBeGreaterThan(root.e - margin);
-			expect(body[t] + e).toBeLessThan(root.e + side + margin);
-			expect(body[t + 2] + n).toBeGreaterThan(root.n - margin);
-			expect(body[t + 2] + n).toBeLessThan(root.n + side + margin);
+			expect(body[t] + e).toBeGreaterThan(root.e);
+			expect(body[t] + e).toBeLessThan(root.e + 500);
+			expect(body[t + 2] + n).toBeGreaterThan(root.n);
+			expect(body[t + 2] + n).toBeLessThan(root.n + 500);
 		}
 	});
 
@@ -63,7 +90,7 @@ describe('plySplat', () => {
 			position: [12, 34, 5],
 			rotation: [0.5, -0.1, 0.7, Math.sqrt(1 - 0.25 - 0.01 - 0.49)],
 			scale: [0.2, 0.3, 0.05],
-			alpha: 0.75,
+			opacity: 0.75,
 			colour: [0.2, 0.5, 0.9],
 			sh: [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09]
 		};
@@ -86,10 +113,10 @@ describe('plySplat', () => {
 			splat.colour
 		);
 		near([...p.subarray(16, 19)].map(Math.exp), splat.scale);
-		expect(1 / (1 + Math.exp(-p[15]))).toBeCloseTo(splat.alpha, 5);
+		expect(1 / (1 + Math.exp(-p[15]))).toBeCloseTo(splat.opacity, 5);
 	});
 
-	it('keeps the opacity of a solid and of an empty splat finite', () => {
+	it('keeps the opacity of a solid, an empty and a flat-topped splat finite', () => {
 		const p = new Float32Array(FLOATS);
 		const splat = {
 			position: [0, 0, 0],
@@ -97,8 +124,8 @@ describe('plySplat', () => {
 			scale: [1, 1, 1],
 			colour: [0, 0, 0]
 		};
-		for (const alpha of [0, 1]) {
-			plySplat({ ...splat, alpha, sh: Array(9).fill(0) } as SplatValues, [0, 0], p);
+		for (const opacity of [0, 1, 40]) {
+			plySplat({ ...splat, opacity, sh: Array(9).fill(0) } as SplatValues, [0, 0], p);
 			expect(Number.isFinite(p[15])).toBe(true);
 		}
 	});

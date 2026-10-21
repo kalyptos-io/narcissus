@@ -9,11 +9,11 @@ import { validate } from './validate.ts';
 const USAGE = `usage: narcissus <command>
 
   validate <world> [--deep]
-      checks every file of a world; --deep also reads every pack whole
+      checks every file of a world; --deep also reads every pack whole and checks its tree
   info <world>
-      what a world holds
-  export <world> -o <file.ply> [--level <g>] [--box <w,s,e,n>]
-      one level as a gaussian-splat ply
+      what a world holds, band by band
+  export <world> -o <file.ply> [--detail <m>] [--box <w,s,e,n>]
+      a cut as a gaussian-splat ply: nodes of radius over m metres refined, 0 every fit splat
   publish <folder> <remote:path> [--url <world.json url>] [-- <rclone flags>]
       uploads a world with rclone, unit files first
 
