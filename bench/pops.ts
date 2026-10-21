@@ -34,6 +34,7 @@ async function frame(pose: Pose, dt: number) {
 		planned: s.planned,
 		projected: s.projected,
 		planMs: s.planMs,
+		detail: s.detail,
 		capacity: s.capacity,
 		resident: s.pages.resident,
 		missing: s.missing,
