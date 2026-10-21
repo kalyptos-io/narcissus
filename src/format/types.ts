@@ -12,9 +12,9 @@ export interface PageRow {
 	g: number;
 	i: number;
 	j: number;
+	/** TOP_PAGE for a root's top page */
+	flags: number;
 	count: number;
-	/** first splat of quadrants 1, 2, 3 */
-	quadrants: [number, number, number];
 	/** extent box, unit-local ENU metres: min x, y, z then max x, y, z */
 	box: Float32Array;
 	offset: number;
@@ -48,7 +48,7 @@ export interface WorldRoot extends UnitKey {
 }
 
 export interface World {
-	version: 1;
+	version: 2;
 	/** names of the horizontal system and the height datum; a reader does not interpret them */
 	crs: string;
 	height: string;
@@ -59,10 +59,21 @@ export interface World {
 	extra: Record<string, unknown>;
 }
 
+/** what a cut needs of a page's nodes; centres, radii and links are of its parents, in node order */
+export interface PageNodes {
+	/** per node, its family's count, 0 for none */
+	counts: Uint8Array<ArrayBuffer>;
+	/** 3 per parent, unit-local metres */
+	centres: Float32Array<ArrayBuffer>;
+	/** per parent, metres: the mean of its scales, grown with opacity past 1 */
+	radii: Float32Array<ArrayBuffer>;
+	/** per parent, as docs/format.md packs it */
+	links: Uint32Array<ArrayBuffer>;
+}
+
 /** a page decoded for the pool, colour corrected */
 export interface DecodedPage {
 	count: number;
-	quadrants: [number, number, number];
 	/** GEOMETRY_WORDS per splat, layout in spec.ts */
 	geometry: Uint32Array<ArrayBuffer>;
 	/** COLOUR_WORDS per splat */
@@ -71,4 +82,5 @@ export interface DecodedPage {
 	params: Float32Array<ArrayBuffer>;
 	/** per cluster of CLUSTER splats: min x, y, z, max x, y, z of their extents, relative to the origin */
 	clusters: Float32Array<ArrayBuffer>;
+	nodes: PageNodes;
 }

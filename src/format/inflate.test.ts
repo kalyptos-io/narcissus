@@ -29,7 +29,7 @@ describe('inflate', () => {
 
 describe('unwrap', () => {
 	it('returns the inflated body of a prefixed file', async () => {
-		const body = await unwrap(await prefixed('GMIX', 1, Uint8Array.of(1, 2, 3)), 'GMIX', '.idx');
+		const body = await unwrap(await prefixed('GMIX', 2, Uint8Array.of(1, 2, 3)), 'GMIX', '.idx', 2);
 		expect(new Uint8Array(body.buffer, body.byteOffset, body.byteLength)).toEqual(
 			Uint8Array.of(1, 2, 3)
 		);
@@ -37,14 +37,14 @@ describe('unwrap', () => {
 
 	it('names a wrong magic, another version and a broken stream', async () => {
 		const body = Uint8Array.of(1, 2, 3);
-		await expect(unwrap(await prefixed('GMCL', 1, body), 'GMIX', '.idx')).rejects.toThrow(
+		await expect(unwrap(await prefixed('GMCL', 2, body), 'GMIX', '.idx', 2)).rejects.toThrow(
 			'not a .idx file'
 		);
-		await expect(unwrap(Uint8Array.of(71, 77), 'GMIX', '.idx')).rejects.toThrow('not a .idx');
-		await expect(unwrap(await prefixed('GMIX', 2, body), 'GMIX', '.idx')).rejects.toThrow(
-			'.idx version 2'
+		await expect(unwrap(Uint8Array.of(71, 77), 'GMIX', '.idx', 2)).rejects.toThrow('not a .idx');
+		await expect(unwrap(await prefixed('GMIX', 1, body), 'GMIX', '.idx', 2)).rejects.toThrow(
+			'.idx version 1; narcissus reads 2'
 		);
-		const broken = Uint8Array.of(71, 77, 73, 88, 1, 0, 0, 0, 0xff, 0xff, 0xff);
-		await expect(unwrap(broken, 'GMIX', '.idx')).rejects.toThrow('not a valid deflate stream');
+		const broken = Uint8Array.of(71, 77, 73, 88, 2, 0, 0, 0, 0xff, 0xff, 0xff);
+		await expect(unwrap(broken, 'GMIX', '.idx', 2)).rejects.toThrow('not a valid deflate stream');
 	});
 });

@@ -1,30 +1,30 @@
 import { describe, expect, it } from 'vitest';
 import type { Col } from './types.ts';
 import { sampleCol } from './col.ts';
-import { encodePage, mulberry32, type Splats } from './encode.ts';
+import { encodePage, mulberry32, type Nodes } from './encode.ts';
 import { deflate, inflate } from './inflate.ts';
 import { decodePage, pageHeader, readSplat } from './page.ts';
-import { C0, CLUSTER, PAGE_SIDE, PARAMS } from './spec.ts';
+import { C0, CLUSTER, PAGE_HEADER, PAGE_SIDE, PARAMS, PLANES } from './spec.ts';
 
 const PAGE = { g: 1, i: 3, j: 5 };
 const SIDE = PAGE_SIDE * 2 ** PAGE.g;
-const MID = [(PAGE.i + 0.5) * SIDE, (PAGE.j + 0.5) * SIDE];
 
-/** n splats in PAGE, none within 1% of a side of its quadrant lines */
-function splats(n: number, seed: number, sh = true): Splats {
+/** n nodes in PAGE, a fifth of them flat-topped past opacity 1 and every third a parent */
+function nodes(n: number, seed: number, sh = true): Nodes {
 	const rnd = mulberry32(seed);
-	const away = (u: number) => (u < 0.5 ? u * 0.98 : 0.02 + u * 0.98) * SIDE;
-	const s: Splats = {
+	const s: Nodes = {
 		count: n,
 		position: new Float64Array(n * 3),
 		rotation: new Float32Array(n * 4),
 		scale: new Float32Array(n * 3),
-		alpha: new Float32Array(n),
+		opacity: new Float32Array(n),
 		dc: new Float32Array(n * 3),
-		sh: sh ? new Float32Array(n * 9) : null
+		sh: sh ? new Float32Array(n * 9) : null,
+		children: new Uint8Array(n),
+		links: new Uint32Array(n)
 	};
 	for (let t = 0; t < n; t++) {
-		const [x, y] = [PAGE.i, PAGE.j].map((k) => k * SIDE + away(rnd()));
+		const [x, y] = [PAGE.i, PAGE.j].map((k) => (k + rnd()) * SIDE);
 		s.position.set([x, y, 40 * rnd()], t * 3);
 		const q = [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5, rnd() - 0.5];
 		const norm = Math.hypot(...q);
@@ -33,37 +33,26 @@ function splats(n: number, seed: number, sh = true): Splats {
 			t * 4
 		);
 		s.scale.set([-5 + 4 * rnd(), -5 + 4 * rnd(), -5 + 4 * rnd()], t * 3);
-		s.alpha[t] = rnd();
+		s.opacity[t] = rnd() < 0.2 ? 1 + 49 * rnd() : rnd();
 		s.dc.set([3 * rnd() - 1.5, 3 * rnd() - 1.5, 3 * rnd() - 1.5], t * 3);
 		if (s.sh) {
 			for (let m = 0; m < 9; m++) s.sh[t * 9 + m] = 0.6 * rnd() - 0.3;
+		}
+		if (t % 3 === 0) {
+			s.children[t] = 1 + Math.floor(255 * rnd());
+			s.links[t] = Math.floor(2 ** 32 * rnd());
 		}
 	}
 	return s;
 }
 
-async function roundTrip(s: Splats) {
+async function roundTrip(s: Nodes) {
 	const { payload, row } = encodePage(s, PAGE);
 	return { payload, row, page: decodePage(await inflate(await deflate(payload)), null) };
 }
 
-/** the input splat closest to p */
-function nearest(s: Splats, p: number[]): number {
-	let best = 0;
-	let distance = Infinity;
-	for (let t = 0; t < s.count; t++) {
-		const d = Math.hypot(...p.map((v, a) => v - s.position[t * 3 + a]));
-		if (d < distance) {
-			distance = d;
-			best = t;
-		}
-	}
-	return best;
-}
-
-function quadrantOf(p: ArrayLike<number>): number {
-	return (p[0] >= MID[0] ? 1 : 0) + 2 * (p[1] >= MID[1] ? 1 : 0);
-}
+/** half an ulp of binary16 at v */
+const halfStep = (v: number) => Math.max(Math.abs(v) * 2 ** -11, 2 ** -25);
 
 const IDENTITY = [
 	[1, 0, 0],
@@ -82,66 +71,68 @@ function rotate(q: number[], v: number[]): number[] {
 	];
 }
 
-/** 3-sigma half extents along x, y, z */
-function sigma3(rotation: number[], scale: number[]): number[] {
-	const axes = IDENTITY.map((axis, k) => rotate(rotation, axis).map((v) => v * scale[k]));
-	return [0, 1, 2].map((a) => 3 * Math.hypot(axes[0][a], axes[1][a], axes[2][a]));
+/** k(α)-sigma half extents along x, y, z */
+function reach(rotation: number[], scale: number[], opacity: number): number[] {
+	const k = opacity <= 1 ? 3 : Math.sqrt(2 * Math.log(255 * opacity));
+	const axes = IDENTITY.map((axis, c) => rotate(rotation, axis).map((v) => v * scale[c]));
+	return [0, 1, 2].map((a) => k * Math.hypot(axes[0][a], axes[1][a], axes[2][a]));
 }
 
 describe('decodePage', () => {
 	it('reads back every field of an encoded page within the format steps', async () => {
-		const s = splats(1000, 1);
+		const s = nodes(1000, 1);
 		const { page } = await roundTrip(s);
 		const p = page.params;
-		const worst = { position: 0, rotation: 0, scale: 0, alpha: 0, colour: 0, sh: 0 };
-		const matched = new Set<number>();
+		const worst = { position: 0, rotation: 0, scale: 0, opacity: 0, colour: 0, sh: 0 };
 		for (let t = 0; t < page.count; t++) {
 			const v = readSplat(page, t);
-			const u = nearest(s, v.position);
-			matched.add(u);
 			for (let a = 0; a < 3; a++) {
-				const position = Math.abs(v.position[a] - s.position[u * 3 + a]);
+				const position = Math.abs(v.position[a] - s.position[t * 3 + a]);
 				worst.position = Math.max(worst.position, position / (p[PARAMS.step + a] / 2 + 1e-6));
-				const scale = Math.abs(v.scale[a] / Math.exp(s.scale[u * 3 + a]) - 1);
+				const scale = Math.abs(v.scale[a] / Math.exp(s.scale[t * 3 + a]) - 1);
 				worst.scale = Math.max(worst.scale, scale / 0.015);
-				const colour = Math.abs(v.colour[a] - 0.5 - C0 * s.dc[u * 3 + a]);
+				const colour = Math.abs(v.colour[a] - 0.5 - C0 * s.dc[t * 3 + a]);
 				const dcRange = p[PARAMS.dcMax + a] - p[PARAMS.dcMin + a];
 				worst.colour = Math.max(worst.colour, colour / ((C0 * dcRange) / 255));
 			}
-			const dot = v.rotation.reduce((sum, c, m) => sum + c * s.rotation[u * 4 + m], 0);
+			const dot = v.rotation.reduce((sum, c, m) => sum + c * s.rotation[t * 4 + m], 0);
 			worst.rotation = Math.max(worst.rotation, Math.acos(Math.min(1, Math.abs(dot))) / 0.01);
-			worst.alpha = Math.max(worst.alpha, Math.abs(v.alpha - s.alpha[u]) / (1 / 510 + 1e-7));
+			const opacity = Math.abs(v.opacity - s.opacity[t]);
+			worst.opacity = Math.max(worst.opacity, opacity / halfStep(s.opacity[t]));
 			for (let m = 0; m < 9; m++) {
-				const sh = Math.abs(v.sh[m] - s.sh![u * 9 + m]);
+				const sh = Math.abs(v.sh[m] - s.sh![t * 9 + m]);
 				worst.sh = Math.max(worst.sh, sh / ((2 * p[PARAMS.shScale + m]) / 127));
 			}
 		}
-		expect(matched.size).toBe(s.count);
 		for (const [field, ratio] of Object.entries(worst)) {
 			expect(ratio, field).toBeLessThanOrEqual(1);
 		}
 	});
 
-	it('orders splats by quadrant at the boundaries the header names', async () => {
-		const s = splats(2000, 2);
-		const { payload, row, page } = await roundTrip(s);
-		expect(pageHeader(payload)).toEqual({ count: 2000, quadrants: row.quadrants });
-		expect(page.quadrants).toEqual(row.quadrants);
-		const counts = [0, 0, 0, 0];
-		for (let t = 0; t < s.count; t++) counts[quadrantOf(s.position.subarray(t * 3))]++;
-		const starts = [0, ...page.quadrants, page.count];
-		const misplaced: number[] = [];
-		for (let k = 0; k < 4; k++) {
-			expect(starts[k + 1] - starts[k]).toBe(counts[k]);
-			for (let t = starts[k]; t < starts[k + 1]; t++) {
-				if (quadrantOf(readSplat(page, t).position) !== k) misplaced.push(t);
-			}
+	it('gives the cut every count, and the centre, radius and link of every parent', async () => {
+		const s = nodes(2000, 2);
+		const { payload, page } = await roundTrip(s);
+		const parents = s.children.filter((count) => count > 0).length;
+		expect(pageHeader(payload)).toEqual({ count: 2000, parents });
+		const { counts, centres, radii, links } = page.nodes;
+		expect(counts).toEqual(s.children);
+		expect(links).toEqual(s.links.filter((_, t) => s.children[t] > 0));
+		expect(radii.length).toBe(parents);
+		for (let t = 0, k = 0; t < s.count; t++) {
+			if (!s.children[t]) continue;
+			const v = readSplat(page, t);
+			[...centres.subarray(3 * k, 3 * k + 3)].forEach((c, a) =>
+				expect(c).toBeCloseTo(v.position[a], 3)
+			);
+			const mean = (v.scale[0] + v.scale[1] + v.scale[2]) / 3;
+			const grown = v.opacity <= 1 ? mean : mean * (1 + 2.8 * (v.opacity - 1));
+			expect(radii[k] / grown).toBeCloseTo(1, 5);
+			k++;
 		}
-		expect(misplaced).toEqual([]);
 	});
 
-	it('boxes every cluster tightly around its splats 3-sigma extents', async () => {
-		const { page } = await roundTrip(splats(1000, 3));
+	it('boxes every cluster tightly around its splats k(α)-sigma extents', async () => {
+		const { page } = await roundTrip(nodes(1000, 3));
 		const clusters = Math.ceil(1000 / CLUSTER);
 		expect(page.clusters.length).toBe(clusters * 6);
 		const origin = page.params.subarray(PARAMS.origin, PARAMS.origin + 3);
@@ -149,7 +140,7 @@ describe('decodePage', () => {
 			const box = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
 			for (let t = c * CLUSTER; t < Math.min((c + 1) * CLUSTER, page.count); t++) {
 				const v = readSplat(page, t);
-				const e = sigma3(v.rotation, v.scale);
+				const e = reach(v.rotation, v.scale, v.opacity);
 				for (let a = 0; a < 3; a++) {
 					box[a] = Math.min(box[a], v.position[a] - origin[a] - e[a]);
 					box[3 + a] = Math.max(box[3 + a], v.position[a] - origin[a] + e[a]);
@@ -164,7 +155,7 @@ describe('decodePage', () => {
 		const n = 6;
 		const values = Float32Array.from({ length: 12 * n * n }, (_, k) => 0.05 * Math.sin(k));
 		const col: Col = { n, pitch: 50, margin: 25, values };
-		const { payload } = encodePage(splats(1500, 4), PAGE);
+		const { payload } = encodePage(nodes(1500, 4), PAGE);
 		const plain = decodePage(payload, null);
 		const corrected = decodePage(payload, col);
 		expect(corrected.geometry).toEqual(plain.geometry);
@@ -191,7 +182,7 @@ describe('decodePage', () => {
 	});
 
 	it('keeps sh at zero on a page without a codebook or colour field', () => {
-		const page = decodePage(encodePage(splats(300, 5, false), PAGE).payload, null);
+		const page = decodePage(encodePage(nodes(300, 5, false), PAGE).payload, null);
 		expect([...page.params.subarray(PARAMS.shScale)]).toEqual(new Array(9).fill(0));
 		expect(readSplat(page, 17).sh).toEqual(new Array(9).fill(0));
 	});
@@ -200,7 +191,7 @@ describe('decodePage', () => {
 		const n = 4;
 		const values = Float32Array.from({ length: 12 * n * n }, (_, k) => 0.04 * Math.cos(k));
 		const col: Col = { n, pitch: 80, margin: 35, values };
-		const page = decodePage(encodePage(splats(300, 5, false), PAGE).payload, col);
+		const page = decodePage(encodePage(nodes(300, 5, false), PAGE).payload, col);
 		const sample = new Float32Array(12);
 		let worst = 0;
 		for (let t = 0; t < page.count; t++) {
@@ -215,39 +206,50 @@ describe('decodePage', () => {
 		expect(worst).toBeLessThanOrEqual(1);
 	});
 
-	it('rejects a payload whose size does not match its header', () => {
-		const { payload } = encodePage(splats(100, 6), PAGE);
+	it('rejects a payload whose size or parents do not match its header', () => {
+		const { payload } = encodePage(nodes(100, 6), PAGE);
 		expect(() => decodePage(payload.subarray(0, payload.length - 1), null)).toThrow(
 			'its header needs'
 		);
 		expect(() => pageHeader(payload.subarray(0, 100))).toThrow('shorter than its header');
+		const s = nodes(100, 6, false);
+		const { payload: plain } = encodePage(s, PAGE);
+		// one parent more in the children plane than the header and the link planes hold
+		plain[PAGE_HEADER + PLANES.children * 100 + 1] = 4;
+		expect(() => decodePage(plain, null)).toThrow('page holds 35 parents, its header 34');
 	});
 });
 
 describe('encodePage', () => {
-	it('boxes the page around every centre less and plus 3 sigma', () => {
-		const s = splats(500, 7);
+	it('boxes the page around every centre less and plus k(α) sigma', () => {
+		const s = nodes(500, 7);
 		const { row } = encodePage(s, PAGE);
 		const box = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
 		for (let t = 0; t < s.count; t++) {
 			const rotation = [...s.rotation.subarray(t * 4, t * 4 + 4)];
-			const e = sigma3(
-				rotation,
-				[0, 1, 2].map((a) => Math.exp(s.scale[t * 3 + a]))
-			);
+			const scale = [0, 1, 2].map((a) => Math.exp(s.scale[t * 3 + a]));
+			const e = reach(rotation, scale, s.opacity[t]);
 			for (let a = 0; a < 3; a++) {
 				box[a] = Math.min(box[a], s.position[t * 3 + a] - e[a]);
 				box[3 + a] = Math.max(box[3 + a], s.position[t * 3 + a] + e[a]);
 			}
 		}
-		expect(row).toMatchObject({ ...PAGE, count: 500, offset: 0, length: 0 });
+		expect(row).toMatchObject({ ...PAGE, flags: 0, count: 500, offset: 0, length: 0 });
 		[...row.box].forEach((v, k) => expect(v).toBeCloseTo(box[k], 3));
+	});
+
+	it('rounds opacity to the nearest binary16 up to 1000', async () => {
+		const s = nodes(6, 10);
+		s.opacity.set([0, 1e-6, 0.5, 1, 999.7, 5000]);
+		const { page } = await roundTrip(s);
+		const read = Array.from({ length: 6 }, (_, t) => readSplat(page, t).opacity);
+		expect(read).toEqual([0, Math.fround(1.013278961181640625e-6), 0.5, 1, 999.5, 1000]);
 	});
 
 	it('builds an exact codebook up to 2048 vectors and a smaller one past it', () => {
 		const size = (payload: Uint8Array) => new DataView(payload.buffer).getUint16(16, true);
-		expect(size(encodePage(splats(1000, 8), PAGE).payload)).toBe(1000);
-		const { payload } = encodePage(splats(3000, 9), PAGE);
+		expect(size(encodePage(nodes(1000, 8), PAGE).payload)).toBe(1000);
+		const { payload } = encodePage(nodes(3000, 9), PAGE);
 		expect(size(payload)).toBeGreaterThan(0);
 		expect(size(payload)).toBeLessThanOrEqual(2048);
 		const page = decodePage(payload, null);

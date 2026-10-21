@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Idx } from './types.ts';
 import { encodeIdx, wrap } from './encode.ts';
 import { parseIdx, parseUnitPath, unitPath } from './idx.ts';
-import { IDX_MAGIC } from './spec.ts';
+import { IDX_MAGIC, VERSION } from './spec.ts';
 
 const idx: Idx = {
 	level: 1,
@@ -16,8 +16,8 @@ const idx: Idx = {
 			g: 2,
 			i: 0,
 			j: 1,
+			flags: 0,
 			count: 1000,
-			quadrants: [200, 500, 700],
 			box: Float32Array.of(1.5, 126.25, -3, 124, 249.5, 30.75),
 			offset: 0,
 			length: 4000
@@ -26,8 +26,8 @@ const idx: Idx = {
 			g: 2,
 			i: 1,
 			j: 1,
+			flags: 1,
 			count: 7,
-			quadrants: [0, 7, 7],
 			box: Float32Array.of(125, 125, 2, 250, 250, 4),
 			offset: 4000,
 			length: 90
@@ -48,6 +48,12 @@ describe('parseIdx', () => {
 		expect(await parseIdx(await encodeIdx(idx))).toEqual(idx);
 	});
 
+	it('refuses a version 1 index', async () => {
+		await expect(parseIdx(await wrap(new Uint8Array(40), IDX_MAGIC, 1))).rejects.toThrow(
+			'.idx version 1; narcissus reads 2'
+		);
+	});
+
 	it('reads an all-zero colour hash as no colour', async () => {
 		const plain = { ...idx, col: null, children: [], descendants: [] };
 		expect(await parseIdx(await encodeIdx(plain))).toEqual(plain);
@@ -56,8 +62,8 @@ describe('parseIdx', () => {
 	it('rejects a body whose counts do not match its size', async () => {
 		const body = new Uint8Array(40);
 		new DataView(body.buffer).setUint16(32, 1, true);
-		await expect(parseIdx(await wrap(body, IDX_MAGIC))).rejects.toThrow(
-			'.idx holds 40 bytes, its counts need 92'
+		await expect(parseIdx(await wrap(body, IDX_MAGIC, VERSION))).rejects.toThrow(
+			'.idx holds 40 bytes, its counts need 80'
 		);
 	});
 });

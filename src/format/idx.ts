@@ -1,6 +1,14 @@
 import type { Idx, PageRow, UnitKey } from './types.ts';
 import { unwrap } from './inflate.ts';
-import { CHILD_BYTES, DESCENDANT_BYTES, IDX_HEADER, IDX_MAGIC, LEAF, ROW_BYTES } from './spec.ts';
+import {
+	CHILD_BYTES,
+	DESCENDANT_BYTES,
+	IDX_HEADER,
+	IDX_MAGIC,
+	LEAF,
+	ROW_BYTES,
+	VERSION
+} from './spec.ts';
 
 function hashAt(view: DataView, offset: number): string {
 	let hex = '';
@@ -11,29 +19,25 @@ function hashAt(view: DataView, offset: number): string {
 	return hex;
 }
 
-/** a 52-byte page row at offset, as in .idx and the .pack table */
+/** a 40-byte page row at offset, as in .idx and the .pack table */
 export function rowAt(view: DataView, offset: number): PageRow {
 	const box = new Float32Array(6);
-	for (let k = 0; k < 6; k++) box[k] = view.getFloat32(offset + 20 + 4 * k, true);
+	for (let k = 0; k < 6; k++) box[k] = view.getFloat32(offset + 8 + 4 * k, true);
 	return {
 		g: view.getUint8(offset),
 		i: view.getUint8(offset + 1),
 		j: view.getUint8(offset + 2),
+		flags: view.getUint8(offset + 3),
 		count: view.getUint32(offset + 4, true),
-		quadrants: [
-			view.getUint32(offset + 8, true),
-			view.getUint32(offset + 12, true),
-			view.getUint32(offset + 16, true)
-		],
 		box,
-		offset: view.getUint32(offset + 44, true),
-		length: view.getUint32(offset + 48, true)
+		offset: view.getUint32(offset + 32, true),
+		length: view.getUint32(offset + 36, true)
 	};
 }
 
-/** throws an Error naming the fault when the bytes are not a v1 .idx */
+/** throws an Error naming the fault when the bytes are not a v2 .idx */
 export async function parseIdx(bytes: Uint8Array): Promise<Idx> {
-	const v = await unwrap(bytes, IDX_MAGIC, '.idx');
+	const v = await unwrap(bytes, IDX_MAGIC, '.idx', VERSION);
 	if (v.byteLength < IDX_HEADER) throw new Error('.idx header is cut off');
 	const rows = v.getUint16(32, true);
 	const children = v.getUint8(34);

@@ -1,21 +1,24 @@
 // writers from the spec, for tests and synthetic worlds
 
 import type { Col, Idx, PageRow } from './types.ts';
+import { toHalf } from './half.ts';
 import { deflate } from './inflate.ts';
-import { extents } from './page.ts';
+import { extents, sigmas } from './page.ts';
 import {
 	BASE_PLANES,
 	CHILD_BYTES,
 	COL_CHANNELS,
 	COL_HEADER,
 	COL_MAGIC,
+	COL_VERSION,
 	DESCENDANT_BYTES,
 	IDX_HEADER,
 	IDX_MAGIC,
+	LINK_PLANES,
+	OPACITY_MAX,
 	PACK_MAGIC,
 	PACK_TRAILER,
 	PAGE_HEADER,
-	PAGE_SIDE,
 	PLANES,
 	PREFIX,
 	ROW_BYTES,
@@ -23,26 +26,35 @@ import {
 	VERSION
 } from './spec.ts';
 
-export { deflate };
+export { deflate, toHalf };
 
-/** splats of one page in unit-local ENU */
-export interface Splats {
+/** nodes of one page in unit-local ENU, in the order the page stores them */
+export interface Nodes {
 	count: number;
-	/** 3 per splat, metres */
+	/** 3 per node, metres */
 	position: Float64Array;
-	/** 4 per splat, w x y z */
+	/** 4 per node, w x y z */
 	rotation: Float32Array;
-	/** 3 per splat, log metres */
+	/** 3 per node, log metres */
 	scale: Float32Array;
-	/** 0..1 */
-	alpha: Float32Array;
-	/** 3 per splat, f_dc */
+	/** 0..1000 */
+	opacity: Float32Array;
+	/** 3 per node, f_dc */
 	dc: Float32Array;
-	/** 9 per splat, sh[c][m] at 3c + m, or null for none */
+	/** 9 per node, sh[c][m] at 3c + m, or null for none */
 	sh: Float32Array | null;
+	/** per node, its family's count, 0 for none */
+	children: Uint8Array;
+	/** per node, its family's link (see link()); read only where children is not 0 */
+	links: Uint32Array;
 }
 
-/** metres, the position step at level 0 */
+/** a parent's link to the family of count nodes from start in page row of unit, 0 for the same unit and 1 + q for its child at q */
+export function link(unit: number, row: number, start: number): number {
+	return ((unit << 29) | (row << 20) | start) >>> 0;
+}
+
+/** metres, the position step at band 0 */
 const STEP = 0.0005;
 /** codebook entries at most */
 const BOOK = 2048;
@@ -59,20 +71,6 @@ function code(v: number, lo: number, hi: number): number {
 /** linear i8 code of v over [-scale, scale] */
 function i8(v: number, scale: number): number {
 	return scale > 0 ? clamp(Math.round((v / scale) * 127), -127, 127) : 0;
-}
-
-/** low 10 bits of v spread to every third bit */
-function spread(v: number): number {
-	v &= 0x3ff;
-	v = (v | (v << 16)) & 0x030000ff;
-	v = (v | (v << 8)) & 0x0300f00f;
-	v = (v | (v << 4)) & 0x030c30c3;
-	return (v | (v << 2)) & 0x09249249;
-}
-
-/** 3d morton code of the top 10 bits of u16 coordinates */
-function morton(x: number, y: number, z: number): number {
-	return spread(x >> 6) | (spread(y >> 6) << 1) | (spread(z >> 6) << 2);
 }
 
 /** per-coefficient max magnitude, f32 as the header stores it */
@@ -137,13 +135,13 @@ function codebook(
 
 /** the inflated payload of page (g, i, j) and its row (offset and length 0) */
 export function encodePage(
-	splats: Splats,
-	page: { g: number; i: number; j: number }
+	nodes: Nodes,
+	page: { g: number; i: number; j: number; flags?: number }
 ): {
 	payload: Uint8Array;
 	row: PageRow;
 } {
-	const { count: n, position, rotation, scale, alpha, dc, sh } = splats;
+	const { count: n, position, rotation, scale, opacity, dc, sh, children, links } = nodes;
 
 	// ranges
 	const lo = [Infinity, Infinity, Infinity];
@@ -152,6 +150,7 @@ export function encodePage(
 	const scaleHi = [...hi];
 	const dcLo = [...lo];
 	const dcHi = [...hi];
+	let m = 0;
 	for (let t = 0; t < n; t++) {
 		for (let a = 0; a < 3; a++) {
 			lo[a] = Math.min(lo[a], position[t * 3 + a]);
@@ -161,6 +160,7 @@ export function encodePage(
 			dcLo[a] = Math.min(dcLo[a], dc[t * 3 + a]);
 			dcHi[a] = Math.max(dcHi[a], dc[t * 3 + a]);
 		}
+		if (children[t] > 0) m++;
 	}
 	const floor = STEP * 2 ** page.g;
 	const origin = Float32Array.from(lo);
@@ -173,82 +173,74 @@ export function encodePage(
 		}
 	}
 
-	// order: quadrant, then 3d morton of the centre
-	const side = PAGE_SIDE * 2 ** page.g;
-	const midX = (page.i + 0.5) * side;
-	const midY = (page.j + 0.5) * side;
-	const quadrant = new Uint8Array(n);
-	const key = new Float64Array(n);
-	for (let t = 0; t < n; t++) {
-		const a = position[t * 3] >= midX ? 1 : 0;
-		const b = position[t * 3 + 1] >= midY ? 1 : 0;
-		quadrant[t] = a + 2 * b;
-		key[t] = quadrant[t] * 2 ** 30 + morton(q[t * 3], q[t * 3 + 1], q[t * 3 + 2]);
-	}
-	const order = Uint32Array.from({ length: n }, (_, t) => t).sort((a, b) => key[a] - key[b]);
-	const quadrants: [number, number, number] = [0, 0, 0];
-	for (let k = 1; k < 4; k++) quadrants[k - 1] = quadrant.filter((v) => v < k).length;
-
 	const shMax = sh ? shScale(sh, n) : new Float32Array(SH_COEFFS);
 	const { book, labels } = sh ? codebook(sh, n, shMax) : { book: null, labels: null };
 	const k = book ? book.length / SH_COEFFS : 0;
 	const planes = BASE_PLANES + (k > 0 ? 2 : 0);
-	const payload = new Uint8Array(PAGE_HEADER + planes * n + k * SH_COEFFS);
+	const linkPlanes = PAGE_HEADER + planes * n;
+	const payload = new Uint8Array(linkPlanes + LINK_PLANES * m + k * SH_COEFFS);
 	const view = new DataView(payload.buffer);
 	view.setUint32(0, n, true);
-	quadrants.forEach((v, c) => view.setUint32(4 + 4 * c, v, true));
+	view.setUint32(4, m, true);
 	view.setUint16(16, k, true);
 	const floats = [...origin, ...step, ...scaleLo, ...scaleHi, ...dcLo, ...dcHi, ...shMax];
 	floats.forEach((v, f) => view.setFloat32(20 + 4 * f, v, true));
 
-	// planes, and the extent box: centres less and plus 3 sigma per axis
+	// planes, and the extent box: centres less and plus k(α) sigma per axis
 	const plane = (p: number) => PAGE_HEADER + p * n;
 	const box = new Float32Array([...lo, ...hi]);
 	const r = new Float64Array(4);
 	const e = new Float64Array(3);
 	const prev = [0, 0, 0];
-	for (let t = 0; t < n; t++) {
-		const s = order[t];
+	for (let t = 0, s = 0; t < n; t++) {
 		for (let a = 0; a < 3; a++) {
-			const delta = ((q[s * 3 + a] - prev[a]) << 16) >> 16;
+			const delta = ((q[t * 3 + a] - prev[a]) << 16) >> 16;
 			const zigzag = delta < 0 ? -2 * delta - 1 : 2 * delta;
-			prev[a] = q[s * 3 + a];
+			prev[a] = q[t * 3 + a];
 			payload[plane(PLANES.position + 2 * a) + t] = zigzag & 0xff;
 			payload[plane(PLANES.position + 2 * a + 1) + t] = zigzag >> 8;
 		}
-		payload[plane(PLANES.alpha) + t] = clamp(Math.round(alpha[s] * 255), 0, 255);
+		const half = toHalf(Math.min(opacity[t], OPACITY_MAX));
+		payload[plane(PLANES.opacityLow) + t] = half & 0xff;
+		payload[plane(PLANES.opacityHigh) + t] = half >> 8;
+		payload[plane(PLANES.children) + t] = children[t];
+		if (children[t] > 0) {
+			for (let b = 0; b < LINK_PLANES; b++) payload[linkPlanes + b * m + s] = links[t] >>> (8 * b);
+			s++;
+		}
 
-		const norm = Math.hypot(...rotation.subarray(s * 4, s * 4 + 4));
-		for (let m = 0; m < 4; m++) r[m] = rotation[s * 4 + m] / norm;
+		const norm = Math.hypot(...rotation.subarray(t * 4, t * 4 + 4));
+		for (let c = 0; c < 4; c++) r[c] = rotation[t * 4 + c] / norm;
 		let big = 0;
-		for (let m = 1; m < 4; m++) if (Math.abs(r[m]) > Math.abs(r[big])) big = m;
+		for (let c = 1; c < 4; c++) if (Math.abs(r[c]) > Math.abs(r[big])) big = c;
 		const sign = r[big] < 0 ? -1 : 1;
 		payload[plane(PLANES.rotationIndex) + t] = big;
-		for (let m = 0, c = 0; m < 4; m++) {
-			if (m === big) continue;
-			const b = Math.round(((sign * r[m]) / Math.SQRT2 + 0.5) * 255);
-			payload[plane(PLANES.rotation + c++) + t] = clamp(b, 0, 255);
+		for (let c = 0, out = 0; c < 4; c++) {
+			if (c === big) continue;
+			const b = Math.round(((sign * r[c]) / Math.SQRT2 + 0.5) * 255);
+			payload[plane(PLANES.rotation + out++) + t] = clamp(b, 0, 255);
 		}
 
 		for (let a = 0; a < 3; a++) {
-			payload[plane(PLANES.scale + a) + t] = code(scale[s * 3 + a], scaleLo[a], scaleHi[a]);
-			payload[plane(PLANES.dc + a) + t] = code(dc[s * 3 + a], dcLo[a], dcHi[a]);
+			payload[plane(PLANES.scale + a) + t] = code(scale[t * 3 + a], scaleLo[a], scaleHi[a]);
+			payload[plane(PLANES.dc + a) + t] = code(dc[t * 3 + a], dcLo[a], dcHi[a]);
 		}
 		if (labels) {
-			payload[plane(PLANES.label) + t] = labels[s] & 0xff;
-			payload[plane(PLANES.label + 1) + t] = labels[s] >> 8;
+			payload[plane(PLANES.label) + t] = labels[t] & 0xff;
+			payload[plane(PLANES.label + 1) + t] = labels[t] >> 8;
 		}
 
-		const [s0, s1, s2] = [0, 1, 2].map((a) => Math.exp(scale[s * 3 + a]));
-		extents(r, s0, s1, s2, e);
+		const [s0, s1, s2] = [0, 1, 2].map((a) => Math.exp(scale[t * 3 + a]));
+		extents(r, s0, s1, s2, sigmas(opacity[t]), e);
 		for (let a = 0; a < 3; a++) {
-			box[a] = Math.min(box[a], position[s * 3 + a] - e[a]);
-			box[3 + a] = Math.max(box[3 + a], position[s * 3 + a] + e[a]);
+			box[a] = Math.min(box[a], position[t * 3 + a] - e[a]);
+			box[3 + a] = Math.max(box[3 + a], position[t * 3 + a] + e[a]);
 		}
 	}
-	if (book) payload.set(new Uint8Array(book.buffer), plane(planes));
+	if (book) payload.set(new Uint8Array(book.buffer), linkPlanes + LINK_PLANES * m);
 
-	const row = { g: page.g, i: page.i, j: page.j, count: n, quadrants, box, offset: 0, length: 0 };
+	const { g, i, j, flags = 0 } = page;
+	const row = { g, i, j, flags, count: n, box, offset: 0, length: 0 };
 	return { payload, row };
 }
 
@@ -256,15 +248,15 @@ function writeRow(view: DataView, at: number, row: PageRow): void {
 	view.setUint8(at, row.g);
 	view.setUint8(at + 1, row.i);
 	view.setUint8(at + 2, row.j);
+	view.setUint8(at + 3, row.flags);
 	view.setUint32(at + 4, row.count, true);
-	row.quadrants.forEach((v, c) => view.setUint32(at + 8 + 4 * c, v, true));
-	row.box.forEach((v, c) => view.setFloat32(at + 20 + 4 * c, v, true));
-	view.setUint32(at + 44, row.offset, true);
-	view.setUint32(at + 48, row.length, true);
+	row.box.forEach((v, c) => view.setFloat32(at + 8 + 4 * c, v, true));
+	view.setUint32(at + 32, row.offset, true);
+	view.setUint32(at + 36, row.length, true);
 }
 
-/** blobs (deflated payloads) as a .pack; fills each row's offset and length */
-export function encodePack(pages: { row: PageRow; blob: Uint8Array }[]): Uint8Array {
+/** blobs (deflated payloads) in row order as a .pack of fit splats; fills each row's offset and length */
+export function encodePack(pages: { row: PageRow; blob: Uint8Array }[], fit: number): Uint8Array {
 	const table = pages.reduce((sum, p) => sum + p.blob.length, 0);
 	const out = new Uint8Array(table + pages.length * ROW_BYTES + PACK_TRAILER);
 	const view = new DataView(out.buffer);
@@ -279,10 +271,11 @@ export function encodePack(pages: { row: PageRow; blob: Uint8Array }[]): Uint8Ar
 		writeRow(view, at, row);
 		at += ROW_BYTES;
 	}
-	view.setUint32(at, table, true);
-	view.setUint32(at + 4, pages.length, true);
-	writeMagic(out, at + 8, PACK_MAGIC);
-	view.setUint16(at + 12, VERSION, true);
+	view.setUint32(at, fit, true);
+	view.setUint32(at + 4, table, true);
+	view.setUint32(at + 8, pages.length, true);
+	writeMagic(out, at + 12, PACK_MAGIC);
+	view.setUint16(at + 16, VERSION, true);
 	return out;
 }
 
@@ -295,11 +288,11 @@ function unhex(hash: string): Uint8Array {
 }
 
 /** magic, version and the deflated body */
-export async function wrap(body: Uint8Array, magic: string): Promise<Uint8Array> {
+export async function wrap(body: Uint8Array, magic: string, version: number): Promise<Uint8Array> {
 	const z = await deflate(body);
 	const out = new Uint8Array(PREFIX + z.length);
 	writeMagic(out, 0, magic);
-	new DataView(out.buffer).setUint16(4, VERSION, true);
+	new DataView(out.buffer).setUint16(4, version, true);
 	out.set(z, PREFIX);
 	return out;
 }
@@ -339,7 +332,7 @@ export async function encodeIdx(idx: Idx): Promise<Uint8Array> {
 		body.set(unhex(d.idx), at + 3);
 		at += DESCENDANT_BYTES;
 	}
-	return wrap(body, IDX_MAGIC);
+	return wrap(body, IDX_MAGIC, VERSION);
 }
 
 export async function encodeCol(col: Col): Promise<Uint8Array> {
@@ -364,7 +357,7 @@ export async function encodeCol(col: Col): Promise<Uint8Array> {
 			}
 		}
 	}
-	return wrap(body, COL_MAGIC);
+	return wrap(body, COL_MAGIC, COL_VERSION);
 }
 
 /** 16 hex digits naming bytes; readers never check it, so synthetic worlds need not use blake2b */
