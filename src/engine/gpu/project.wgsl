@@ -60,7 +60,7 @@ fn rotate(q: vec4f) -> mat3x3f {
 // false when splat t of the cluster cannot show; else its Projected and sort key
 fn shown(cluster: Cluster, t: u32, dest: ptr<function, Projected>, key: ptr<function, u32>) -> bool {
 	let rec = cluster.slot + t;
-	if ((cut[rec >> 5u] & (1u << (rec & 31u))) == 0u) {
+	if (!inCut(cut[rec >> 5u], rec)) {
 		return false;
 	}
 	let page = pages[cluster.page];

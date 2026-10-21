@@ -51,8 +51,7 @@ struct Cluster {
 	page: u32,
 	// first pool record
 	slot: u32,
-	// index in the page of its first splat
-	first: u32,
+	pad: u32,
 	count: u32,
 	// extents relative to the page origin
 	boxMin: vec3f,
@@ -87,6 +86,11 @@ fn fraction(word: u32, bit: u32) -> f32 {
 // the opacity f16 in the high half of a geometry record's last word
 fn opacityOf(g: vec4u) -> f32 {
 	return unpack2x16float(g.w).y;
+}
+
+// whether the cut draws pool record rec; word is cut[rec >> 5u]
+fn inCut(word: u32, rec: u32) -> bool {
+	return (word & (1u << (rec & 31u))) != 0u;
 }
 
 // sigmas out to where a splat of opacity covers under 1/255, at most 3 unless flat-topped past 1

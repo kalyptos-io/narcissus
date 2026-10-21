@@ -12,11 +12,23 @@ export type {
 	WorldRoot
 } from './types.ts';
 export { directory, parseWorld } from './world.ts';
-export { namedUnits, parseIdx, parseUnitPath, rowAt, unitPath } from './idx.ts';
+export {
+	childKey,
+	evenBits,
+	morton,
+	namedUnits,
+	parseIdx,
+	parseUnitPath,
+	quadrantOf,
+	rowAt,
+	unitKey,
+	unitPath
+} from './idx.ts';
 export { parseCol, sampleCol } from './col.ts';
 export {
 	decodePage,
 	extents,
+	linkRanks,
 	linkRow,
 	linkStart,
 	linkUnit,

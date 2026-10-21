@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { unitPath, type DecodedPage, type Idx, type UnitKey } from '../../format/index.ts';
+import { unitKey, unitPath, type DecodedPage, type Idx, type UnitKey } from '../../format/index.ts';
 import type { Pool } from '../gpu/pool.ts';
 import { hash, unit as full, world } from '../world/test-tree.ts';
-import { Tree, unitKey, type PageNode, type Wanted } from '../world/tree.ts';
+import { Tree, type PageNode, type Wanted } from '../world/tree.ts';
 import { FEED, Feed, type FeedOptions, type Wants } from './feed.ts';
 import { Missing } from '../../ports.ts';
 import type { Loader } from './loader.ts';

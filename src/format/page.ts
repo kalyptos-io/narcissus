@@ -78,6 +78,13 @@ export const linkRow = (link: number) => (link >>> 20) & 0x1ff;
 /** a link's unit: 0 for its own, 1 + q for its child at quadrant q */
 export const linkUnit = (link: number) => link >>> 29;
 
+/** each node's index into its page's links: the parents before it in the page */
+export function linkRanks(counts: Uint8Array): Uint32Array {
+	const ranks = new Uint32Array(counts.length);
+	for (let t = 1; t < counts.length; t++) ranks[t] = ranks[t - 1] + (counts[t - 1] ? 1 : 0);
+	return ranks;
+}
+
 function header(payload: Uint8Array): DataView {
 	if (payload.length < PAGE_HEADER) throw new Error('page payload is shorter than its header');
 	return new DataView(payload.buffer, payload.byteOffset, payload.byteLength);

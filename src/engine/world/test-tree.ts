@@ -1,6 +1,7 @@
 // .idx fixtures for the tests that grow a tree
 
 import {
+	evenBits,
 	LEAF,
 	PAGE_SIDE,
 	TOP_PAGE,
@@ -54,7 +55,7 @@ export function unit(
 		const page = PAGE_SIDE * 2 ** g;
 		const span = side / page;
 		for (let m = 0; m < span * span; m++) {
-			const [i, j] = [even(m), even(m >> 1)];
+			const [i, j] = [evenBits(m), evenBits(m >> 1)];
 			add(g, i, j, 0, Float32Array.of(i * page, j * page, 0, (i + 1) * page, (j + 1) * page, 5));
 		}
 	}
@@ -86,11 +87,4 @@ export function unit(
 		})),
 		descendants
 	};
-}
-
-/** the even bits of m packed together: column then row of morton code m and m >> 1 */
-function even(m: number): number {
-	let v = 0;
-	for (let b = 0; b < 8; b++) v |= ((m >> (2 * b)) & 1) << b;
-	return v;
 }

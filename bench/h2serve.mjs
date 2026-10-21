@@ -43,10 +43,49 @@ function throttle(mbps) {
 export const files = (site, world, link) => {
 	const pace = link && throttle(link.mbps);
 	const generated = world === 'synthetic' ? synthetic() : null;
+	/**
+	 * a body over the link, typed by the extension of name
+	 * @param {any} res
+	 * @param {{ status: number, name: string, stream: Readable, length: number, range: string | null, inWorld: boolean }} body
+	 */
+	const send = (res, { status, name, stream, length, range, inWorld }) => {
+		res.writeHead(status, {
+			'content-type': types[extname(name)] ?? 'application/octet-stream',
+			'content-length': length,
+			'cache-control': 'no-store',
+			// the app bench's site fetches the world from another port
+			'access-control-allow-origin': '*',
+			...(range && { 'content-range': range })
+		});
+		// worker fetches miss the page's resource timing, so world bytes are logged here
+		/** @param {unknown} error */
+		const done = (error) => {
+			if (!error && inWorld) link?.served.push([Date.now(), length]);
+		};
+		if (pace) pipeline(stream, pace, res, done);
+		else pipeline(stream, res, done);
+	};
 	return async (req, res) => {
 		const path = decodeURIComponent(new URL(req.url ?? '/', 'https://local').pathname);
 		const inWorld = path.startsWith('/world/');
-		if (inWorld && generated) return serveSynthetic(generated, path.slice(7), req, res, link);
+		const range = byteRange(req.headers.range ?? null);
+		if (inWorld && generated) {
+			const bytes = await generate(generated, path.slice(7), range);
+			if (link) await sleep(link.rttMs);
+			if (!bytes) {
+				res.writeHead(404);
+				return res.end();
+			}
+			return send(res, {
+				status: range ? 206 : 200,
+				name: path,
+				stream: Readable.from([Buffer.from(bytes)]),
+				length: bytes.length,
+				// the generator does not know a pack's size without building it, and the engine reads none
+				range: range && `bytes ${range[0]}-${range[1]}/*`,
+				inWorld
+			});
+		}
 		const [root, rest] = inWorld ? [world, path.slice(6)] : [site, path];
 		// a leading slash keeps normalize from climbing out of the root
 		const file = join(root, normalize(rest));
@@ -62,69 +101,34 @@ export const files = (site, world, link) => {
 			return res.end();
 		}
 		const { size } = stat;
-		const range = byteRange(req.headers.range ?? null);
 		const [start, end] = range ? [range[0], Math.min(range[1], size - 1)] : [0, size - 1];
 		if (range && start > end) {
 			res.writeHead(416, { 'content-range': `bytes */${size}` });
 			return res.end();
 		}
-		const length = end - start + 1;
-		res.writeHead(range ? 206 : 200, {
-			'content-type': types[extname(file)] ?? 'application/octet-stream',
-			'content-length': length,
-			'cache-control': 'no-store',
-			// the app bench's site fetches the world from another port
-			'access-control-allow-origin': '*',
-			...(range && { 'content-range': `bytes ${start}-${end}/${size}` })
+		send(res, {
+			status: range ? 206 : 200,
+			name: file,
+			stream: createReadStream(file, range ? { start, end } : undefined),
+			length: end - start + 1,
+			range: range && `bytes ${start}-${end}/${size}`,
+			inWorld
 		});
-		const stream = createReadStream(file, range ? { start, end } : undefined);
-		// worker fetches miss the page's resource timing, so world bytes are logged here
-		/** @param {unknown} error */
-		const done = (error) => {
-			if (!error && inWorld) link?.served.push([Date.now(), length]);
-		};
-		if (pace) pipeline(stream, pace, res, done);
-		else pipeline(stream, res, done);
 	};
 };
 
 /**
- * a file of the synthetic world, a range of it as the engine asks: whole pages only
+ * a file of the synthetic world, a range of it as the engine asks: whole pages only; undefined when missing
  * @param {import('../src/ports.ts').Fetch} generated
  * @param {string} path
- * @param {{ headers: { range?: string } }} req
- * @param {any} res
- * @param {Link} [link]
+ * @param {[number, number] | null} range
  */
-async function serveSynthetic(generated, path, req, res, link) {
-	const range = byteRange(req.headers.range ?? null);
-	let bytes;
+async function generate(generated, path, range) {
 	try {
-		bytes = await generated(`synthetic/${path}`, range && [range[0], range[1] + 1]);
+		return await generated(`synthetic/${path}`, range && [range[0], range[1] + 1]);
 	} catch (error) {
 		if (!(error instanceof Missing)) throw error;
 	}
-	if (link) await sleep(link.rttMs);
-	if (!bytes) {
-		res.writeHead(404);
-		return res.end();
-	}
-	res.writeHead(range ? 206 : 200, {
-		'content-type': types[extname(path)] ?? 'application/octet-stream',
-		'content-length': bytes.length,
-		'cache-control': 'no-store',
-		'access-control-allow-origin': '*',
-		// the generator does not know a pack's size without building it, and the engine reads none
-		...(range && { 'content-range': `bytes ${range[0]}-${range[1]}/*` })
-	});
-	const pace = link && throttle(link.mbps);
-	/** @param {unknown} error */
-	const done = (error) => {
-		if (!error) link?.served.push([Date.now(), bytes.length]);
-	};
-	const stream = Readable.from([Buffer.from(bytes)]);
-	if (pace) pipeline(stream, pace, res, done);
-	else pipeline(stream, res, done);
 }
 
 /**

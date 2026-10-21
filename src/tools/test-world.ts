@@ -12,7 +12,15 @@ import {
 	mulberry32,
 	type Nodes
 } from '../format/encode.ts';
-import { contentHash, TOP_PAGE, unitPath, type PageRow, type UnitKey } from '../format/index.ts';
+import {
+	childKey,
+	contentHash,
+	TOP_PAGE,
+	unitKey,
+	unitPath,
+	type PageRow,
+	type UnitKey
+} from '../format/index.ts';
 
 const E = 723000;
 const N = 6177000;
@@ -99,7 +107,6 @@ export async function write(dir: string, units: Unit[]): Promise<string[]> {
 	};
 	// children first, so a parent names their hashes
 	const names = new Map<string, string>();
-	const key = ({ level, e, n }: UnitKey) => `${level}/${e}/${n}`;
 	for (const unit of [...units].reverse()) {
 		let offset = 0;
 		const pages = await Promise.all(unit.pages.map(async (page) => encoded(page)));
@@ -127,7 +134,6 @@ export async function write(dir: string, units: Unit[]): Promise<string[]> {
 			col = contentHash(bytes);
 			put(unitPath(unit, col, 'col'), bytes);
 		}
-		const half = 250 * 2 ** (unit.level - 1);
 		const idx = await encodeIdx({
 			level: unit.level,
 			e: unit.e,
@@ -138,14 +144,12 @@ export async function write(dir: string, units: Unit[]): Promise<string[]> {
 			rows,
 			children: unit.children.map((q) => ({
 				quadrant: q,
-				idx: names.get(
-					key({ level: unit.level - 1, e: unit.e + (q & 1) * half, n: unit.n + (q >> 1) * half })
-				)!
+				idx: names.get(unitKey(childKey(unit, q)))!
 			})),
 			descendants: []
 		});
 		const idxName = contentHash(idx);
-		names.set(key(unit), idxName);
+		names.set(unitKey(unit), idxName);
 		put(unitPath(unit, idxName, 'idx'), idx);
 	}
 	const [root] = units;
@@ -155,7 +159,12 @@ export async function write(dir: string, units: Unit[]): Promise<string[]> {
 		height: 'DVR90',
 		leaf: 250,
 		roots: [
-			{ level: root.level, e: root.e, n: root.n, idx: unitPath(root, names.get(key(root))!, 'idx') }
+			{
+				level: root.level,
+				e: root.e,
+				n: root.n,
+				idx: unitPath(root, names.get(unitKey(root))!, 'idx')
+			}
 		],
 		extent: { e: [E, E + 500], n: [N, N + 500], h: [0, 20] }
 	};

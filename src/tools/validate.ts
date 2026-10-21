@@ -1,14 +1,14 @@
 // a world checked as a reader meets it: every file there and well formed, and when deep what its name says and the tree its pages make
 
 import {
+	childKey,
 	contentHash,
 	decodePage,
 	directory,
 	extents,
 	inflate,
-	linkRow,
-	linkStart,
-	linkUnit,
+	linkRanks,
+	morton,
 	PACK_MAGIC,
 	PACK_TRAILER,
 	PAGE_SIDE,
@@ -20,16 +20,16 @@ import {
 	rowAt,
 	sigmas,
 	TOP_PAGE,
+	unitKey,
 	unitPath,
 	VERSION,
 	LEAF,
 	type DecodedPage,
 	type Idx,
-	type PageRow,
-	type UnitKey
+	type PageRow
 } from '../format/index.ts';
 import { Missing, type Fetch } from '../ports.ts';
-import { openWorld, walk, type Unit } from './walk.ts';
+import { linked, openWorld, walk, type Family, type Unit } from './walk.ts';
 
 export interface Fault {
 	/** relative to world.json */
@@ -55,15 +55,11 @@ export interface ValidateOptions {
 	progress?: (report: Report) => void;
 }
 
-/** a family by its page row, first node and count, in the unit that stores it */
-type Family = [row: number, start: number, count: number];
-
 /** what the deep check carries from a unit to its children: the families its links reach in each, by unit key; null where it could not tell */
 type Incoming = Map<string, Family[] | null>;
 
 const reason = (error: unknown) => (error instanceof Error ? error.message : String(error));
 const told = (error: unknown) => (error instanceof Missing ? 'is missing' : reason(error));
-const keyOf = ({ level, e, n }: UnitKey) => `${level}/${e}/${n}`;
 
 export async function validate(
 	source: Fetch,
@@ -80,7 +76,7 @@ export async function validate(
 		return report;
 	}
 	const base = directory(worldUrl);
-	const roots = new Set(world.roots.map(keyOf));
+	const roots = new Set(world.roots.map(unitKey));
 	const incoming: Incoming = new Map();
 	const check = async (unit: Unit) => {
 		await checkUnit(source, base, unit, roots, options.deep ? incoming : null, report);
@@ -130,7 +126,7 @@ async function checkUnit(
 	if (named.level !== idx.level || named.e !== idx.e || named.n !== idx.n) {
 		fault(path, `holds unit ${idx.level}/${idx.e}/${idx.n}`);
 	}
-	const root = roots.has(keyOf(idx));
+	const root = roots.has(unitKey(idx));
 	const order = rowOrder(idx, root);
 	if (order) fault(path, order);
 	const deep = incoming !== null;
@@ -228,13 +224,10 @@ function checkTree(
 	incoming: Incoming,
 	fault: (what: string) => void
 ): void {
-	const key = keyOf(idx);
+	const key = unitKey(idx);
 	const given = incoming.get(key);
 	incoming.delete(key);
-	const half = (LEAF * 2 ** idx.level) / 2;
-	const childKeys = [0, 1, 2, 3].map((q) =>
-		keyOf({ level: idx.level - 1, e: idx.e + (q & 1) * half, n: idx.n + (q >> 1) * half })
-	);
+	const childKeys = [0, 1, 2, 3].map((q) => unitKey(childKey(idx, q)));
 	const named = new Set(idx.children.map((child) => child.quadrant));
 	const unknown = () => {
 		for (const q of named) incoming.set(childKeys[q], null);
@@ -245,14 +238,7 @@ function checkTree(
 	}
 	const decoded = pages as DecodedPage[];
 	const reached = decoded.map((page) => new Uint8Array(page.count));
-	const ranks = decoded.map((page) => {
-		const rank = new Int32Array(page.count).fill(-1);
-		let s = 0;
-		page.nodes.counts.forEach((count, t) => {
-			if (count) rank[t] = s++;
-		});
-		return rank;
-	});
+	const ranks = decoded.map((page) => linkRanks(page.nodes.counts));
 	// faults a page and kind, counted so a broken page is one line
 	const counted = new Map<string, number>();
 	const tally = (what: string) => counted.set(what, (counted.get(what) ?? 0) + 1);
@@ -273,13 +259,10 @@ function checkTree(
 				tally(`${name(r)} has nodes reached more than once`);
 				continue;
 			}
-			const children = page.nodes.counts[t];
-			if (!children) continue;
-			const link = page.nodes.links[ranks[r][t]];
-			const family: Family = [linkRow(link), linkStart(link), children];
-			const unit = linkUnit(link);
-			if (unit === 0) stack.push(family);
-			else if (unit <= 4 && named.has(unit - 1)) handed[unit - 1].push(family);
+			if (!page.nodes.counts[t]) continue;
+			const { family, quadrant } = linked(page.nodes, ranks[r], t);
+			if (quadrant < 0) stack.push(family);
+			else if (quadrant < 4 && named.has(quadrant)) handed[quadrant].push(family);
 			else tally(`${name(r)} links to a child unit it does not name`);
 		}
 	}
@@ -303,12 +286,6 @@ function sameRow(a: PageRow, b: PageRow): boolean {
 		a.length === b.length &&
 		a.box.every((v, c) => v === b.box[c])
 	);
-}
-
-function morton(i: number, j: number): number {
-	let m = 0;
-	for (let b = 0; b < 8; b++) m |= (((i >> b) & 1) << (2 * b)) | (((j >> b) & 1) << (2 * b + 1));
-	return m;
 }
 
 /** the rows of a pack's page table in order and its trailer's fit splats, through read(start, end) */

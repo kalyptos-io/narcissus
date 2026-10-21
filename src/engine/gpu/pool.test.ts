@@ -173,7 +173,7 @@ describe('Pool', () => {
 			const slot = list[c];
 			const w = slot * CLUSTER_WORDS;
 			const count = c === 0 ? CLUSTER : 300 - CLUSTER;
-			const entry = [table, slot * CLUSTER, c * CLUSTER, count];
+			const entry = [table, slot * CLUSTER, 0, count];
 			expect(slice(clusters.u, w, 4)).toEqual(entry);
 			expect(slice(clusters.f, w + 4, 3)).toEqual(slice(p.clusters, c * 6, 3));
 			expect(slice(clusters.f, w + 8, 3)).toEqual(slice(p.clusters, c * 6 + 3, 3));
@@ -254,7 +254,11 @@ describe('Pool', () => {
 		const list = (await read(device, pool.list)).u;
 		const clusters = (await read(device, pool.clusters)).u;
 		const [a, b] = [list[0] * CLUSTER_WORDS, list[1] * CLUSTER_WORDS];
-		expect([clusters[a], clusters[a + 2], clusters[b + 2]]).toEqual([clusters[b], 0, CLUSTER]);
+		expect([clusters[a], clusters[a + 3], clusters[b + 3]]).toEqual([
+			clusters[b],
+			CLUSTER,
+			300 - CLUSTER
+		]);
 
 		pool.setOrigin([5, -3, 1]);
 		const pages = await read(device, pool.pages);

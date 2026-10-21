@@ -2,6 +2,8 @@
 
 import { Missing, type Fetch } from '../../ports.ts';
 import {
+	evenBits,
+	morton,
 	parseUnitPath,
 	sigmas,
 	unitPath,
@@ -127,8 +129,8 @@ export function latticeNodes(key: UnitKey, row: number): PageNodes {
 	const centres = new Float32Array(3 * parents);
 	const links = new Uint32Array(parents);
 	for (let t = 0; t < parents; t++) {
-		const cx = even(t);
-		const cy = even(t >> 1);
+		const cx = evenBits(t);
+		const cy = evenBits(t >> 1);
 		const x = (i * GRID + cx + 0.5) * cell;
 		const y = (j * GRID + cy + 0.5) * cell;
 		centres.set([x, y, ground(key.e + x, key.n + y)], 3 * t);
@@ -179,26 +181,13 @@ function bands(level: number): number[] {
 /** pages a side of band g in a unit of level */
 const span = (level: number, g: number) => (LEAF * 2 ** level) / (PAGE_SIDE * 2 ** g);
 
-/** the morton code of (x, y), x in the even bits */
-function morton(x: number, y: number): number {
-	let m = 0;
-	for (let b = 0; b < 10; b++) m |= (((x >> b) & 1) << (2 * b)) | (((y >> b) & 1) << (2 * b + 1));
-	return m;
-}
-
-/** the even bits of m packed together: column then row of morton code m and m >> 1 */
-function even(m: number): number {
-	let v = 0;
-	for (let b = 0; b < 10; b++) v |= ((m >> (2 * b)) & 1) << b;
-	return v;
-}
-
 /** a unit's pages in row order: each band fine to coarse, morton within */
 function pagesOf(level: number): Page[] {
 	const pages: Page[] = [];
 	for (const g of bands(level)) {
 		const pagesSide = span(level, g);
-		for (let m = 0; m < pagesSide * pagesSide; m++) pages.push({ g, i: even(m), j: even(m >> 1) });
+		for (let m = 0; m < pagesSide * pagesSide; m++)
+			pages.push({ g, i: evenBits(m), j: evenBits(m >> 1) });
 	}
 	return pages;
 }
@@ -354,8 +343,8 @@ function payload(key: UnitKey, page: Page): Uint8Array {
 	const children = new Uint8Array(count);
 	const links = new Uint32Array(count);
 	for (let t = 0; t < count; t++) {
-		const cx = even(t);
-		const cy = even(t >> 1);
+		const cx = evenBits(t);
+		const cy = evenBits(t >> 1);
 		const x = (i * GRID + cx + 0.5 + JITTER * (2 * next() - 1)) * cell;
 		const y = (j * GRID + cy + 0.5 + JITTER * (2 * next() - 1)) * cell;
 		const z = ground(key.e + x, key.n + y);

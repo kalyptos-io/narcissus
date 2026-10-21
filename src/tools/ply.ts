@@ -2,18 +2,16 @@
 
 import {
 	C0,
+	childKey,
 	decodePage,
 	directory,
 	inflate,
-	linkRow,
-	linkStart,
-	linkUnit,
+	linkRanks,
 	parseCol,
 	parseIdx,
-	radius,
 	readSplat,
+	unitKey,
 	unitPath,
-	LEAF,
 	type Col,
 	type DecodedPage,
 	type Idx,
@@ -22,7 +20,7 @@ import {
 	type World
 } from '../format/index.ts';
 import type { Fetch } from '../ports.ts';
-import { openWorld } from './walk.ts';
+import { linked, openWorld, type Family } from './walk.ts';
 
 export interface PlyOptions {
 	/** metres: a node of larger radius is refined into its family; 0, every fit splat, when left out */
@@ -32,9 +30,6 @@ export interface PlyOptions {
 	/** told once at the end when nodes past opacity 1 were written at the most a ply holds */
 	warn?: (message: string) => void;
 }
-
-/** a family by its page row, first node and count, in the unit that stores it */
-type Family = [row: number, start: number, count: number];
 
 const PROPERTIES = [
 	...['x', 'y', 'z'],
@@ -85,9 +80,9 @@ export async function* exportPly(
 	const { detail = 0, box, warn } = options;
 	const world = await openWorld(source, worldUrl);
 	const base = directory(worldUrl);
-	// the cut twice: once to count it for the header, once to write it
+	// the cut twice: once to count it for the header, without colour, once to write it
 	let count = 0;
-	for await (const { picks } of cut(source, base, world, detail, box)) count += picks.length;
+	for await (const { picks } of cut(source, base, world, detail, box, false)) count += picks.length;
 	const origin = [
 		Math.floor(box ? box[0] : world.extent.e[0]),
 		Math.floor(box ? box[1] : world.extent.n[0])
@@ -108,7 +103,7 @@ export async function* exportPly(
 
 	const width = PROPERTIES.length;
 	let flat = 0;
-	for await (const { idx, page, picks } of cut(source, base, world, detail, box)) {
+	for await (const { idx, page, picks } of cut(source, base, world, detail, box, true)) {
 		const part = new Float32Array(picks.length * width);
 		picks.forEach((t, k) => {
 			const splat = readSplat(page, t);
@@ -123,13 +118,14 @@ export async function* exportPly(
 	if (flat) warn?.(`${flat} nodes past opacity 1 written at opacity 1: a ply holds no flat tops`);
 }
 
-/** the nodes of a cut a page at a time: every node of radius detail or less whose ancestors are all larger, from the roots' top pages down */
+/** the nodes of a cut a page at a time: every node of radius detail or less whose ancestors are all larger, from the roots' top pages down; colour applies each unit's .col */
 async function* cut(
 	source: Fetch,
 	base: string,
 	world: World,
 	detail: number,
-	box: PlyOptions['box']
+	box: PlyOptions['box'],
+	colour: boolean
 ): AsyncGenerator<{ idx: Idx; page: DecodedPage; picks: number[] }> {
 	const touches = (idx: Idx, { box: b }: PageRow) =>
 		!box ||
@@ -147,23 +143,18 @@ async function* cut(
 		for (const { path, families } of level) {
 			const idx = await parseIdx(await source(base + path, null));
 			const pack = base + unitPath(idx, idx.pack, 'pack');
-			const col: Col | null = idx.col
-				? await parseCol(await source(base + unitPath(idx, idx.col, 'col'), null))
-				: null;
-			// each page with the parents before each node, its link's index
+			const col: Col | null =
+				colour && idx.col
+					? await parseCol(await source(base + unitPath(idx, idx.col, 'col'), null))
+					: null;
 			const pages = new Map<number, { page: DecodedPage; ranks: Uint32Array }>();
 			const load = async (r: number) => {
 				const row = idx.rows[r];
 				const blob = await source(pack, [row.offset, row.offset + row.length]);
 				const page = decodePage(await inflate(blob), col);
-				const ranks = new Uint32Array(page.count);
-				for (let t = 1; t < page.count; t++) {
-					ranks[t] = ranks[t - 1] + (page.nodes.counts[t - 1] ? 1 : 0);
-				}
-				pages.set(r, { page, ranks });
+				pages.set(r, { page, ranks: linkRanks(page.nodes.counts) });
 				return pages.get(r)!;
 			};
-			const half = (LEAF * 2 ** idx.level) / 2;
 			const picks = new Map<number, number[]>();
 			const last = idx.rows.length - 1;
 			const stack: Family[] = families ?? [[last, 0, idx.rows[last].count]];
@@ -172,27 +163,19 @@ async function* cut(
 				if (!touches(idx, idx.rows[r])) continue;
 				const { page, ranks } = pages.get(r) ?? (await load(r));
 				for (let t = start; t < start + count; t++) {
-					const children = page.nodes.counts[t];
-					const { scale, opacity } = readSplat(page, t);
-					if (!children || radius(scale[0], scale[1], scale[2], opacity) <= detail) {
+					if (!page.nodes.counts[t] || page.nodes.radii[ranks[t]] <= detail) {
 						if (!picks.has(r)) picks.set(r, []);
 						picks.get(r)!.push(t);
 						continue;
 					}
-					const link = page.nodes.links[ranks[t]];
-					const family: Family = [linkRow(link), linkStart(link), children];
-					const q = linkUnit(link) - 1;
-					if (q < 0) {
+					const { family, quadrant } = linked(page.nodes, ranks, t);
+					if (quadrant < 0) {
 						stack.push(family);
 						continue;
 					}
-					const key = {
-						level: idx.level - 1,
-						e: idx.e + (q & 1) * half,
-						n: idx.n + (q >> 1) * half
-					};
-					const name = `${key.level}/${key.e}/${key.n}`;
-					const named = idx.children.find((child) => child.quadrant === q);
+					const key = childKey(idx, quadrant);
+					const name = unitKey(key);
+					const named = idx.children.find((child) => child.quadrant === quadrant);
 					if (!named) throw new Error(`${path} links to a child it does not name`);
 					if (!below.has(name))
 						below.set(name, { path: unitPath(key, named.idx, 'idx'), families: [] });

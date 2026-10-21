@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { unitPath } from '../../format/index.ts';
+import { unitKey, unitPath } from '../../format/index.ts';
 import { hash, unit, world } from './test-tree.ts';
-import { Tree, unitKey, type UnitNode } from './tree.ts';
+import { Tree, type UnitNode } from './tree.ts';
 
 const E = 720000;
 const N = 6176000;

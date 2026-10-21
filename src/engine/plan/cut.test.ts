@@ -2,10 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { link, mulberry32 } from '../../format/encode.ts';
 import type { PageNodes } from '../../format/index.ts';
 import { slots } from '../gpu/layout.ts';
-import { view as viewMatrix } from '../math/mat4.ts';
-import { CAP, Cut, T_MIN, type CutResult, type CutView, type UnitInfo } from './cut.ts';
-
-const rad = Math.PI / 180;
+import { CAP, Cut, cutView, T_MIN, type CutResult, type CutView, type UnitInfo } from './cut.ts';
 
 /** a node of the test forest, world metres */
 interface Node {
@@ -154,17 +151,8 @@ function forest(seed: number, fits = 300): Forest {
 }
 
 /** a 1920 x 1080 view at the viewer's fov from eye, yaw and pitch in degrees */
-function look(eye: [number, number, number], yaw = 0, pitch = -60): CutView {
-	const m = viewMatrix(new Float64Array(16), [0, 0, 0], yaw * rad, pitch * rad);
-	const p11 = 1 / Math.tan(22.5 * rad);
-	return {
-		eye,
-		rotation: [m[0], m[4], m[8], m[1], m[5], m[9], m[2], m[6], m[10]],
-		p00: (p11 * 1080) / 1920,
-		p11,
-		width: 1920,
-		height: 1080
-	};
+function look([e, n, h]: [number, number, number], yaw = 0, pitch = -60): CutView {
+	return cutView({ e, n, h, yaw, pitch, fov: 45 }, 1920, 1080, 1);
 }
 
 /** the size the cut gives a node, from format.md's radius and the brief's weight */
@@ -196,7 +184,7 @@ function cutOf(f: Forest, resident: (page: number) => boolean = () => true): Cut
 function drawn(results: CutResult[]): Map<number, Uint32Array> {
 	const masks = new Map<number, Uint32Array>();
 	for (const { masks: changed } of results) {
-		for (const [id, mask] of changed) {
+		for (const { id, mask } of changed) {
 			if (mask.length) masks.set(id, mask);
 			else masks.delete(id);
 		}
@@ -353,7 +341,7 @@ describe('cut', () => {
 		cut.evict(fine);
 		const after = cut.plan(request);
 		expect(after.load).toEqual([fine]);
-		expect(after.masks.some(([id]) => id === fine)).toBe(false);
+		expect(after.masks.some(({ id }) => id === fine)).toBe(false);
 		const masks = drawn([before, after]);
 		masks.delete(fine);
 		f.tops.forEach((top) => walk(top, masks, (id) => id !== fine));

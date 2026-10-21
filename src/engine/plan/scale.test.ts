@@ -1,11 +1,10 @@
 import { setFlagsFromString } from 'node:v8';
 import { runInNewContext } from 'node:vm';
 import { describe, expect, it } from 'vitest';
-import { parseIdx, parseWorld } from '../../format/index.ts';
-import { view as viewMatrix } from '../math/mat4.ts';
+import { parseIdx, parseWorld, unitKey } from '../../format/index.ts';
 import { ground, latticeNodes, synthetic } from '../stream/synthetic.ts';
 import { Tree } from '../world/tree.ts';
-import { Cut, unitInfo, unitKey, type CutView } from './cut.ts';
+import { Cut, cutView, unitInfo, type CutView } from './cut.ts';
 
 const BASE = 'synthetic/';
 /** copenhagen */
@@ -18,7 +17,6 @@ const ALTITUDE = 300;
 const IDX_PER_STEP = 8;
 /** the pool of a 1M budget */
 const OPTIONS = { budget: 1_000_000, capacity: 2_500_000 };
-const rad = Math.PI / 180;
 const MiB = 2 ** 20;
 
 // the heap is read after a collection, so garbage timing cannot pass for growth
@@ -27,16 +25,7 @@ const gc = runInNewContext('gc') as () => void;
 
 /** a 1920 x 1080 view west, 30 degrees down, at the viewer's fov */
 function look(e: number, n: number, h: number): CutView {
-	const m = viewMatrix(new Float64Array(16), [0, 0, 0], -90 * rad, -30 * rad);
-	const p11 = 1 / Math.tan(22.5 * rad);
-	return {
-		eye: [e, n, h],
-		rotation: [m[0], m[4], m[8], m[1], m[5], m[9], m[2], m[6], m[10]],
-		p00: (p11 * 1080) / 1920,
-		p11,
-		width: 1920,
-		height: 1080
-	};
+	return cutView({ e, n, h, yaw: -90, pitch: -30, fov: 45 }, 1920, 1080, 1);
 }
 
 function p95(values: number[]): number {

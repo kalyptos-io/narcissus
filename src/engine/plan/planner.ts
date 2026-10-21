@@ -1,8 +1,8 @@
 // the main thread's side of the plan worker
 
-import type { PageNodes } from '../../format/index.ts';
+import { unitKey, type PageNodes } from '../../format/index.ts';
 import type { UnitNode } from '../world/tree.ts';
-import { unitInfo, unitKey, type CutRequest, type CutResult } from './cut.ts';
+import { unitInfo, type CutRequest, type CutResult } from './cut.ts';
 import type { PlanMessage, PlanReply } from './worker.ts';
 // inline, so the built engine is one file that needs no path to its worker
 import PlanWorker from './worker.ts?worker&inline';

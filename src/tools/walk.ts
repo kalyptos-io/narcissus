@@ -1,12 +1,16 @@
-// the units of a world, from its roots down
+// the units of a world from its roots down, and the families a page's links reach
 
 import {
 	directory,
+	linkRow,
+	linkStart,
+	linkUnit,
 	namedUnits,
 	parseIdx,
 	parseWorld,
 	unitPath,
 	type Idx,
+	type PageNodes,
 	type World
 } from '../format/index.ts';
 import type { Fetch } from '../ports.ts';
@@ -17,6 +21,22 @@ export interface Unit {
 	idx: Idx;
 	/** the .idx file as read */
 	bytes: Uint8Array;
+}
+
+/** a family by its page row, first node and count, in the unit that stores it */
+export type Family = [row: number, start: number, count: number];
+
+/** the family parent t of a page refines into, and the quadrant of the child unit storing it, -1 for its own; ranks from linkRanks */
+export function linked(
+	nodes: PageNodes,
+	ranks: Uint32Array,
+	t: number
+): { family: Family; quadrant: number } {
+	const link = nodes.links[ranks[t]];
+	return {
+		family: [linkRow(link), linkStart(link), nodes.counts[t]],
+		quadrant: linkUnit(link) - 1
+	};
 }
 
 /** .idx files read at a time */

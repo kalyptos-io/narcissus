@@ -368,7 +368,6 @@ export class Pool {
 			words.fill(0, w, w + CLUSTER_WORDS);
 			words[w] = entry.table;
 			words[w + 1] = slots[c] * CLUSTER;
-			words[w + 2] = c * CLUSTER;
 			words[w + 3] = Math.max(0, Math.min(CLUSTER, page.count - c * CLUSTER));
 			for (let k = 0; k < 3; k++) {
 				floats[w + 4 + k] = page.clusters[c * 6 + k];

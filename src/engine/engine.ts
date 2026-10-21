@@ -21,7 +21,7 @@ import {
 	view as viewMatrix,
 	type Mat4
 } from './math/mat4.ts';
-import { CAP, type CutResult, type CutView } from './plan/cut.ts';
+import { CAP, cutView, type CutResult, type CutView } from './plan/cut.ts';
 import { Planner } from './plan/planner.ts';
 import type { Fetch } from '../ports.ts';
 import type { Frame, Host, Plugin, Post, Shade } from './plugin.ts';
@@ -253,7 +253,6 @@ class GpuEngine implements Engine {
 	#origin: Point = [0, 0, 0];
 	#view = new Float64Array(16);
 	#proj = new Float64Array(16);
-	#turn = new Float64Array(16);
 	#viewProj = new Float64Array(16);
 	#planes = new Float32Array(24);
 	/** canvas css size and the device pixel ratio */
@@ -740,7 +739,7 @@ class GpuEngine implements Engine {
 		if (!tree || !this.#feed || this.#planning || this.#ready) return;
 		if (!this.#stale && !this.#heading) return;
 		this.#evictions();
-		const views = this.#views(this.#moving);
+		const views = this.#views();
 		this.#moving = false;
 		const request = { views, budget: this.#budget, capacity: this.#pool.capacity };
 		this.#stale = false;
@@ -776,30 +775,18 @@ class GpuEngine implements Engine {
 			if (page) load.push(page);
 		}
 		this.#wants = { keep: new Set(result.touched), load, idx: result.idx };
-		return result.masks.map(([id, mask]) => ({ id, mask }));
+		return result.masks;
 	}
 
 	/** the camera's view for the cut, and while it moves the view AHEAD_MS along its velocity */
-	#views(moving: boolean): CutView[] {
+	#views(): CutView[] {
 		const c = this.#camera;
 		const [width, height] = this.#target;
-		// the full-scale size, so a lower render scale costs sharpness, not detail
-		const scale = this.#quality.scale;
-		const m = viewMatrix(this.#turn, [0, 0, 0], c.yaw * DEG, c.pitch * DEG);
-		const rotation = [m[0], m[4], m[8], m[1], m[5], m[9], m[2], m[6], m[10]];
-		const p11 = 1 / Math.tan((c.fov * DEG) / 2);
-		const at = {
-			rotation,
-			p00: (p11 * height) / width,
-			p11,
-			width: width / scale,
-			height: height / scale
-		};
-		const views: CutView[] = [{ ...at, eye: [c.e, c.n, c.h] }];
+		const views = [cutView(c, width, height, this.#quality.scale)];
 		const v = this.#velocity;
-		if (moving && v.some((x) => x !== 0)) {
+		if (this.#moving && v.some((x) => x !== 0)) {
 			const eye = [c.e + v[0] * AHEAD_MS, c.n + v[1] * AHEAD_MS, c.h + v[2] * AHEAD_MS] as const;
-			views.push({ ...at, eye });
+			views.push({ ...views[0], eye });
 		}
 		return views;
 	}

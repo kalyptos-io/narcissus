@@ -42,7 +42,7 @@ fn heights(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) t
 	}
 	for (var k = t; k < cluster.count; k += GROUP) {
 		let rec = cluster.slot + k;
-		if ((cut[rec >> 5u] & (1u << (rec & 31u))) == 0u) {
+		if (!inCut(cut[rec >> 5u], rec)) {
 			continue;
 		}
 		let g = geometry[rec];

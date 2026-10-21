@@ -2,6 +2,8 @@
 
 import {
 	namedUnits,
+	quadrantOf,
+	unitKey,
 	unitPath,
 	LEAF,
 	PAGE_SIDE,
@@ -174,7 +176,7 @@ export class Tree {
 			for (const page of unit.pages) this.pages.delete(page.id);
 			removed.push(unit);
 			const parent = unit.parent;
-			if (parent) parent.children[quadrant(parent, unit)] = undefined;
+			if (parent) parent.children[quadrantOf(parent, unit)] = undefined;
 			this.units.delete(key);
 			for (let level = unit.level + 1; level <= this.#top; level++) {
 				const up = unitKey(ancestor(unit, level));
@@ -210,20 +212,10 @@ export class Tree {
 	}
 }
 
-export function unitKey(key: UnitKey): string {
-	return `${key.level}/${key.e}/${key.n}`;
-}
-
 /** child is a quadrant of parent, one level down */
 function link(parent: UnitNode, child: UnitNode): void {
 	child.parent = parent;
-	parent.children[quadrant(parent, child)] = child;
-}
-
-/** the quadrant a + 2b of parent that child is */
-function quadrant(parent: UnitKey, child: UnitKey): number {
-	const half = LEAF * 2 ** child.level;
-	return (child.e - parent.e) / half + (2 * (child.n - parent.n)) / half;
+	parent.children[quadrantOf(parent, child)] = child;
 }
 
 /** the unit at level holding key's square */

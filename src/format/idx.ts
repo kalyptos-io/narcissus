@@ -89,12 +89,42 @@ export function parseUnitPath(path: string): (UnitKey & { hash: string }) | null
 	return { level: Number(m[1]), e: Number(m[2]), n: Number(m[3]), hash: m[4] };
 }
 
+/** a unit's name in maps and sets: L/E/N */
+export function unitKey({ level, e, n }: UnitKey): string {
+	return `${level}/${e}/${n}`;
+}
+
+/** the child of key at quadrant a + 2b, a east and b north */
+export function childKey({ level, e, n }: UnitKey, quadrant: number): UnitKey {
+	const half = LEAF * 2 ** (level - 1);
+	return { level: level - 1, e: e + (quadrant & 1) * half, n: n + (quadrant >> 1) * half };
+}
+
+/** the quadrant a + 2b of key whose square holds below, a unit any levels down */
+export function quadrantOf(key: UnitKey, below: UnitKey): number {
+	const half = LEAF * 2 ** (key.level - 1);
+	return Math.floor((below.e - key.e) / half) + 2 * Math.floor((below.n - key.n) / half);
+}
+
+/** the morton code of (x, y), x in the even bits; a byte each, as a row holds its i and j */
+export function morton(x: number, y: number): number {
+	let m = 0;
+	for (let b = 0; b < 8; b++) m |= (((x >> b) & 1) << (2 * b)) | (((y >> b) & 1) << (2 * b + 1));
+	return m;
+}
+
+/** the even bits of m packed together: x of morton code m, and y of m >> 1 */
+export function evenBits(m: number): number {
+	let v = 0;
+	for (let b = 0; b < 8; b++) v |= ((m >> (2 * b)) & 1) << b;
+	return v;
+}
+
 /** the units an idx names: its children, then its descendants two and three levels down */
 export function namedUnits(idx: Idx): { key: UnitKey; hash: string }[] {
 	const { level, e, n } = idx;
-	const half = LEAF * 2 ** (level - 1);
 	const named = idx.children.map(({ quadrant, idx: hash }) => ({
-		key: { level: level - 1, e: e + (quadrant & 1) * half, n: n + (quadrant >> 1) * half },
+		key: childKey(idx, quadrant),
 		hash
 	}));
 	for (const { depth, column, row, idx: hash } of idx.descendants) {

@@ -2,16 +2,20 @@
 // pure, so it runs in the plan worker and in node
 
 import {
+	childKey,
 	linkRow,
 	linkStart,
 	linkUnit,
 	namedUnits,
+	quadrantOf,
+	unitKey,
 	unitPath,
-	LEAF,
 	TOP_PAGE,
 	type PageNodes
 } from '../../format/index.ts';
 import { slots } from '../gpu/layout.ts';
+import { view as viewMatrix } from '../math/mat4.ts';
+import type { Camera, Drawn } from '../types.ts';
 import type { UnitNode } from '../world/tree.ts';
 
 /** px: a node this size or smaller is never refined */
@@ -55,6 +59,22 @@ export interface CutView {
 	height: number;
 }
 
+const DEG = Math.PI / 180;
+
+/** camera's view of a width x height target at its full-scale size, so a lower render scale costs sharpness, not detail */
+export function cutView(camera: Camera, width: number, height: number, scale: number): CutView {
+	const m = viewMatrix(new Float64Array(16), [0, 0, 0], camera.yaw * DEG, camera.pitch * DEG);
+	const p11 = 1 / Math.tan((camera.fov * DEG) / 2);
+	return {
+		eye: [camera.e, camera.n, camera.h],
+		rotation: [m[0], m[4], m[8], m[1], m[5], m[9], m[2], m[6], m[10]],
+		p00: (p11 * height) / width,
+		p11,
+		width: width / scale,
+		height: height / scale
+	};
+}
+
 export interface CutRequest {
 	/** the camera, and the camera a moment ahead while it moves */
 	views: CutView[];
@@ -65,8 +85,8 @@ export interface CutRequest {
 }
 
 export interface CutResult {
-	/** the pages whose draw mask changed since the last applied plan, each with its mask, a bit a node; empty for none drawn */
-	masks: [number, Uint32Array<ArrayBuffer>][];
+	/** the pages whose draw mask changed since the last applied plan */
+	masks: Drawn[];
 	/** ids of the pages the cut reads, which the pool must keep */
 	touched: number[];
 	/** ids of the pages to load, most wanted first */
@@ -84,6 +104,8 @@ export interface CutResult {
 	/** ms the plan took */
 	ms: number;
 }
+
+type Row = UnitInfo['rows'][number];
 
 interface Unit extends UnitInfo {
 	/** by quadrant, the child's key */
@@ -179,11 +201,7 @@ export function unitInfo(unit: UnitNode, root: boolean): UnitInfo {
 	const names = namedUnits(idx);
 	names.forEach(({ key, hash }, k) => {
 		const path = unitPath(key, hash, 'idx');
-		const half = 2 ** (idx.level - key.level - 1);
-		const side = LEAF * 2 ** key.level;
-		const column = (key.e - idx.e) / side;
-		const row = (key.n - idx.n) / side;
-		const quadrant = Math.floor(column / half) + 2 * Math.floor(row / half);
+		const quadrant = quadrantOf(idx, key);
 		if (k < idx.children.length) children[quadrant] = path;
 		else descendants[quadrant].push(path);
 	});
@@ -202,10 +220,6 @@ export function unitInfo(unit: UnitNode, root: boolean): UnitInfo {
 	};
 }
 
-export function unitKey({ level, e, n }: { level: number; e: number; n: number }): string {
-	return `${level}/${e}/${n}`;
-}
-
 export class Cut {
 	#units = new Map<string, Unit>();
 	#pages = new Map<number, Page>();
@@ -218,10 +232,7 @@ export class Cut {
 	#queue = new Queue();
 
 	unit(info: UnitInfo): void {
-		const half = (LEAF * 2 ** info.level) / 2;
-		const keys = [0, 1, 2, 3].map((q) =>
-			unitKey({ level: info.level - 1, e: info.e + (q & 1) * half, n: info.n + (q >> 1) * half })
-		);
+		const keys = [0, 1, 2, 3].map((q) => unitKey(childKey(info, q)));
 		const unit = { ...info, keys };
 		this.#units.set(unitKey(info), unit);
 		for (const row of info.rows) this.#rows.set(row.id, unit);
@@ -322,6 +333,24 @@ export class Cut {
 		const fetch = (path: string, priority: number) => {
 			if (priority > (files.get(path) ?? -1)) files.set(path, priority);
 		};
+		// the row a parent's link names; into a child unit not yet known, its .idx (and with deep those under it) is fetched when there is room
+		const follow = (
+			page: Page,
+			link: number,
+			s: number,
+			deep: boolean
+		): Row | 'fetched' | undefined => {
+			const quadrant = linkUnit(link) - 1;
+			const unit = quadrant < 0 ? page.unit : this.#units.get(page.unit.keys[quadrant]);
+			if (unit) return unit.rows[linkRow(link)];
+			const path = page.unit.children[quadrant];
+			// a family's page holds about as many nodes as its parent's, so one the pool has no room for is not fetched
+			if (!path || !room(page.nodes.counts.length)) return undefined;
+			fetch(path, s);
+			// below the child, which the cut needs first
+			if (deep) for (const below of page.unit.descendants[quadrant]) fetch(below, s / 2);
+			return 'fetched';
+		};
 		const size = (page: Page, rank: number) => {
 			const { centres, radii } = page.nodes;
 			const { offset } = page;
@@ -399,25 +428,12 @@ export class Cut {
 				const count = page.nodes.counts[node];
 				if (count - 1 > cap - used) continue;
 				const link = page.nodes.links[queue.ranks[k]];
-				let unit: Unit | undefined = page.unit;
-				const quadrant = linkUnit(link) - 1;
-				if (quadrant >= 0) {
-					unit = this.#units.get(page.unit.keys[quadrant]);
-					const path = page.unit.children[quadrant];
-					if (!unit) {
-						// a family's page holds about as many nodes as its parent's, so one the pool has no room for is not fetched
-						if (!path || !room(page.nodes.counts.length)) continue;
-						fetch(path, s);
-						// below the child, which the cut needs first
-						if (s > DEEP * threshold) {
-							for (const below of page.unit.descendants[quadrant]) fetch(below, s / 2);
-						}
-						missing++;
-						continue;
-					}
+				const row = follow(page, link, s, s > DEEP * threshold);
+				if (row === 'fetched') {
+					missing++;
+					continue;
 				}
 				// a link past the listed rows, or past its page, is the writer's fault; the parent stays
-				const row = unit.rows[linkRow(link)];
 				if (!row || linkStart(link) + count > row.count) continue;
 				const target = this.#pages.get(row.id);
 				if (!target) {
@@ -447,16 +463,8 @@ export class Cut {
 				const s = queue.sizes[k];
 				if (s <= near) continue;
 				const page = touched[queue.pages[k]];
-				const link = page.nodes.links[queue.ranks[k]];
-				const quadrant = linkUnit(link) - 1;
-				const unit = quadrant < 0 ? page.unit : this.#units.get(page.unit.keys[quadrant]);
-				if (!unit) {
-					const path = page.unit.children[quadrant];
-					if (path && room(page.nodes.counts.length)) fetch(path, s);
-					continue;
-				}
-				const row = unit.rows[linkRow(link)];
-				if (!row) continue;
+				const row = follow(page, page.nodes.links[queue.ranks[k]], s, false);
+				if (!row || row === 'fetched') continue;
 				const target = this.#pages.get(row.id);
 				// one fetched ahead is read, so the pool keeps it until its parent refines
 				if (!target) want(row.id, row.count, s);
@@ -464,7 +472,7 @@ export class Cut {
 			}
 		}
 
-		const masks: [number, Uint32Array<ArrayBuffer>][] = [];
+		const masks: Drawn[] = [];
 		const pending = new Map<number, Uint32Array>();
 		let projected = 0;
 		for (const page of touched) {
@@ -478,10 +486,10 @@ export class Cut {
 				projected += page.nodes.counts.length;
 			}
 			if (before ? !same(before, mask) : any)
-				masks.push([page.id, any ? mask : new Uint32Array(0)]);
+				masks.push({ id: page.id, mask: any ? mask : new Uint32Array(0) });
 		}
 		for (const id of this.#applied.keys()) {
-			if (this.#pages.get(id)?.stamp !== stamp) masks.push([id, new Uint32Array(0)]);
+			if (this.#pages.get(id)?.stamp !== stamp) masks.push({ id, mask: new Uint32Array(0) });
 		}
 		this.#pending = pending;
 		const ranked = <K>(wanted: Map<K, number>) =>
