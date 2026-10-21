@@ -1,4 +1,4 @@
-// usage: OUT=<dir> [WORLD=<world dir>|synthetic] [FOCUS=e,n,h,yaw,pitch] [BUDGET=1000000] [FRAMES=600] [PORT=9362] node bench/pops.mjs
+// usage: OUT=<dir> [WORLD=<world dir>|synthetic] [FOCUS=e,n,h,yaw,pitch] [BUDGET=1000000] [FRAMES=600] [THROTTLE=1] [RTT=0] [MBPS=1e9] [PORT=9362] node bench/pops.mjs
 // a zoom route stepped on a fixed clock; each pose drawn, the next frame's change made, and the pose drawn again: the two images' difference is what the cut's change alone did
 /** @import { AddressInfo } from 'node:net' */
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -16,6 +16,9 @@ const {
 	FOCUS = '863875,6120875,19.02,30,-35',
 	BUDGET = '1000000',
 	FRAMES = '600',
+	THROTTLE = '1',
+	RTT = '0',
+	MBPS = '1e9',
 	PORT = '9362'
 } = process.env;
 if (!OUT) throw new Error('OUT is required');
@@ -39,7 +42,7 @@ await build({
 });
 const world = WORLD === 'synthetic' ? WORLD : resolve(WORLD);
 /** @type {{ rttMs: number, mbps: number, served: [number, number][] }} */
-const link = { rttMs: 0, mbps: 1e9, served: [] };
+const link = { rttMs: Number(RTT), mbps: Number(MBPS), served: [] };
 const server = createServer(files(site, world, link));
 await new Promise((done) => server.listen(0, '127.0.0.1', () => done(undefined)));
 const address = /** @type {AddressInfo} */ (server.address());
@@ -52,6 +55,7 @@ await page.send('Page.navigate', { url });
 await until('the page', 20_000, () =>
 	page.evaluate(`location.href === '${url}' && 'pops' in window`).catch(() => false)
 );
+await page.send('Emulation.setCPUThrottlingRate', { rate: Number(THROTTLE) });
 const adapter = await page.evaluate(
 	`pops.ready(${JSON.stringify({ budget: Number(BUDGET), sky })})`
 );
@@ -108,6 +112,9 @@ const summary = {
 	world,
 	focus,
 	budget: Number(BUDGET),
+	throttle: Number(THROTTLE),
+	rttMs: Number(RTT),
+	mbps: Number(MBPS),
 	adapter,
 	frames: rows.length,
 	pops: rows.filter((r) => r.over10 > POP).length,

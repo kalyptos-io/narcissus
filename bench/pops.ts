@@ -29,7 +29,16 @@ async function frame(pose: Pose, dt: number) {
 	// worker replies land between frames
 	await new Promise((r) => setTimeout(r, 0));
 	const s = engine.stats();
-	return { drawn: s.drawn, planned: s.planned, missing: s.missing, loading: s.loading };
+	return {
+		drawn: s.drawn,
+		planned: s.planned,
+		projected: s.projected,
+		planMs: s.planMs,
+		capacity: s.capacity,
+		resident: s.pages.resident,
+		missing: s.missing,
+		loading: s.loading
+	};
 }
 
 /** the rgba of a base64 png screenshot */
