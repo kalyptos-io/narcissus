@@ -37,7 +37,10 @@ export function sigmas(opacity: number): number {
 
 /** the size a cut weighs a node by: the mean of its scales in metres, grown with opacity past 1 */
 export function radius(s0: number, s1: number, s2: number, opacity: number): number {
-	return ((s0 + s1 + s2) / 3) * (opacity <= 1 ? 1 : 1 + 2.8 * (opacity - 1));
+	if (opacity <= 1) return (s0 + s1 + s2) / 3;
+	// gaussian-splat-lite's growth, on the opacity its files store: past 1 squeezed into 1..2
+	const stored = Math.min(2, 1 + 0.25 * (Math.sqrt(1 + Math.E * Math.log(opacity)) - 1));
+	return ((s0 + s1 + s2) / 3) * (1 + 2.8 * (stored - 1));
 }
 
 /** k-sigma half extents along x, y, z of unit quaternion q (w x y z) and scales s, into out */

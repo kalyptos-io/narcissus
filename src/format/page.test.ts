@@ -125,7 +125,8 @@ describe('decodePage', () => {
 				expect(c).toBeCloseTo(v.position[a], 3)
 			);
 			const mean = (v.scale[0] + v.scale[1] + v.scale[2]) / 3;
-			const grown = v.opacity <= 1 ? mean : mean * (1 + 2.8 * (v.opacity - 1));
+			const stored = Math.min(2, 1 + 0.25 * (Math.sqrt(1 + Math.E * Math.log(v.opacity)) - 1));
+			const grown = v.opacity <= 1 ? mean : mean * (1 + 2.8 * (stored - 1));
 			expect(radii[k] / grown).toBeCloseTo(1, 5);
 			k++;
 		}
