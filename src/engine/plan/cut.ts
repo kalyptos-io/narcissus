@@ -24,8 +24,8 @@ export const T_MIN = 1;
 export const CAP = 1.1;
 /** the first round's threshold, in T_MIN */
 const START = 1000;
-/** weight of a node behind the camera; one off screen tapers to it */
-const FLOOR = 0.05;
+/** how fast a node's weight falls off screen: the fringe a turn needs is fetched, not the scene around */
+const EDGE = 8;
 /** a link into an unknown child this many thresholds large also wants the .idx files under it */
 const DEEP = 4;
 /** a parent this share of the threshold or larger has the page it refines into fetched ahead of need */
@@ -359,16 +359,18 @@ export class Cut {
 				const dx = centres[3 * rank] + offset[3 * v];
 				const dy = centres[3 * rank + 1] + offset[3 * v + 1];
 				const dz = centres[3 * rank + 2] + offset[3 * v + 2];
-				const depth = -(at[k + 6] * dx + at[k + 7] * dy + at[k + 8] * dz);
-				let weight = FLOOR;
-				if (depth > 0) {
-					const x = Math.abs(at[k + 9] * (at[k] * dx + at[k + 1] * dy + at[k + 2] * dz));
-					const y = Math.abs(at[k + 10] * (at[k + 3] * dx + at[k + 4] * dy + at[k + 5] * dz));
-					const c = depth / Math.max(depth, x, y);
-					weight += (1 - FLOOR) * c * c;
-				}
+				// the node's sphere against the view, so one reaching into it from outside counts in full
+				const r = radii[rank];
+				const depth = r - (at[k + 6] * dx + at[k + 7] * dy + at[k + 8] * dz);
+				if (depth <= 0) continue;
+				const x =
+					Math.abs(at[k + 9] * (at[k] * dx + at[k + 1] * dy + at[k + 2] * dz)) - at[k + 9] * r;
+				const y =
+					Math.abs(at[k + 10] * (at[k + 3] * dx + at[k + 4] * dy + at[k + 5] * dz)) -
+					at[k + 10] * r;
+				const weight = (depth / Math.max(depth, x, y)) ** EDGE;
 				const distance = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), 1e-6);
-				most = Math.max(most, (2 * radii[rank] * at[k + 11] * weight) / distance);
+				most = Math.max(most, (2 * r * at[k + 11] * weight) / distance);
 			}
 			return most;
 		};

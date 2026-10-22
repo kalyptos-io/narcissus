@@ -155,22 +155,26 @@ function look([e, n, h]: [number, number, number], yaw = 0, pitch = -60): CutVie
 	return cutView({ e, n, h, yaw, pitch, fov: 45 }, 1920, 1080, 1);
 }
 
-/** the size the cut gives a node, from format.md's radius and the brief's weight */
+/** the size the cut gives a node, from format.md's radius and its sphere against the view */
 function size(node: Node, view: CutView): number {
 	const d = [0, 1, 2].map((a) => node.centre[a] - view.eye[a]);
 	const r = view.rotation;
-	const depth = -(r[6] * d[0] + r[7] * d[1] + r[8] * d[2]);
-	let weight = 0.05;
-	if (depth > 0) {
-		const x = Math.abs(view.p00 * (r[0] * d[0] + r[1] * d[1] + r[2] * d[2]));
-		const y = Math.abs(view.p11 * (r[3] * d[0] + r[4] * d[1] + r[5] * d[2]));
-		weight += 0.95 * (depth / Math.max(depth, x, y)) ** 2;
-	}
+	const depth = node.radius - (r[6] * d[0] + r[7] * d[1] + r[8] * d[2]);
+	if (depth <= 0) return 0;
+	const x = Math.abs(view.p00 * (r[0] * d[0] + r[1] * d[1] + r[2] * d[2])) - view.p00 * node.radius;
+	const y = Math.abs(view.p11 * (r[3] * d[0] + r[4] * d[1] + r[5] * d[2])) - view.p11 * node.radius;
+	const weight = (depth / Math.max(depth, x, y)) ** 8;
 	const focal = Math.max(view.p00 * view.width, view.p11 * view.height) / 2;
 	return (2 * node.radius * focal * weight) / Math.hypot(...d);
 }
 
 const OVER = look([250, -150, 300]);
+
+/** nodes of the cut that refines every node larger than T_MIN */
+const full = (node: Node, view: CutView): number =>
+	node.family && size(node, view) > T_MIN
+		? node.family.reduce((sum, m) => sum + full(m, view), 0)
+		: 1;
 
 /** a cut told of every unit and of the pages resident says */
 function cutOf(f: Forest, resident: (page: number) => boolean = () => true): Cut {
@@ -238,10 +242,11 @@ describe('cut', () => {
 		}
 	});
 
-	it('refines to every fit splat when the budget holds them, and to the budget when it does not', () => {
+	it('refines to the full cut when the budget holds it, and to the budget when it does not', () => {
 		const f = forest(3);
 		const all = cutOf(f).plan({ views: [OVER], budget: 10_000, capacity: 1e9 });
-		expect(all).toMatchObject({ planned: f.fits, missing: 0, load: [], idx: [], detail: T_MIN });
+		const planned = f.tops.reduce((sum, top) => sum + full(top, OVER), 0);
+		expect(all).toMatchObject({ planned, missing: 0, load: [], idx: [], detail: T_MIN });
 		const some = cutOf(f).plan({ views: [OVER], budget: 400, capacity: 1e9 });
 		expect(some.planned).toBeGreaterThanOrEqual(400);
 		expect(some.planned).toBeLessThanOrEqual(440);
@@ -263,7 +268,7 @@ describe('cut', () => {
 			if (!node.family) return;
 			if (node.family[0].page === fine) {
 				expect(isDrawn(masks, node)).toBe(1);
-				blocked++;
+				if (size(node, OVER) > T_MIN) blocked++;
 			} else node.family.forEach(visit);
 		};
 		f.tops.forEach(visit);

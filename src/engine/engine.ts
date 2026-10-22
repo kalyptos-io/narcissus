@@ -124,6 +124,8 @@ const NEAR = 0.2;
 const UPLOAD_BYTES = 24 * 1024 * 1024;
 /** splats the pool holds, per splat of budget */
 const POOL_SHARE = 2.5;
+/** splats of pages one cut may claim, per splat of budget: a page is fetched whole for the few families it draws, and the pool's rest keeps pages for a turn back */
+const CLAIM_SHARE = 1.25;
 /** splats one frame may project, per splat of budget: the most a cut draws */
 const FRAME_SHARE = CAP;
 /** metres: the floating origin's grid, and how far the camera may stray from it */
@@ -741,7 +743,11 @@ class GpuEngine implements Engine {
 		this.#evictions();
 		const views = this.#views();
 		this.#moving = false;
-		const request = { views, budget: this.#budget, capacity: this.#pool.capacity };
+		const request = {
+			views,
+			budget: this.#budget,
+			capacity: Math.min(this.#pool.capacity, Math.ceil(CLAIM_SHARE * this.#budget))
+		};
 		this.#stale = false;
 		this.#heading = views.length > 1;
 		this.#evicted.clear();
