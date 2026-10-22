@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { link, mulberry32 } from '../../format/encode.ts';
-import type { PageNodes } from '../../format/index.ts';
+import { LEAF, PAGE_SIDE, type PageNodes } from '../../format/index.ts';
 import { slots } from '../gpu/layout.ts';
 import { CAP, Cut, cutView, T_MIN, type CutResult, type CutView, type UnitInfo } from './cut.ts';
 
@@ -55,16 +55,31 @@ function forest(seed: number, fits = 300): Forest {
 	const pages = new Map<number, PageNodes>();
 	const corners = new Map<number, [number, number]>();
 	let id = 0;
-	/** families into pages of a unit, rows appended to info */
-	const place = (info: UnitInfo, families: Node[][], top = false) => {
-		const split = top ? 1 : 1 + Math.floor(3 * next());
-		const per = Math.ceil(families.length / split);
-		for (let p = 0; p < split; p++) {
-			const members = families.slice(p * per, (p + 1) * per).flat();
-			if (!members.length) continue;
+	/** families into a unit's pages of band g by the square their parent's centre falls in, rows appended to info; a top page takes them all */
+	const place = (info: UnitInfo, families: Node[][], parents: Node[], g: number, top = false) => {
+		const side = PAGE_SIDE * 2 ** g;
+		const cells = Math.max(1, Math.ceil((LEAF * 2 ** info.level) / side));
+		const cell = (c: number, o: number) =>
+			Math.min(cells - 1, Math.max(0, Math.floor((c - o) / side)));
+		const squares = new Map<number, Node[][]>();
+		families.forEach((family, f) => {
+			const key = top
+				? 0
+				: 256 * cell(parents[f].centre[0], info.e) + cell(parents[f].centre[1], info.n);
+			squares.set(key, [...(squares.get(key) ?? []), family]);
+		});
+		for (const [key, group] of [...squares].sort((a, b) => a[0] - b[0])) {
+			const members = group.flat();
 			const page = id++;
 			members.forEach((node, index) => Object.assign(node, { page, index }));
-			info.rows.push({ id: page, count: members.length, top });
+			const corner = [info.e, info.n, 0];
+			const box = Float32Array.of(Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity);
+			for (const m of members)
+				for (let a = 0; a < 3; a++) {
+					box[a] = Math.min(box[a], m.centre[a] - corner[a] - m.radius);
+					box[a + 3] = Math.max(box[a + 3], m.centre[a] - corner[a] + m.radius);
+				}
+			info.rows.push({ id: page, count: members.length, top, g, i: key >> 8, j: key & 255, box });
 			corners.set(page, [info.e, info.n]);
 			pages.set(page, { members } as unknown as PageNodes);
 		}
@@ -105,15 +120,15 @@ function forest(seed: number, fits = 300): Forest {
 		const parents1 = fams1.map(parentOf);
 		const fams2 = chunk(sorted(parents1), next);
 		const parents2 = fams2.map(parentOf);
-		place(leaf, fams1);
-		place(leaf, fams2);
+		place(leaf, fams1, parents1, 0);
+		place(leaf, fams2, parents2, 1);
 		leaves.push(leaf);
 		tops.push(...parents2);
 	}
 	fams3.push(...chunk(sorted(tops), next));
 	const parents3 = fams3.map(parentOf);
-	place(root, fams3);
-	place(root, [parents3], true);
+	place(root, fams3, parents3, 2);
+	place(root, [parents3], [], 3, true);
 	root.children = leaves.map((leaf) => `u/0/${leaf.e}/${leaf.n}.idx`);
 
 	// each stored node's count and link, each page's arrays
@@ -155,7 +170,7 @@ function look([e, n, h]: [number, number, number], yaw = 0, pitch = -60): CutVie
 	return cutView({ e, n, h, yaw, pitch, fov: 45 }, 1920, 1080, 1);
 }
 
-/** the size the cut gives a node, from format.md's radius and its sphere against the view */
+/** the size the cut gives a node, from format.md's radius, its sphere against the view and the centre weight */
 function size(node: Node, view: CutView): number {
 	const d = [0, 1, 2].map((a) => node.centre[a] - view.eye[a]);
 	const r = view.rotation;
@@ -163,7 +178,10 @@ function size(node: Node, view: CutView): number {
 	if (depth <= 0) return 0;
 	const x = Math.abs(view.p00 * (r[0] * d[0] + r[1] * d[1] + r[2] * d[2])) - view.p00 * node.radius;
 	const y = Math.abs(view.p11 * (r[3] * d[0] + r[4] * d[1] + r[5] * d[2])) - view.p11 * node.radius;
-	const weight = (depth / Math.max(depth, x, y)) ** 8;
+	const u = Math.max(0, x) / depth;
+	const w = Math.max(0, y) / depth;
+	const weight =
+		(depth / Math.max(depth, x, y)) ** 8 * Math.sqrt(1 + 15 * Math.max(0, 1 - u * u - w * w) ** 2);
 	const focal = Math.max(view.p00 * view.width, view.p11 * view.height) / 2;
 	return (2 * node.radius * focal * weight) / Math.hypot(...d);
 }
@@ -372,7 +390,19 @@ describe('cut', () => {
 		};
 		f.tops.forEach(visit);
 		const expected = [...priority].sort((a, b) => b[1] - a[1] || a[0] - b[0]).map(([id]) => id);
-		expect(result.load).toEqual(expected);
+		expect(result.load.slice(0, expected.length)).toEqual(expected);
+	});
+
+	it('wants pages two bands below what is resident in one plan, off the .idx', () => {
+		const f = forest(12);
+		const root = new Set(f.units[0].rows.map((row) => row.id));
+		const band = new Map(f.units.flatMap((u) => u.rows.map((row) => [row.id, row.g] as const)));
+		const result = cutOf(f, (id) => root.has(id)).plan({
+			views: [look([125, 125, 40])],
+			budget: 10_000,
+			capacity: 1e9
+		});
+		expect(new Set(result.load.map((id) => band.get(id)))).toEqual(new Set([0, 1]));
 	});
 
 	it('wants a root top page that is not resident, and draws nothing', () => {
@@ -382,7 +412,8 @@ describe('cut', () => {
 			budget: 500,
 			capacity: 1e9
 		});
-		expect(result).toMatchObject({ load: [f.top], planned: 0, masks: [], touched: [] });
+		expect(result).toMatchObject({ planned: 0, masks: [] });
+		expect(result.load[0]).toBe(f.top);
 	});
 
 	it('wants an unknown child .idx, and the ones below it for a node far above the threshold', () => {

@@ -7,9 +7,12 @@ import {
 	linkStart,
 	linkUnit,
 	namedUnits,
+	parseUnitPath,
 	quadrantOf,
 	unitKey,
 	unitPath,
+	LEAF,
+	PAGE_SIDE,
 	TOP_PAGE,
 	type PageNodes
 } from '../../format/index.ts';
@@ -26,6 +29,8 @@ export const CAP = 1.1;
 const START = 1000;
 /** how fast a node's weight falls off screen: the fringe a turn needs is fetched, not the scene around */
 const EDGE = 8;
+/** a node's pixel area weighs up to 1 + CENTRE times more at the centre than at the edge, where the eye is */
+const CENTRE = 15;
 /** a link into an unknown child this many thresholds large also wants the .idx files under it */
 const DEEP = 4;
 /** a parent this share of the threshold or larger has the page it refines into fetched ahead of need */
@@ -38,8 +43,16 @@ export interface UnitInfo {
 	n: number;
 	/** a unit with no parent; its top page starts the cut */
 	root: boolean;
-	/** by row, as links name them */
-	rows: { id: number; count: number; top: boolean }[];
+	/** by row, as links name them; band, square and unit-local extent box as the .idx gives them */
+	rows: {
+		id: number;
+		count: number;
+		top: boolean;
+		g: number;
+		i: number;
+		j: number;
+		box: Float32Array;
+	}[];
 	/** by quadrant: the child's .idx path, null where none is named */
 	children: (string | null)[];
 	/** by quadrant: the .idx paths of the units two and three levels down inside it */
@@ -110,6 +123,32 @@ type Row = UnitInfo['rows'][number];
 interface Unit extends UnitInfo {
 	/** by quadrant, the child's key */
 	keys: string[];
+	/** rows by square, the top page aside */
+	grid: Map<number, Row>;
+	/** the lowest band it holds */
+	low: number;
+}
+
+const square = (g: number, i: number, j: number) => (g << 16) | (i << 8) | j;
+
+/** a unit's rows of band g over the unit-local square x0 y0 x1 y1 */
+function cells(
+	unit: Unit,
+	g: number,
+	x0: number,
+	y0: number,
+	x1: number,
+	y1: number
+): [Unit, Row][] {
+	const side = PAGE_SIDE * 2 ** g;
+	const n = Math.max(1, Math.ceil((LEAF * 2 ** unit.level) / side));
+	const out: [Unit, Row][] = [];
+	for (let i = Math.max(0, Math.floor(x0 / side)); i < Math.min(n, Math.ceil(x1 / side)); i++)
+		for (let j = Math.max(0, Math.floor(y0 / side)); j < Math.min(n, Math.ceil(y1 / side)); j++) {
+			const row = unit.grid.get(square(g, i, j));
+			if (row) out.push([unit, row]);
+		}
+	return out;
 }
 
 interface Page {
@@ -213,7 +252,11 @@ export function unitInfo(unit: UnitNode, root: boolean): UnitInfo {
 		rows: unit.pages.map(({ id, row }) => ({
 			id,
 			count: row.count,
-			top: (row.flags & TOP_PAGE) !== 0
+			top: (row.flags & TOP_PAGE) !== 0,
+			g: row.g,
+			i: row.i,
+			j: row.j,
+			box: row.box
 		})),
 		children,
 		descendants
@@ -230,12 +273,52 @@ export class Cut {
 	#pending: Map<number, Uint32Array> | null = null;
 	#stamp = 0;
 	#queue = new Queue();
+	#ahead = new Queue();
 
 	unit(info: UnitInfo): void {
 		const keys = [0, 1, 2, 3].map((q) => unitKey(childKey(info, q)));
-		const unit = { ...info, keys };
+		const grid = new Map<number, Row>();
+		for (const row of info.rows) if (!row.top) grid.set(square(row.g, row.i, row.j), row);
+		const unit = { ...info, keys, grid, low: info.level === 0 ? 0 : info.level + 1 };
 		this.#units.set(unitKey(info), unit);
 		for (const row of info.rows) this.#rows.set(row.id, unit);
+	}
+
+	/** the rows a band below a row, in its unit or its children; null while a child's .idx is unknown, which is fetched */
+	#under(unit: Unit, row: Row, fetch: (path: string) => void): [Unit, Row][] | null {
+		const g = row.g - 1;
+		if (g < 0) return [];
+		const side = LEAF * 2 ** unit.level;
+		const page = PAGE_SIDE * 2 ** row.g;
+		const x0 = row.top ? 0 : row.i * page;
+		const y0 = row.top ? 0 : row.j * page;
+		const x1 = row.top ? side : Math.min(side, x0 + page);
+		const y1 = row.top ? side : Math.min(side, y0 + page);
+		if (g >= unit.low) return cells(unit, g, x0, y0, x1, y1);
+		// band g is the children's own
+		const half = side / 2;
+		const out: [Unit, Row][] = [];
+		for (let q = 0; q < 4; q++) {
+			const qx = (q & 1) * half;
+			const qy = (q >> 1) * half;
+			if (x1 <= qx || x0 >= qx + half || y1 <= qy || y0 >= qy + half) continue;
+			const child = this.#units.get(unit.keys[q]);
+			if (child) out.push(...cells(child, g, x0 - qx, y0 - qy, x1 - qx, y1 - qy));
+			else if (unit.children[q]) {
+				fetch(unit.children[q]!);
+				// with the .idx files further down under this page, so no band below waits a round trip of its own
+				for (const path of unit.descendants[q]) {
+					const key = parseUnitPath(path);
+					if (!key) continue;
+					const extent = LEAF * 2 ** key.level;
+					const kx = key.e - unit.e;
+					const ky = key.n - unit.n;
+					if (kx < x1 && kx + extent > x0 && ky < y1 && ky + extent > y0) fetch(path);
+				}
+				return null;
+			}
+		}
+		return out;
 	}
 
 	drop(key: string): void {
@@ -351,6 +434,22 @@ export class Cut {
 			if (deep) for (const below of page.unit.descendants[quadrant]) fetch(below, s / 2);
 			return 'fetched';
 		};
+		// px a sphere of radius r at d from view k's eye spans, weighed off screen and toward the centre
+		const span = (k: number, dx: number, dy: number, dz: number, r: number) => {
+			// the sphere against the view, so one reaching into it from outside counts in full
+			const depth = r - (at[k + 6] * dx + at[k + 7] * dy + at[k + 8] * dz);
+			if (depth <= 0) return 0;
+			const x =
+				Math.abs(at[k + 9] * (at[k] * dx + at[k + 1] * dy + at[k + 2] * dz)) - at[k + 9] * r;
+			const y =
+				Math.abs(at[k + 10] * (at[k + 3] * dx + at[k + 4] * dy + at[k + 5] * dz)) - at[k + 10] * r;
+			const u = Math.max(0, x) / depth;
+			const w = Math.max(0, y) / depth;
+			const weight =
+				(depth / Math.max(depth, x, y)) ** EDGE *
+				Math.sqrt(1 + CENTRE * Math.max(0, 1 - u * u - w * w) ** 2);
+			return (2 * r * at[k + 11] * weight) / Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), 1e-6);
+		};
 		const size = (page: Page, rank: number) => {
 			const { centres, radii } = page.nodes;
 			const { offset } = page;
@@ -359,18 +458,7 @@ export class Cut {
 				const dx = centres[3 * rank] + offset[3 * v];
 				const dy = centres[3 * rank + 1] + offset[3 * v + 1];
 				const dz = centres[3 * rank + 2] + offset[3 * v + 2];
-				// the node's sphere against the view, so one reaching into it from outside counts in full
-				const r = radii[rank];
-				const depth = r - (at[k + 6] * dx + at[k + 7] * dy + at[k + 8] * dz);
-				if (depth <= 0) continue;
-				const x =
-					Math.abs(at[k + 9] * (at[k] * dx + at[k + 1] * dy + at[k + 2] * dz)) - at[k + 9] * r;
-				const y =
-					Math.abs(at[k + 10] * (at[k + 3] * dx + at[k + 4] * dy + at[k + 5] * dz)) -
-					at[k + 10] * r;
-				const weight = (depth / Math.max(depth, x, y)) ** EDGE;
-				const distance = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), 1e-6);
-				most = Math.max(most, (2 * r * at[k + 11] * weight) / distance);
+				most = Math.max(most, span(k, dx, dy, dz, radii[rank]));
 			}
 			return most;
 		};
@@ -474,6 +562,75 @@ export class Cut {
 			}
 		}
 
+		// ahead off the .idx within the budget: the pages under a page whose members would split, so bands load together
+		const ahead = this.#ahead;
+		ahead.reset();
+		// ranked after the pages the cut waits on, which block drawing now
+		const later = new Map<number, number>();
+		const wantLater = (id: number, count: number, priority: number) => {
+			if (pages.has(id)) return true;
+			const known = later.get(id);
+			if (known !== undefined) {
+				if (priority > known) later.set(id, priority);
+				return true;
+			}
+			if (!room(count)) return false;
+			later.set(id, priority);
+			taken += slots(count);
+			return true;
+		};
+		const walked: [Unit, Row][] = [];
+		const enterRow = (unit: Unit, row: Row) => {
+			const b = row.box;
+			const r = Math.hypot(b[3] - b[0], b[4] - b[1], b[5] - b[2]) / 2;
+			let most = 0;
+			for (let k = 0, v = 0; v < views.length; k += 12, v++) {
+				const [e, n, h] = views[v].eye;
+				const dx = unit.e + (b[0] + b[3]) / 2 - e;
+				const dy = unit.n + (b[1] + b[4]) / 2 - n;
+				most = Math.max(most, span(k, dx, dy, (b[2] + b[5]) / 2 - h, r));
+			}
+			// its members' size were they to tile the box
+			const s = most / Math.sqrt(Math.max(1, row.count));
+			if (s > threshold) ahead.push(walked.length, 0, 0, s);
+			walked.push([unit, row]);
+		};
+		let reach = 0;
+		for (const unit of this.#units.values()) {
+			const top = unit.root ? unit.rows.find((row) => row.top) : undefined;
+			if (!top) continue;
+			reach += top.count;
+			enterRow(unit, top);
+		}
+		for (let b = ahead.top; b >= 0 && reach < budget;) {
+			const k = ahead.pop(b);
+			if (k < 0) {
+				b--;
+				continue;
+			}
+			const s = ahead.sizes[k];
+			const [unit, row] = walked[ahead.pages[k]];
+			const under = this.#under(unit, row, (path) => fetch(path, s));
+			if (!under?.length) continue;
+			let grow = -row.count;
+			for (const [, child] of under) grow += child.count;
+			if (reach + grow > budget) continue;
+			let full = false;
+			for (const [, child] of under) {
+				const page = this.#pages.get(child.id);
+				if (!page) {
+					if (!wantLater(child.id, child.count, s)) full = true;
+				} else if (page.stamp !== stamp) {
+					if (room(child.count)) touch(page);
+					else full = true;
+				}
+			}
+			if (full) break;
+			reach += grow;
+			for (const [u, child] of under) enterRow(u, child);
+			b = ahead.top;
+		}
+
 		const masks: Drawn[] = [];
 		const pending = new Map<number, Uint32Array>();
 		let projected = 0;
@@ -499,7 +656,7 @@ export class Cut {
 		return {
 			masks,
 			touched: touched.map((page) => page.id),
-			load: ranked(pages),
+			load: [...ranked(pages), ...ranked(later)],
 			idx: ranked(files),
 			planned: used,
 			missing,
