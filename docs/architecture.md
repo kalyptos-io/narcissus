@@ -48,7 +48,7 @@ The built-in `http` source runs inside the engine's workers. A `Fetch` from the 
 | directory  | job                                                                           |
 | ---------- | ----------------------------------------------------------------------------- |
 | `world/`   | the tree of units that are known, and the pages they hold                     |
-| `plan/`    | the cut: which nodes to draw for a camera and a budget, in a worker           |
+| `plan/`    | which pages to draw for a camera and a budget; pure functions                 |
 | `math/`    | matrices and the frustum                                                      |
 | `stream/`  | which pages to load next, and the workers that fetch and decode them          |
 | `gpu/`     | the page pool on the GPU and the passes: cull, project, sort, raster, present |
@@ -58,7 +58,7 @@ The built-in `http` source runs inside the engine's workers. A `Fetch` from the 
 
 ## Build
 
-`pnpm build` writes `dist/`, which mirrors `src/`: Vite bundles the five entry points and `tsc` writes the declarations. The stream and plan workers are inlined into the bundle as blobs, so the package needs no bundler setting and works from a CDN. `pnpm package` checks the packed package with publint and attw.
+`pnpm build` writes `dist/`, which mirrors `src/`: Vite bundles the five entry points and `tsc` writes the declarations. The stream worker is inlined into the bundle as a blob, so the package needs no bundler setting and works from a CDN. `pnpm package` checks the packed package with publint and attw.
 
 ## Benchmarks
 

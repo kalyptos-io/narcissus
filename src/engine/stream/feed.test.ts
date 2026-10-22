@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { unitKey, unitPath, type DecodedPage, type Idx, type UnitKey } from '../../format/index.ts';
+import { unitPath, type DecodedPage, type Idx, type UnitKey } from '../../format/index.ts';
 import type { Pool } from '../gpu/pool.ts';
+import type { Plan } from '../plan/cut.ts';
 import { hash, unit as full, world } from '../world/test-tree.ts';
-import { Tree, type PageNode, type Wanted } from '../world/tree.ts';
-import { FEED, Feed, type FeedOptions, type Wants } from './feed.ts';
+import { Tree, unitKey, type PageNode, type Wanted } from '../world/tree.ts';
+import { FEED, Feed, type FeedOptions } from './feed.ts';
 import { Missing } from '../../ports.ts';
 import type { Loader } from './loader.ts';
 import type { Batch } from './scheduler.ts';
@@ -12,6 +13,7 @@ const E = 720000;
 const N = 6176000;
 const ROOT = { level: 1, e: E, n: N };
 const SIZE = 1000;
+const NONE = new Set<number>();
 
 type Loaded = { id: number; page: DecodedPage }[];
 
@@ -87,16 +89,11 @@ const unit = (key: UnitKey) => full(key, { count: 100, size: SIZE });
 function decoded(): DecodedPage {
 	return {
 		count: 100,
+		quadrants: [25, 50, 75],
 		geometry: new Uint32Array(0),
 		colour: new Uint32Array(0),
 		params: new Float32Array(0),
-		clusters: new Float32Array(0),
-		nodes: {
-			counts: new Uint8Array(100),
-			centres: new Float32Array(0),
-			radii: new Float32Array(0),
-			links: new Uint32Array(0)
-		}
+		clusters: new Float32Array(0)
 	};
 }
 
@@ -104,8 +101,8 @@ const loaded = (pages: PageNode[]): Loaded => pages.map(({ id }) => ({ id, page:
 const ids = (pages: { id: number }[]) => pages.map(({ id }) => id);
 const settle = () => vi.advanceTimersByTimeAsync(0);
 
-function plan(load: PageNode[], idx: Wanted[] = [], keep: PageNode[] = load): Wants {
-	return { keep: new Set(ids(keep)), load, idx: idx.map(({ path }) => path) };
+function plan(load: PageNode[], idx: Wanted[] = [], keep: PageNode[] = load): Plan {
+	return { cut: load, load, idx, keep: new Set(ids(keep)), planned: 0, missing: 0 };
 }
 
 /** a tree holding one level-1 root, its four children wanted */
@@ -134,8 +131,8 @@ describe('Feed', () => {
 		const { tree, loader, arrive, feed } = setup({ idx: 2 });
 		const wanted = tree.wanted();
 		const paths = wanted.map(({ path }) => path);
-		feed.update(plan([], wanted), 0);
-		feed.update(plan([], wanted), 10);
+		feed.update(plan([], wanted), NONE, 0);
+		feed.update(plan([], wanted), NONE, 10);
 		expect(loader.idxs.map(({ path }) => path)).toEqual(paths.slice(0, 2));
 		expect(feed.loading).toBe(2);
 
@@ -145,14 +142,14 @@ describe('Feed', () => {
 		expect(arrive).toHaveBeenCalledTimes(1);
 		expect(feed.loading).toBe(1);
 
-		feed.update(plan([], tree.wanted()), 20);
+		feed.update(plan([], tree.wanted()), NONE, 20);
 		expect(loader.idxs.map(({ path }) => path)).toEqual(paths.slice(0, 3));
 	});
 
 	it('batches the pages of a plan and admits them into the pool', async () => {
 		const { root, loader, pool, arrive, feed } = setup();
 		const pages = root.pages.slice(0, 3);
-		feed.update(plan(pages), 0);
+		feed.update(plan(pages), NONE, 0);
 		expect(loader.batches).toHaveLength(1);
 		const [{ batch }] = loader.batches;
 		expect(batch.pack).toBe(unitPath(ROOT, hash(ROOT), 'pack'));
@@ -168,7 +165,7 @@ describe('Feed', () => {
 		expect(arrive).toHaveBeenCalledTimes(pages.length + 1);
 		expect(feed.loading).toBe(0);
 
-		feed.update(plan(pages), 10);
+		feed.update(plan(pages), NONE, 10);
 		expect(loader.batches).toHaveLength(1);
 		expect(feed.idle).toBe(true);
 	});
@@ -176,8 +173,8 @@ describe('Feed', () => {
 	it('aborts a batch whose pages left the plan', async () => {
 		const { root, loader, feed } = setup();
 		const [a, b] = root.pages;
-		feed.update(plan([a]), 0);
-		feed.update(plan([b]), 10);
+		feed.update(plan([a]), NONE, 0);
+		feed.update(plan([b]), NONE, 10);
 		const [first, second] = loader.batches;
 		expect(first.signal.aborted).toBe(true);
 		expect(second.signal.aborted).toBe(false);
@@ -191,8 +188,8 @@ describe('Feed', () => {
 		const [wanted] = tree.wanted();
 		const child = tree.add(unit(wanted), wanted.path);
 		const [page] = child.pages;
-		feed.update(plan([page]), 0);
-		expect(tree.prune(new Set())).toEqual([child]);
+		feed.update(plan([page]), NONE, 0);
+		expect(tree.prune(NONE)).toEqual(ids(child.pages));
 
 		loader.batches[0].resolve(loaded([page]));
 		await settle();
@@ -208,45 +205,45 @@ describe('Feed', () => {
 			loader.batches[k].reject(new Error('http 503 for u/1/x.pack'));
 			await settle();
 		};
-		feed.update(plan([a]), 0);
+		feed.update(plan([a]), NONE, 0);
 		await fail(0);
-		feed.update(plan([a]), 999);
+		feed.update(plan([a]), NONE, 999);
 		expect(loader.batches).toHaveLength(1);
 		expect(feed.idle).toBe(false);
-		feed.update(plan([a]), 1000);
+		feed.update(plan([a]), NONE, 1000);
 		expect(loader.batches).toHaveLength(2);
 
 		await fail(1);
-		feed.update(plan([a]), 2999);
+		feed.update(plan([a]), NONE, 2999);
 		expect(loader.batches).toHaveLength(2);
-		feed.update(plan([a]), 3000);
+		feed.update(plan([a]), NONE, 3000);
 		expect(loader.batches).toHaveLength(3);
 		loader.batches[2].resolve(loaded([a]));
 		await settle();
 		expect(pool.holds(a.id)).toBe(true);
 
-		feed.update(plan([b]), 3000);
+		feed.update(plan([b]), NONE, 3000);
 		await fail(3);
-		feed.update(plan([b]), 4000);
+		feed.update(plan([b]), NONE, 4000);
 		expect(loader.batches).toHaveLength(5);
 	});
 
 	it('backs a failing idx path off', async () => {
 		const { tree, loader, feed } = setup();
 		const [wanted] = tree.wanted();
-		feed.update(plan([], [wanted]), 0);
+		feed.update(plan([], [wanted]), NONE, 0);
 		loader.idxs[0].reject(new Error('a stream worker failed'));
 		await settle();
 		expect(feed.loading).toBe(0);
-		feed.update(plan([], [wanted]), 999);
+		feed.update(plan([], [wanted]), NONE, 999);
 		expect(loader.idxs).toHaveLength(1);
-		feed.update(plan([], [wanted]), 1000);
+		feed.update(plan([], [wanted]), NONE, 1000);
 		expect(loader.idxs.map(({ path }) => path)).toEqual([wanted.path, wanted.path]);
 	});
 
 	it('calls onStale once when immutable files are missing', async () => {
 		const { tree, loader, stale, feed } = setup();
-		feed.update(plan([], tree.wanted()), 0);
+		feed.update(plan([], tree.wanted()), NONE, 0);
 		for (const call of loader.idxs) call.reject(new Missing(call.path));
 		await settle();
 		expect(loader.idxs).toHaveLength(4);
@@ -256,10 +253,10 @@ describe('Feed', () => {
 	it('starts no fetch once the world went stale', async () => {
 		const { tree, root, loader, feed } = setup();
 		const [first, ...rest] = tree.wanted();
-		feed.update(plan([], [first]), 0);
+		feed.update(plan([], [first]), NONE, 0);
 		loader.idxs[0].reject(new Missing(first.path));
 		await settle();
-		feed.update(plan(root.pages.slice(0, 2), rest), 10);
+		feed.update(plan(root.pages.slice(0, 2), rest), NONE, 10);
 		expect(loader.idxs).toHaveLength(1);
 		expect(loader.batches).toHaveLength(0);
 		expect(feed.queued).toBe(2);
@@ -268,14 +265,14 @@ describe('Feed', () => {
 	it('replans when a backoff ends, until destroy cancels the wait', async () => {
 		const { root, loader, arrive, feed } = setup();
 		const [a] = root.pages;
-		feed.update(plan([a]), 0);
+		feed.update(plan([a]), NONE, 0);
 		loader.batches[0].reject(new Error('http 503 for u/1/x.pack'));
 		await vi.advanceTimersByTimeAsync(999);
 		expect(arrive).not.toHaveBeenCalled();
 		await vi.advanceTimersByTimeAsync(1);
 		expect(arrive).toHaveBeenCalledTimes(1);
 
-		feed.update(plan([a]), 1000);
+		feed.update(plan([a]), NONE, 1000);
 		loader.batches[1].reject(new Error('http 503 for u/1/x.pack'));
 		await settle();
 		feed.destroy();
@@ -286,7 +283,7 @@ describe('Feed', () => {
 	it('replans when a refusal ends and is not idle before', async () => {
 		const { root, loader, arrive, feed } = setup({}, 1);
 		const [a, b] = root.pages;
-		feed.update(plan([a, b], [], [a]), 0);
+		feed.update(plan([a, b], [], []), new Set([a.id]), 0);
 		loader.batches[0].resolve(loaded([a, b]));
 		await vi.advanceTimersByTimeAsync(999);
 		expect(arrive).toHaveBeenCalledTimes(3);
@@ -295,11 +292,12 @@ describe('Feed', () => {
 		expect(arrive).toHaveBeenCalledTimes(4);
 	});
 
-	it('backs off a page the pool refuses while kept pages fill it', async () => {
+	it('backs off a page the pool refuses while drawn pages fill it', async () => {
 		const { root, loader, pool, feed } = setup({}, 1);
 		const [a, b] = root.pages;
-		const next = plan([a, b], [], [a]);
-		feed.update(next, 0);
+		const drawn = new Set([a.id]);
+		const next = plan([a, b], [], []);
+		feed.update(next, drawn, 0);
 		expect(ids(loader.batches[0].batch.pages)).toEqual([a.id, b.id]);
 		loader.batches[0].resolve(loaded([a, b]));
 		await settle();
@@ -307,19 +305,19 @@ describe('Feed', () => {
 		expect(pool.holds(b.id)).toBe(false);
 		expect(loader.batches).toHaveLength(1);
 
-		feed.update(next, 999);
+		feed.update(next, drawn, 999);
 		expect(loader.batches).toHaveLength(1);
 		expect(feed.idle).toBe(false);
-		feed.update(next, 1000);
+		feed.update(next, drawn, 1000);
 		expect(ids(loader.batches[1].batch.pages)).toEqual([b.id]);
 	});
 
-	it('prunes units with no held, kept or loading page, at most every 2 s', async () => {
+	it('prunes units with no held, kept or drawn page, at most every 2 s', async () => {
 		const { tree, root, loader, pool, feed } = setup();
 		const children = tree.wanted().map((wanted) => tree.add(unit(wanted), wanted.path));
 		expect(tree.pages.size).toBe(64 + 4 * 320);
 		const firsts = children.map((child) => child.pages[0]);
-		feed.update(plan([firsts[0]], [], firsts), 0);
+		feed.update(plan([firsts[0]], [], firsts), NONE, 0);
 		expect(tree.units.size).toBe(5);
 		loader.batches[0].resolve(loaded([firsts[0]]));
 		await settle();
@@ -327,10 +325,10 @@ describe('Feed', () => {
 		const stray = children[3].pages[1].id;
 		pool.held.set(stray, [0, 0]);
 
-		const kept = [firsts[1], firsts[2]];
-		feed.update(plan([], [], kept), 1000);
+		const drawn = new Set([firsts[2].id]);
+		feed.update(plan([], [], [firsts[1]]), drawn, 1000);
 		expect(tree.units.size).toBe(5);
-		feed.update(plan([], [], kept), 2000);
+		feed.update(plan([], [], [firsts[1]]), drawn, 2000);
 		expect(tree.units.size).toBe(4);
 		expect(tree.units.get(unitKey(root))).toBe(root);
 		for (const child of children.slice(0, 3)) {
@@ -345,12 +343,12 @@ describe('Feed', () => {
 	it('spares a unit that just arrived from the next prune', async () => {
 		const { tree, loader, feed } = setup();
 		const [wanted] = tree.wanted();
-		feed.update(plan([], [wanted]), 0);
+		feed.update(plan([], [wanted]), NONE, 0);
 		loader.idxs[0].resolve(unit(wanted));
 		await settle();
-		feed.update(plan([]), 2000);
+		feed.update(plan([]), NONE, 2000);
 		expect(tree.units.has(unitKey(wanted))).toBe(true);
-		feed.update(plan([]), 4000);
+		feed.update(plan([]), NONE, 4000);
 		expect(tree.units.has(unitKey(wanted))).toBe(false);
 	});
 
@@ -358,7 +356,7 @@ describe('Feed', () => {
 		const { tree, root, loader, pool, arrive, feed } = setup();
 		const [wanted] = tree.wanted();
 		const [a] = root.pages;
-		feed.update(plan([a], [wanted]), 0);
+		feed.update(plan([a], [wanted]), NONE, 0);
 		expect(feed.loading).toBe(2);
 		feed.destroy();
 		expect(loader.batches[0].signal.aborted).toBe(true);

@@ -3,14 +3,12 @@ import {
 	C0,
 	C1,
 	CLUSTER,
-	fromHalf,
 	COLOUR_WORDS,
 	GEOMETRY_WORDS,
 	PAGE_PARAMS,
 	PARAMS,
 	type DecodedPage
 } from '../../format/index.ts';
-import { toHalf } from '../../format/encode.ts';
 import {
 	FRAME_UNIFORM_BYTES,
 	KEY_BITS,
@@ -33,14 +31,15 @@ const NEAR = 0.5;
 const FAR = 300;
 const EYE: [number, number, number] = [0, 0, 1.5];
 const CAPACITY = 1024;
-// the cut draws all but the last
-const MASK = 0b1111111;
+const QUADRANTS: [number, number, number] = [2, 4, 6];
+// quadrant 1 at half, the others full
+const FACTORS = (255 | (128 << 8) | (255 << 16) | (255 << 24)) >>> 0;
 const FADE = 'fn fade(s: ptr<function, Splat>, u: array<vec4f, 1>) { (*s).opacity *= u[0].x; }';
 
 /** a splat's codes as the pool record holds them */
 interface Raw {
 	q: [number, number, number];
-	opacity: number;
+	alpha: number;
 	/** index of the largest component, then the other three */
 	rotation: [number, number, number, number];
 	scale: [number, number, number];
@@ -49,11 +48,11 @@ interface Raw {
 	sh: number[];
 }
 
-// the camera looks north from EYE: four splats ahead, one behind, one far east, one just off screen, one ahead out of the cut
+// the camera looks north from EYE: four splats ahead, one behind, one far east, one just off screen
 const SPLATS: Raw[] = [
 	{
 		q: [30000, 15000, 3000],
-		opacity: 0.9,
+		alpha: 230,
 		rotation: [0, 140, 120, 135],
 		scale: [230, 130, 40],
 		dc: [200, 120, 60],
@@ -61,7 +60,7 @@ const SPLATS: Raw[] = [
 	},
 	{
 		q: [31000, 22500, 4000],
-		opacity: 0.7,
+		alpha: 180,
 		rotation: [1, 128, 150, 110],
 		scale: [220, 140, 60],
 		dc: [90, 210, 140],
@@ -69,7 +68,7 @@ const SPLATS: Raw[] = [
 	},
 	{
 		q: [28500, 35000, 2500],
-		opacity: 2.5,
+		alpha: 255,
 		rotation: [2, 115, 128, 145],
 		scale: [235, 120, 50],
 		dc: [140, 140, 230],
@@ -77,7 +76,7 @@ const SPLATS: Raw[] = [
 	},
 	{
 		q: [30500, 50000, 5500],
-		opacity: 0.4,
+		alpha: 200,
 		rotation: [3, 135, 125, 120],
 		scale: [240, 150, 30],
 		dc: [20, 60, 250],
@@ -85,7 +84,7 @@ const SPLATS: Raw[] = [
 	},
 	{
 		q: [30000, 5000, 3000],
-		opacity: 1,
+		alpha: 255,
 		rotation: [0, 128, 128, 128],
 		scale: [200, 200, 200],
 		dc: [128, 128, 128],
@@ -93,7 +92,7 @@ const SPLATS: Raw[] = [
 	},
 	{
 		q: [50000, 15000, 3000],
-		opacity: 1,
+		alpha: 255,
 		rotation: [0, 128, 128, 128],
 		scale: [200, 200, 200],
 		dc: [128, 128, 128],
@@ -101,17 +100,9 @@ const SPLATS: Raw[] = [
 	},
 	{
 		q: [36150, 15000, 3000],
-		opacity: 1,
+		alpha: 255,
 		rotation: [0, 128, 128, 128],
 		scale: [0, 0, 0],
-		dc: [128, 128, 128],
-		sh: [0, 0, 0, 0, 0, 0, 0, 0, 0]
-	},
-	{
-		q: [29000, 20000, 3500],
-		opacity: 1,
-		rotation: [0, 128, 128, 128],
-		scale: [220, 140, 60],
 		dc: [128, 128, 128],
 		sh: [0, 0, 0, 0, 0, 0, 0, 0, 0]
 	}
@@ -134,9 +125,9 @@ function page(): DecodedPage {
 		const sh = s.sh.map((v) => v & 255);
 		const g = [
 			s.q[0] | (s.q[1] << 16),
-			s.q[2] | (index << 24),
+			s.q[2] | (s.alpha << 16) | (index << 24),
 			a | (b << 8) | (c << 16) | (s.scale[0] << 24),
-			s.scale[1] | (s.scale[2] << 8) | (toHalf(s.opacity) << 16)
+			s.scale[1] | (s.scale[2] << 8)
 		];
 		const k = [
 			s.dc[0] | (s.dc[1] << 8) | (s.dc[2] << 16) | (sh[0] << 24),
@@ -148,16 +139,11 @@ function page(): DecodedPage {
 	});
 	return {
 		count: SPLATS.length,
+		quadrants: QUADRANTS,
 		geometry,
 		colour,
 		params: PAGE,
-		clusters: new Float32Array(6),
-		nodes: {
-			counts: new Uint8Array(SPLATS.length),
-			centres: new Float32Array(0),
-			radii: new Float32Array(0),
-			links: new Uint32Array(0)
-		}
+		clusters: new Float32Array(6)
 	};
 }
 
@@ -203,7 +189,6 @@ function mat(f: (i: number, j: number) => number): number[][] {
 /** splat t on the cpu in float64, null where it cannot show */
 function expected(t: number, u: Float32Array): Expected | null {
 	const s = SPLATS[t];
-	if (!((MASK >> t) & 1)) return null;
 	const at = (k: number, n: number) => [...PAGE.subarray(k, k + n)];
 	const [origin, step] = [at(PARAMS.origin, 3), at(PARAMS.step, 3)];
 	const coordinate = (k: number) => origin[k] + s.q[k] * step[k];
@@ -245,10 +230,10 @@ function expected(t: number, u: Float32Array): Expected | null {
 	const rad = Math.hypot((a - c) / 2, b);
 	const angle = Math.atan2(2 * b, a - c) / 2;
 	const [major, minor] = [Math.sqrt(mid + rad), Math.sqrt(Math.max(mid - rad, 0))];
-	const opacity = fromHalf(toHalf(s.opacity));
+	const quadrant = QUADRANTS.filter((q) => t >= q).length;
+	const opacity = (s.alpha / 255) * (((FACTORS >>> (8 * quadrant)) & 255) / 255);
 	const centre = [(ndc[0] * 0.5 + 0.5) * WIDTH, (ndc[1] * 0.5 + 0.5) * HEIGHT];
-	const sigmas = Math.sqrt(Math.max(2 * Math.log(255 * opacity), 0));
-	const reach = opacity > 1 ? sigmas : Math.min(3, sigmas);
+	const reach = Math.min(3, Math.sqrt(Math.max(2 * Math.log(255 * opacity), 0)));
 	const [cos, sin] = [Math.abs(Math.cos(angle)), Math.abs(Math.sin(angle))];
 	const extent = [reach * (cos * major + sin * minor), reach * (sin * major + cos * minor)];
 	const size = [WIDTH, HEIGHT];
@@ -302,7 +287,7 @@ async function setup(copies = 1, capacity = CAPACITY) {
 	const pool = new Pool(device, 4 * CLUSTER * copies);
 	for (let id = 1; id <= copies; id++) pool.add(id, page(), [0, 0], () => false);
 	pool.upload(Infinity);
-	pool.draw(Array.from({ length: copies }, (_, i) => ({ id: i + 1, mask: Uint32Array.of(MASK) })));
+	pool.draw(Array.from({ length: copies }, (_, i) => ({ id: i + 1, factors: FACTORS })));
 	const buffers = frameBuffers(device, capacity, pool.slots);
 	const uniforms = frame(device, buffers.uniforms);
 	return { device, pool, buffers, uniforms, project: new Project(device, pool, buffers) };
@@ -376,7 +361,7 @@ describe('Project', () => {
 		context.buffers.destroy();
 	});
 
-	it('projects drawn splats as the cpu does and drops those behind, outside or out of the cut', async () => {
+	it('projects splats as the cpu does and drops those behind or outside', async () => {
 		const context = await setup();
 		const { count, projected, sort } = await run(context);
 		const want = SPLATS.map((_, t) => expected(t, context.uniforms)).filter((e) => e !== null);
@@ -436,9 +421,9 @@ describe('Project', () => {
 	it('uses the current visible count after an empty frame', async () => {
 		const context = await setup();
 		expect((await run(context)).count).toBe(4);
-		context.pool.draw([{ id: 1, mask: new Uint32Array(0) }]);
+		context.pool.draw([]);
 		expect((await run(context)).count).toBe(0);
-		context.pool.draw([{ id: 1, mask: Uint32Array.of(MASK) }]);
+		context.pool.draw([{ id: 1, factors: FACTORS }]);
 		expect((await run(context)).count).toBe(4);
 		context.pool.destroy();
 		context.buffers.destroy();

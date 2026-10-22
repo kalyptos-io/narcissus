@@ -117,17 +117,8 @@ async function answer(message: Extract<Message, { type: 'idx' | 'batch' }>) {
 function transfers({ page }: Loaded): Transferable[] {
 	// two arrays of one page may share a buffer, and a buffer may be listed once only
 	const buffers = new Set<ArrayBuffer>();
-	const { counts, centres, radii, links } = page.nodes;
-	const arrays = [
-		page.geometry,
-		page.colour,
-		page.params,
-		page.clusters,
-		counts,
-		centres,
-		radii,
-		links
-	];
-	for (const array of arrays) buffers.add(array.buffer);
+	for (const array of [page.geometry, page.colour, page.params, page.clusters]) {
+		buffers.add(array.buffer);
+	}
 	return [...buffers];
 }

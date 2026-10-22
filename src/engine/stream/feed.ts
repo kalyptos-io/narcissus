@@ -2,7 +2,8 @@
 
 import { unitPath } from '../../format/index.ts';
 import type { Pool } from '../gpu/pool.ts';
-import type { PageNode, Tree, UnitNode } from '../world/tree.ts';
+import type { Plan } from '../plan/cut.ts';
+import type { Tree, UnitNode } from '../world/tree.ts';
 import { Missing } from '../../ports.ts';
 import type { Loader } from './loader.ts';
 import { Scheduler, type Batch, type PageJob, type SchedulerOptions } from './scheduler.ts';
@@ -15,16 +16,6 @@ export interface FeedOptions extends SchedulerOptions {
 
 // few small batches: they split the link, a batch's pages wait for all its bytes, each page for its parent
 export const FEED: FeedOptions = { idx: 8, concurrency: 8, gap: 64 * 1024, span: 2 * 1024 * 1024 };
-
-/** what a plan asks of the stream */
-export interface Wants {
-	/** ids the pool must keep: the pages the cut reads */
-	keep: ReadonlySet<number>;
-	/** pages to load, most wanted first */
-	load: PageNode[];
-	/** .idx paths to fetch, most wanted first */
-	idx: string[];
-}
 
 /** ms a failed path waits, doubling per failure up to RETRY_MAX */
 const RETRY = 1000;
@@ -43,8 +34,8 @@ export class Feed {
 	#onStale: () => void;
 	#options: FeedOptions;
 	#scheduler: Scheduler;
-	#wants: Wants = { keep: new Set(), load: [], idx: [] };
-	#loading: ReadonlySet<number> = new Set();
+	#plan: Plan = { cut: [], load: [], idx: [], keep: new Set(), planned: 0, missing: 0 };
+	#drawn: ReadonlySet<number> = new Set();
 	/** the jobs last handed to the scheduler */
 	#wanted: PageJob[] = [];
 	/** the last update's time; failures and refusals wait from it */
@@ -86,13 +77,13 @@ export class Feed {
 	}
 
 	/**
-	 * takes the latest plan's wants: fetches its idx and load lists, aborts what left them, and
-	 * admits arriving pages into the pool while protecting the pages kept and wanted
+	 * takes the latest plan: fetches its idx and load lists, aborts what left them, and admits
+	 * arriving pages into the pool while protecting plan.keep and drawn
 	 */
-	update(wants: Wants, now: number): void {
+	update(plan: Plan, drawn: ReadonlySet<number>, now: number): void {
 		if (this.#destroyed) return;
-		this.#wants = wants;
-		this.#loading = new Set(wants.load.map(({ id }) => id));
+		this.#plan = plan;
+		this.#drawn = drawn;
 		this.#now = now;
 		for (const unit of this.#arrived) this.#added.set(unit, now);
 		this.#arrived = [];
@@ -116,7 +107,7 @@ export class Feed {
 	/** nothing wanted, in flight or waiting to upload */
 	get idle(): boolean {
 		if (this.#idx.size > 0 || this.#batches.size > 0 || this.#pool.queued > 0) return false;
-		const { idx, load } = this.#wants;
+		const { idx, load } = this.#plan;
 		return idx.length === 0 && load.every(({ id }) => this.#pool.holds(id));
 	}
 
@@ -131,7 +122,7 @@ export class Feed {
 
 	#fetchIdx(): void {
 		if (this.#stale) return;
-		for (const path of this.#wants.idx) {
+		for (const { path } of this.#plan.idx) {
 			if (this.#idx.size >= this.#options.idx) break;
 			if (this.#idx.has(path) || this.#waiting(path)) continue;
 			this.#idx.add(path);
@@ -155,7 +146,7 @@ export class Feed {
 	/** the plan's load pages not held and not waiting, most wanted first */
 	#jobs(): PageJob[] {
 		const jobs: PageJob[] = [];
-		for (const { id, unit, row } of this.#wants.load) {
+		for (const { id, unit, row } of this.#plan.load) {
 			const { idx } = unit;
 			const pack = unitPath(unit, idx.pack, 'pack');
 			if (!this.#ready(id, pack)) continue;
@@ -184,9 +175,9 @@ export class Feed {
 		if (this.#destroyed) return;
 		const node = this.#tree.pages.get(id);
 		if (!node) return;
-		const { keep } = this.#wants;
-		const loading = this.#loading;
-		const protect = (id: number) => keep.has(id) || loading.has(id);
+		const { keep } = this.#plan;
+		const drawn = this.#drawn;
+		const protect = (id: number) => keep.has(id) || drawn.has(id);
 		if (this.#pool.add(id, page, [node.unit.e, node.unit.n], protect)) {
 			this.#held.add(id);
 			if (this.#refused.delete(id)) this.#unwake(id);
@@ -258,14 +249,12 @@ export class Feed {
 		for (const id of this.#held) if (!this.#pool.holds(id)) this.#held.delete(id);
 		for (const [id, until] of this.#refused) if (until <= now) this.#refused.delete(id);
 		for (const [unit, seen] of this.#added) if (now - seen >= PRUNE) this.#added.delete(unit);
-		const { keep } = this.#wants;
+		const { keep } = this.#plan;
 		if (this.#tree.pages.size <= 2 * (this.#held.size + keep.size)) return;
-		const kept = new Set([...keep, ...this.#loading, ...this.#held]);
+		const kept = new Set([...keep, ...this.#drawn, ...this.#held]);
 		// a fresh unit's pages wait on a plan that refines into them
 		for (const unit of this.#added.keys()) for (const { id } of unit.pages) kept.add(id);
-		for (const { pages } of this.#tree.prune(kept)) {
-			for (const { id } of pages) if (this.#pool.holds(id)) this.#pool.remove(id);
-		}
+		for (const id of this.#tree.prune(kept)) if (this.#pool.holds(id)) this.#pool.remove(id);
 	}
 
 	#ready(id: number, pack: string): boolean {

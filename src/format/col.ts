@@ -1,10 +1,10 @@
 import type { Col } from './types.ts';
 import { unwrap } from './inflate.ts';
-import { COL_CHANNELS, COL_HEADER, COL_MAGIC, COL_VERSION } from './spec.ts';
+import { COL_CHANNELS, COL_HEADER, COL_MAGIC } from './spec.ts';
 
 /** throws an Error naming the fault when the bytes are not a v1 .col */
 export async function parseCol(bytes: Uint8Array): Promise<Col> {
-	const v = await unwrap(bytes, COL_MAGIC, '.col', COL_VERSION);
+	const v = await unwrap(bytes, COL_MAGIC, '.col');
 	if (v.byteLength < COL_HEADER) throw new Error('.col header is cut off');
 	const n = v.getUint16(0, true);
 	const size = COL_HEADER + COL_CHANNELS * n * n;

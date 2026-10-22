@@ -1,10 +1,8 @@
 // .idx fixtures for the tests that grow a tree
 
 import {
-	evenBits,
 	LEAF,
 	PAGE_SIDE,
-	TOP_PAGE,
 	type Idx,
 	type PageRow,
 	type UnitKey,
@@ -18,7 +16,7 @@ export function hash({ level, e, n }: UnitKey): string {
 /** a world of roots; a tree reads nothing else of it */
 export function world(...roots: UnitKey[]): World {
 	return {
-		version: 2,
+		version: 1,
 		crs: 'EPSG:25832',
 		height: 'DVR90',
 		leaf: LEAF,
@@ -29,40 +27,41 @@ export function world(...roots: UnitKey[]): World {
 }
 
 export interface UnitOptions {
-	/** nodes a page */
+	/** splats a page */
 	count?: number;
-	/** a root's top page after its own bands */
-	top?: boolean;
+	/** page levels above the unit's own */
+	extra?: number;
 	/** quadrants whose child unit is named */
 	children?: number[];
 	/** bytes a page, back to back in the pack */
 	size?: number;
 }
 
-/** a full unit of flat ground: every page of its own bands present, every descendant named */
+/** a full unit of flat ground: every page present, every descendant named */
 export function unit(
 	key: UnitKey,
-	{ count = 1000, top = false, children = [0, 1, 2, 3], size = 0 }: UnitOptions = {}
+	{ count = 1000, extra = 0, children = [0, 1, 2, 3], size = 0 }: UnitOptions = {}
 ): Idx {
 	const { level, e, n } = key;
-	const side = LEAF * 2 ** level;
+	const levels = level === 0 ? [0, 1] : [level + 1];
+	for (let k = 0; k < extra; k++) levels.push(levels[levels.length - 1] + 1);
+	const quarter = Math.floor(count / 4);
 	const rows: PageRow[] = [];
-	const add = (g: number, i: number, j: number, flags: number, box: Float32Array) => {
-		const offset = rows.length * size;
-		rows.push({ g, i, j, flags, count, box, offset, length: size });
-	};
-	for (const g of level === 0 ? [0, 1] : [level + 1]) {
-		const page = PAGE_SIDE * 2 ** g;
-		const span = side / page;
-		for (let m = 0; m < span * span; m++) {
-			const [i, j] = [evenBits(m), evenBits(m >> 1)];
-			add(g, i, j, 0, Float32Array.of(i * page, j * page, 0, (i + 1) * page, (j + 1) * page, 5));
+	for (const g of levels) {
+		const side = PAGE_SIDE * 2 ** g;
+		const span = (LEAF * 2 ** level) / side;
+		for (let j = 0; j < span; j++) {
+			for (let i = 0; i < span; i++) {
+				const box = Float32Array.of(i * side, j * side, 0, (i + 1) * side, (j + 1) * side, 5);
+				const quadrants: [number, number, number] = [quarter, 2 * quarter, 3 * quarter];
+				const offset = rows.length * size;
+				rows.push({ g, i, j, count, quadrants, box, offset, length: size });
+			}
 		}
 	}
-	if (top) add(level + 2, 0, 0, TOP_PAGE, Float32Array.of(0, 0, 0, side, side, 5));
 	const below = (depth: number, column: number, row: number): UnitKey => {
-		const at = LEAF * 2 ** (level - depth);
-		return { level: level - depth, e: e + column * at, n: n + row * at };
+		const side = LEAF * 2 ** (level - depth);
+		return { level: level - depth, e: e + column * side, n: n + row * side };
 	};
 	const descendants: Idx['descendants'] = [];
 	for (const depth of [2, 3]) {

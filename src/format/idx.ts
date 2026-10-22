@@ -1,14 +1,6 @@
 import type { Idx, PageRow, UnitKey } from './types.ts';
 import { unwrap } from './inflate.ts';
-import {
-	CHILD_BYTES,
-	DESCENDANT_BYTES,
-	IDX_HEADER,
-	IDX_MAGIC,
-	LEAF,
-	ROW_BYTES,
-	VERSION
-} from './spec.ts';
+import { CHILD_BYTES, DESCENDANT_BYTES, IDX_HEADER, IDX_MAGIC, LEAF, ROW_BYTES } from './spec.ts';
 
 function hashAt(view: DataView, offset: number): string {
 	let hex = '';
@@ -19,25 +11,29 @@ function hashAt(view: DataView, offset: number): string {
 	return hex;
 }
 
-/** a 40-byte page row at offset, as in .idx and the .pack table */
+/** a 52-byte page row at offset, as in .idx and the .pack table */
 export function rowAt(view: DataView, offset: number): PageRow {
 	const box = new Float32Array(6);
-	for (let k = 0; k < 6; k++) box[k] = view.getFloat32(offset + 8 + 4 * k, true);
+	for (let k = 0; k < 6; k++) box[k] = view.getFloat32(offset + 20 + 4 * k, true);
 	return {
 		g: view.getUint8(offset),
 		i: view.getUint8(offset + 1),
 		j: view.getUint8(offset + 2),
-		flags: view.getUint8(offset + 3),
 		count: view.getUint32(offset + 4, true),
+		quadrants: [
+			view.getUint32(offset + 8, true),
+			view.getUint32(offset + 12, true),
+			view.getUint32(offset + 16, true)
+		],
 		box,
-		offset: view.getUint32(offset + 32, true),
-		length: view.getUint32(offset + 36, true)
+		offset: view.getUint32(offset + 44, true),
+		length: view.getUint32(offset + 48, true)
 	};
 }
 
-/** throws an Error naming the fault when the bytes are not a v2 .idx */
+/** throws an Error naming the fault when the bytes are not a v1 .idx */
 export async function parseIdx(bytes: Uint8Array): Promise<Idx> {
-	const v = await unwrap(bytes, IDX_MAGIC, '.idx', VERSION);
+	const v = await unwrap(bytes, IDX_MAGIC, '.idx');
 	if (v.byteLength < IDX_HEADER) throw new Error('.idx header is cut off');
 	const rows = v.getUint16(32, true);
 	const children = v.getUint8(34);
@@ -89,42 +85,12 @@ export function parseUnitPath(path: string): (UnitKey & { hash: string }) | null
 	return { level: Number(m[1]), e: Number(m[2]), n: Number(m[3]), hash: m[4] };
 }
 
-/** a unit's name in maps and sets: L/E/N */
-export function unitKey({ level, e, n }: UnitKey): string {
-	return `${level}/${e}/${n}`;
-}
-
-/** the child of key at quadrant a + 2b, a east and b north */
-export function childKey({ level, e, n }: UnitKey, quadrant: number): UnitKey {
-	const half = LEAF * 2 ** (level - 1);
-	return { level: level - 1, e: e + (quadrant & 1) * half, n: n + (quadrant >> 1) * half };
-}
-
-/** the quadrant a + 2b of key whose square holds below, a unit any levels down */
-export function quadrantOf(key: UnitKey, below: UnitKey): number {
-	const half = LEAF * 2 ** (key.level - 1);
-	return Math.floor((below.e - key.e) / half) + 2 * Math.floor((below.n - key.n) / half);
-}
-
-/** the morton code of (x, y), x in the even bits; a byte each, as a row holds its i and j */
-export function morton(x: number, y: number): number {
-	let m = 0;
-	for (let b = 0; b < 8; b++) m |= (((x >> b) & 1) << (2 * b)) | (((y >> b) & 1) << (2 * b + 1));
-	return m;
-}
-
-/** the even bits of m packed together: x of morton code m, and y of m >> 1 */
-export function evenBits(m: number): number {
-	let v = 0;
-	for (let b = 0; b < 8; b++) v |= ((m >> (2 * b)) & 1) << b;
-	return v;
-}
-
 /** the units an idx names: its children, then its descendants two and three levels down */
 export function namedUnits(idx: Idx): { key: UnitKey; hash: string }[] {
 	const { level, e, n } = idx;
+	const half = LEAF * 2 ** (level - 1);
 	const named = idx.children.map(({ quadrant, idx: hash }) => ({
-		key: childKey(idx, quadrant),
+		key: { level: level - 1, e: e + (quadrant & 1) * half, n: n + (quadrant >> 1) * half },
 		hash
 	}));
 	for (const { depth, column, row, idx: hash } of idx.descendants) {

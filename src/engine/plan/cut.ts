@@ -1,674 +1,291 @@
-// the cut: which nodes the views draw within the budget, and which pages and .idx files to load;
-// pure, so it runs in the plan worker and in node
+// which pages the view should draw and load, inside the draw budget and the pool
 
-import {
-	childKey,
-	linkRow,
-	linkStart,
-	linkUnit,
-	namedUnits,
-	parseUnitPath,
-	quadrantOf,
-	unitKey,
-	unitPath,
-	LEAF,
-	PAGE_SIDE,
-	TOP_PAGE,
-	type PageNodes
-} from '../../format/index.ts';
 import { slots } from '../gpu/layout.ts';
-import { view as viewMatrix } from '../math/mat4.ts';
-import type { Camera, Drawn } from '../types.ts';
-import type { UnitNode } from '../world/tree.ts';
+import { quadrantSplats } from './draw.ts';
+import { footprint, shownQuadrants, type Footprint } from './footprint.ts';
+import { square, type PageNode, type Tree, type Wanted } from '../world/tree.ts';
 
-/** px: a node this size or smaller is never refined */
-export const T_MIN = 1;
-/** nodes a cut may draw per node of budget */
-export const CAP = 1.1;
-/** the first round's threshold, in T_MIN */
-const START = 1000;
-/** how fast a node's weight falls off screen: the fringe a turn needs is fetched, not the scene around */
-const EDGE = 8;
-/** a node's pixel area weighs up to 1 + CENTRE times more at the centre than at the edge, where the eye is */
-const CENTRE = 15;
-/** a link into an unknown child this many thresholds large also wants the .idx files under it */
-const DEEP = 4;
-/** a parent this share of the threshold or larger has the page it refines into fetched ahead of need */
-const AHEAD = 0.5;
+/** a page refined in the last plan stays refined until its count reaches the target times this */
+export const MARGIN = 1 / 0.8 ** 2;
+/** ms a refinement seen on screen stays while off screen */
+export const HOLD = 1500;
+const FRINGE = 1.1;
 
-/** a unit as the cut knows it */
-export interface UnitInfo {
-	level: number;
-	e: number;
-	n: number;
-	/** a unit with no parent; its top page starts the cut */
-	root: boolean;
-	/** by row, as links name them; band, square and unit-local extent box as the .idx gives them */
-	rows: {
-		id: number;
-		count: number;
-		top: boolean;
-		g: number;
-		i: number;
-		j: number;
-		box: Float32Array;
-	}[];
-	/** by quadrant: the child's .idx path, null where none is named */
-	children: (string | null)[];
-	/** by quadrant: the .idx paths of the units two and three levels down inside it */
-	descendants: string[][];
-}
-
-export interface CutView {
-	/** world metres */
-	eye: readonly [number, number, number];
-	/** the world-to-view rotation, row-major: view x right, y up, z back */
-	rotation: ArrayLike<number>;
-	/** the projection's x and y scales, proj[0] and proj[5] */
-	p00: number;
-	p11: number;
-	/** pixels */
+export interface View {
+	/** world position of the floating origin; boxes are moved into its frame */
+	origin: readonly [number, number, number];
+	/** column-major world-to-view in the floating-origin frame */
+	view: Float64Array;
 	width: number;
 	height: number;
+	/** tan(fov / 2), vertical */
+	tan: number;
+	near: number;
+	far: number;
 }
 
-const DEG = Math.PI / 180;
-
-/** camera's view of a width x height target at its full-scale size, so a lower render scale costs sharpness, not detail */
-export function cutView(camera: Camera, width: number, height: number, scale: number): CutView {
-	const m = viewMatrix(new Float64Array(16), [0, 0, 0], camera.yaw * DEG, camera.pitch * DEG);
-	const p11 = 1 / Math.tan((camera.fov * DEG) / 2);
-	return {
-		eye: [camera.e, camera.n, camera.h],
-		rotation: [m[0], m[4], m[8], m[1], m[5], m[9], m[2], m[6], m[10]],
-		p00: (p11 * height) / width,
-		p11,
-		width: width / scale,
-		height: height / scale
-	};
-}
-
-export interface CutRequest {
-	/** the camera, and the camera a moment ahead while it moves */
-	views: CutView[];
-	/** nodes drawn */
+export interface PlanOptions {
+	/** splats drawn inside the frustum */
 	budget: number;
-	/** pool slots the touched and wanted pages may take, as slots() counts them */
+	/** pool slots the kept pages may take, as slots() counts them */
 	capacity: number;
+	/** ms, performance clock */
+	now: number;
+	/** the camera a moment ahead, refined like the current one */
+	predicted?: View;
 }
 
-export interface CutResult {
-	/** the pages whose draw mask changed since the last applied plan */
-	masks: Drawn[];
-	/** ids of the pages the cut reads, which the pool must keep */
-	touched: number[];
-	/** ids of the pages to load, most wanted first */
-	load: number[];
-	/** .idx paths to fetch, most wanted first */
-	idx: string[];
-	/** nodes drawn */
+export interface Plan {
+	/** the pages to draw; a refined page draws the quadrants it handed to no child */
+	cut: PageNode[];
+	/** pages to load, most wanted first, each one's parent resident; the fringe once the screen is whole and the camera rests */
+	load: PageNode[];
+	/** .idx files to fetch, most wanted first */
+	idx: Wanted[];
+	/** ids the pool must keep: the cut, its ancestors and held pages */
+	keep: Set<number>;
+	/** splats of the cut's quadrants inside the frustum */
 	planned: number;
-	/** of planned, the nodes whose family waits for its page or .idx */
+	/** of planned, the splats not resident yet */
 	missing: number;
-	/** px, the last round's threshold */
-	detail: number;
-	/** nodes of the pages drawn, which the gpu projects and masks */
-	projected: number;
-	/** ms the plan took */
-	ms: number;
 }
 
-type Row = UnitInfo['rows'][number];
-
-interface Unit extends UnitInfo {
-	/** by quadrant, the child's key */
-	keys: string[];
-	/** rows by square, the top page aside */
-	grid: Map<number, Row>;
-	/** the lowest band it holds */
-	low: number;
+interface Measure {
+	page: PageNode;
+	/** on screen at margin 1 */
+	shown: boolean;
+	/** on screen now or ahead, at margin 1 */
+	near: boolean;
+	/** splats of its quadrants on screen */
+	visible: number;
+	pixels: number;
+	weight: number;
 }
 
-const square = (g: number, i: number, j: number) => (g << 16) | (i << 8) | j;
-
-/** a unit's rows of band g over the unit-local square x0 y0 x1 y1 */
-function cells(
-	unit: Unit,
-	g: number,
-	x0: number,
-	y0: number,
-	x1: number,
-	y1: number
-): [Unit, Row][] {
-	const side = PAGE_SIDE * 2 ** g;
-	const n = Math.max(1, Math.ceil((LEAF * 2 ** unit.level) / side));
-	const out: [Unit, Row][] = [];
-	for (let i = Math.max(0, Math.floor(x0 / side)); i < Math.min(n, Math.ceil(x1 / side)); i++)
-		for (let j = Math.max(0, Math.floor(y0 / side)); j < Math.min(n, Math.ceil(y1 / side)); j++) {
-			const row = unit.grid.get(square(g, i, j));
-			if (row) out.push([unit, row]);
-		}
-	return out;
+interface Step {
+	page: PageNode;
+	shown: boolean;
+	/** refined last plan and on screen within HOLD: the quadrants it handed down stay */
+	held: number | null;
+	visible: number;
+	ratio: number;
 }
 
-interface Page {
-	id: number;
-	unit: Unit;
-	nodes: PageNodes;
-	/** parents before each 32-node word */
-	ranks: Uint32Array;
-	seen: Uint32Array;
-	refined: Uint32Array;
-	/** the plan that last touched it, and its index in that plan's touched pages */
-	stamp: number;
-	index: number;
-	/** its unit's corner less each view's eye, 3 a view */
-	offset: Float64Array;
-}
+/** keeps the hysteresis and the hold between plans */
+export class Planner {
+	/** by id, the quadrants each refined page handed to its children, a bit each */
+	#refined = new Map<number, number>();
+	/** when each refined page was last on screen */
+	#seen = new Map<number, number>();
+	#out: Footprint = { shown: false, pixels: 0, weight: 1 };
 
-/** buckets of the queue, a doubling of size each from 1 px up to 2^30 */
-const BUCKETS = 32;
+	plan(tree: Tree, view: View, resident: (id: number) => boolean, options: PlanOptions): Plan {
+		const { budget, capacity, now, predicted } = options;
+		const order: PageNode[] = [];
+		const visible: number[] = [];
+		const near: boolean[] = [];
+		const refined = new Map<number, number>();
+		const seen = new Map<number, number>();
+		const wanted = tree.wanted();
+		const priority = new Map<number, number>();
+		const queue = new Queue();
+		let planned = 0;
+		let kept = 0;
 
-const bucket = (size: number) => 31 - Math.clz32(Math.min(size, 2 ** 30));
-
-/** parents waiting to refine, in buckets of size; a bucket gives its newest first */
-class Queue {
-	size = 0;
-	/** the highest bucket that may hold any */
-	top = -1;
-	heads = new Int32Array(BUCKETS).fill(-1);
-	/** per entry: its page's index in the plan's touched pages, its node and rank, its size, the next in its bucket */
-	pages = new Int32Array(1024);
-	nodes = new Int32Array(1024);
-	ranks = new Int32Array(1024);
-	sizes = new Float64Array(1024);
-	next = new Int32Array(1024);
-	#used = 0;
-
-	reset(): void {
-		this.heads.fill(-1);
-		this.top = -1;
-		this.size = 0;
-		this.#used = 0;
-	}
-
-	/** returns its bucket */
-	push(page: number, node: number, rank: number, size: number): number {
-		const k = this.#used++;
-		if (k === this.next.length) this.#grow();
-		const b = bucket(size);
-		this.pages[k] = page;
-		this.nodes[k] = node;
-		this.ranks[k] = rank;
-		this.sizes[k] = size;
-		this.next[k] = this.heads[b];
-		this.heads[b] = k;
-		this.top = Math.max(this.top, b);
-		this.size++;
-		return b;
-	}
-
-	/** the newest entry of bucket b, or -1 */
-	pop(b: number): number {
-		const k = this.heads[b];
-		if (k >= 0) {
-			this.heads[b] = this.next[k];
-			this.size--;
-		}
-		return k;
-	}
-
-	#grow(): void {
-		const grow = <T extends Int32Array | Float64Array>(a: T): T => {
-			const bigger = new (a.constructor as new (n: number) => T)(2 * a.length);
-			bigger.set(a);
-			return bigger;
+		const enter = (m: Measure) => {
+			const page = m.page;
+			const count = page.row.count;
+			order.push(page);
+			visible.push(m.visible);
+			near.push(m.near);
+			kept += slots(count);
+			planned += m.visible;
+			const handed = this.#refined.get(page.id);
+			const was = handed !== undefined;
+			const target = m.pixels * m.weight;
+			// rank by need alone: ranked up by the margin, it would meet the budget before what freed it
+			const ratio = target / Math.max(1, count);
+			if (wanted.length && m.pixels > 0) priority.set(page.id, ratio);
+			const held =
+				was && !m.shown && now - (this.#seen.get(page.id) ?? -Infinity) <= HOLD ? handed : null;
+			if ((count < target * (was ? MARGIN : 1) || held !== null) && refinable(page, resident))
+				queue.push({ page, shown: m.shown, held, visible: m.visible, ratio });
 		};
-		this.pages = grow(this.pages);
-		this.nodes = grow(this.nodes);
-		this.ranks = grow(this.ranks);
-		this.sizes = grow(this.sizes);
-		this.next = grow(this.next);
-	}
-}
 
-/** the UnitInfo of a unit of the tree */
-export function unitInfo(unit: UnitNode, root: boolean): UnitInfo {
-	const { idx } = unit;
-	const children: (string | null)[] = [null, null, null, null];
-	const descendants: string[][] = [[], [], [], []];
-	const names = namedUnits(idx);
-	names.forEach(({ key, hash }, k) => {
-		const path = unitPath(key, hash, 'idx');
-		const quadrant = quadrantOf(idx, key);
-		if (k < idx.children.length) children[quadrant] = path;
-		else descendants[quadrant].push(path);
-	});
-	return {
-		level: unit.level,
-		e: unit.e,
-		n: unit.n,
-		root,
-		rows: unit.pages.map(({ id, row }) => ({
-			id,
-			count: row.count,
-			top: (row.flags & TOP_PAGE) !== 0,
-			g: row.g,
-			i: row.i,
-			j: row.j,
-			box: row.box
-		})),
-		children,
-		descendants
-	};
-}
-
-export class Cut {
-	#units = new Map<string, Unit>();
-	#pages = new Map<number, Page>();
-	/** page id to its unit */
-	#rows = new Map<number, Unit>();
-	/** the masks of the last applied plan, and of the last computed one, drawn pages alone */
-	#applied = new Map<number, Uint32Array>();
-	#pending: Map<number, Uint32Array> | null = null;
-	#stamp = 0;
-	#queue = new Queue();
-	#ahead = new Queue();
-
-	unit(info: UnitInfo): void {
-		const keys = [0, 1, 2, 3].map((q) => unitKey(childKey(info, q)));
-		const grid = new Map<number, Row>();
-		for (const row of info.rows) if (!row.top) grid.set(square(row.g, row.i, row.j), row);
-		const unit = { ...info, keys, grid, low: info.level === 0 ? 0 : info.level + 1 };
-		this.#units.set(unitKey(info), unit);
-		for (const row of info.rows) this.#rows.set(row.id, unit);
-	}
-
-	/** the rows a band below a row, in its unit or its children; null while a child's .idx is unknown, which is fetched */
-	#under(unit: Unit, row: Row, fetch: (path: string) => void): [Unit, Row][] | null {
-		const g = row.g - 1;
-		if (g < 0) return [];
-		const side = LEAF * 2 ** unit.level;
-		const page = PAGE_SIDE * 2 ** row.g;
-		const x0 = row.top ? 0 : row.i * page;
-		const y0 = row.top ? 0 : row.j * page;
-		const x1 = row.top ? side : Math.min(side, x0 + page);
-		const y1 = row.top ? side : Math.min(side, y0 + page);
-		if (g >= unit.low) return cells(unit, g, x0, y0, x1, y1);
-		// band g is the children's own
-		const half = side / 2;
-		const out: [Unit, Row][] = [];
-		for (let q = 0; q < 4; q++) {
-			const qx = (q & 1) * half;
-			const qy = (q >> 1) * half;
-			if (x1 <= qx || x0 >= qx + half || y1 <= qy || y0 >= qy + half) continue;
-			const child = this.#units.get(unit.keys[q]);
-			if (child) out.push(...cells(child, g, x0 - qx, y0 - qy, x1 - qx, y1 - qy));
-			else if (unit.children[q]) {
-				fetch(unit.children[q]!);
-				// with the .idx files further down under this page, so no band below waits a round trip of its own
-				for (const path of unit.descendants[q]) {
-					const key = parseUnitPath(path);
-					if (!key) continue;
-					const extent = LEAF * 2 ** key.level;
-					const kx = key.e - unit.e;
-					const ky = key.n - unit.n;
-					if (kx < x1 && kx + extent > x0 && ky < y1 && ky + extent > y0) fetch(path);
-				}
-				return null;
+		for (const root of tree.roots) enter(this.#measure(root, view, predicted));
+		// once a refinement on screen misses the budget, only off-screen ones go on until one frees budget
+		const blocked: Step[] = [];
+		while (queue.size) {
+			const step = queue.pop();
+			const { page, shown, held } = step;
+			// quadrants off even the fringe stay with the page, which draws them unseen, so off budget
+			const parts: Measure[] = [];
+			let quadrants = 0;
+			for (let q = 0; q < page.children.length; q++) {
+				const child = page.children[q];
+				if (!child) continue;
+				const m = this.#measure(child, view, predicted);
+				if (m.pixels <= 0 && !((held ?? 0) & (1 << q))) continue;
+				parts.push(m);
+				quadrants |= 1 << q;
 			}
+			if (!parts.length) continue;
+			let grow = 0;
+			let delta = -step.visible;
+			for (const m of parts) {
+				grow += slots(m.page.row.count);
+				delta += m.visible;
+			}
+			if (kept + grow > capacity) break;
+			if (delta > 0 && (blocked.length || planned + delta > budget)) {
+				blocked.push(step);
+				continue;
+			}
+			// a page at the edge frees budget when its children show less of it
+			if (delta < 0) for (const b of blocked.splice(0)) queue.push(b);
+			refined.set(page.id, quadrants);
+			const last = shown ? now : this.#seen.get(page.id);
+			if (last !== undefined) seen.set(page.id, last);
+			planned -= step.visible;
+			for (const m of parts) enter(m);
 		}
-		return out;
-	}
+		this.#refined = refined;
+		this.#seen = seen;
 
-	drop(key: string): void {
-		const unit = this.#units.get(key);
-		if (!unit) return;
-		this.#units.delete(key);
-		for (const row of unit.rows) {
-			this.#rows.delete(row.id);
-			this.evict(row.id);
-		}
-	}
-
-	/** a page the pool holds; ignored while its unit is unknown */
-	page(id: number, nodes: PageNodes): void {
-		const unit = this.#rows.get(id);
-		if (!unit) return;
-		const { counts } = nodes;
-		const words = Math.ceil(counts.length / 32);
-		const ranks = new Uint32Array(words);
-		for (let w = 0, r = 0; w < words; w++) {
-			ranks[w] = r;
-			for (let t = 32 * w; t < Math.min(32 * w + 32, counts.length); t++) if (counts[t]) r++;
-		}
-		this.#pages.set(id, {
-			id,
-			unit,
-			nodes,
-			ranks,
-			seen: new Uint32Array(words),
-			refined: new Uint32Array(words),
-			stamp: 0,
-			index: 0,
-			offset: new Float64Array(6)
-		});
-	}
-
-	/** a page the pool let go of */
-	evict(id: number): void {
-		this.#pages.delete(id);
-		this.#applied.delete(id);
-		this.#pending?.delete(id);
-	}
-
-	/** whether the pool took the last plan's masks; the next plan's changes are against what it holds */
-	verdict(applied: boolean): void {
-		if (applied && this.#pending) this.#applied = this.#pending;
-		this.#pending = null;
-	}
-
-	plan({ views, budget, capacity }: CutRequest): CutResult {
-		const started = performance.now();
-		const stamp = ++this.#stamp;
-		const cap = Math.floor(CAP * budget);
-		// per view: the rotation's rows, the projection's scales and the focal length in pixels
-		const at = new Float64Array(12 * views.length);
-		views.forEach((v, k) => {
-			for (let c = 0; c < 9; c++) at[12 * k + c] = v.rotation[c];
-			at.set([v.p00, v.p11, Math.max(v.p00 * v.width, v.p11 * v.height) / 2], 12 * k + 9);
-		});
-		const touched: Page[] = [];
-		const pages = new Map<number, number>();
-		const files = new Map<string, number>();
-		const queue = this.#queue;
-		queue.reset();
-		let taken = 0;
-		let used = 0;
+		const cut: PageNode[] = [];
+		const pending: { page: PageNode; near: boolean }[] = [];
+		const keep = new Set(refined.keys());
 		let missing = 0;
-
-		const touch = (page: Page) => {
-			page.stamp = stamp;
-			page.seen.fill(0);
-			page.refined.fill(0);
-			for (let k = 0; k < views.length; k++) {
-				page.offset[3 * k] = page.unit.e - views[k].eye[0];
-				page.offset[3 * k + 1] = page.unit.n - views[k].eye[1];
-				page.offset[3 * k + 2] = -views[k].eye[2];
-			}
-			page.index = touched.length;
-			touched.push(page);
-			taken += slots(page.nodes.counts.length);
-			return page.index;
-		};
-		const room = (count: number) => taken + slots(count) <= capacity;
-		const want = (id: number, count: number, priority: number) => {
-			const known = pages.get(id);
-			if (known !== undefined) {
-				if (priority > known) pages.set(id, priority);
-				return true;
-			}
-			if (!room(count)) return false;
-			pages.set(id, priority);
-			taken += slots(count);
-			return true;
-		};
-		const fetch = (path: string, priority: number) => {
-			if (priority > (files.get(path) ?? -1)) files.set(path, priority);
-		};
-		// the row a parent's link names; into a child unit not yet known, its .idx (and with deep those under it) is fetched when there is room
-		const follow = (
-			page: Page,
-			link: number,
-			s: number,
-			deep: boolean
-		): Row | 'fetched' | undefined => {
-			const quadrant = linkUnit(link) - 1;
-			const unit = quadrant < 0 ? page.unit : this.#units.get(page.unit.keys[quadrant]);
-			if (unit) return unit.rows[linkRow(link)];
-			const path = page.unit.children[quadrant];
-			// a family's page holds about as many nodes as its parent's, so one the pool has no room for is not fetched
-			if (!path || !room(page.nodes.counts.length)) return undefined;
-			fetch(path, s);
-			// below the child, which the cut needs first
-			if (deep) for (const below of page.unit.descendants[quadrant]) fetch(below, s / 2);
-			return 'fetched';
-		};
-		// px a sphere of radius r at d from view k's eye spans, weighed off screen and toward the centre
-		const span = (k: number, dx: number, dy: number, dz: number, r: number) => {
-			// the sphere against the view, so one reaching into it from outside counts in full
-			const depth = r - (at[k + 6] * dx + at[k + 7] * dy + at[k + 8] * dz);
-			if (depth <= 0) return 0;
-			const x =
-				Math.abs(at[k + 9] * (at[k] * dx + at[k + 1] * dy + at[k + 2] * dz)) - at[k + 9] * r;
-			const y =
-				Math.abs(at[k + 10] * (at[k + 3] * dx + at[k + 4] * dy + at[k + 5] * dz)) - at[k + 10] * r;
-			const u = Math.max(0, x) / depth;
-			const w = Math.max(0, y) / depth;
-			const weight =
-				(depth / Math.max(depth, x, y)) ** EDGE *
-				Math.sqrt(1 + CENTRE * Math.max(0, 1 - u * u - w * w) ** 2);
-			return (2 * r * at[k + 11] * weight) / Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), 1e-6);
-		};
-		const size = (page: Page, rank: number) => {
-			const { centres, radii } = page.nodes;
-			const { offset } = page;
-			let most = 0;
-			for (let k = 0, v = 0; v < views.length; k += 12, v++) {
-				const dx = centres[3 * rank] + offset[3 * v];
-				const dy = centres[3 * rank + 1] + offset[3 * v + 1];
-				const dz = centres[3 * rank + 2] + offset[3 * v + 2];
-				most = Math.max(most, span(k, dx, dy, dz, radii[rank]));
-			}
-			return most;
-		};
-		// a family enters the cut; its parents large enough and small enough to fit wait to refine; returns the highest bucket it filled
-		const enter = (index: number, start: number, count: number) => {
-			const page = touched[index];
-			const { counts } = page.nodes;
-			let rank = page.ranks[start >> 5];
-			for (let t = start & ~31; t < start; t++) if (counts[t]) rank++;
-			let high = -1;
-			for (let t = start; t < start + count; t++) {
-				page.seen[t >> 5] |= 1 << (t & 31);
-				const children = counts[t];
-				if (!children) continue;
-				const r = rank++;
-				if (children - 1 > cap - used) continue;
-				const s = size(page, r);
-				if (s > T_MIN) high = Math.max(high, queue.push(index, t, r, s));
-			}
-			return high;
-		};
-
-		for (const unit of this.#units.values()) {
-			if (!unit.root) continue;
-			const top = unit.rows.find((row) => row.top);
-			if (!top) continue;
-			const page = this.#pages.get(top.id);
-			if (!page) {
-				want(top.id, top.count, Infinity);
-				continue;
-			}
-			used += top.count;
-			enter(touch(page), 0, top.count);
-		}
-
-		let threshold = START * T_MIN;
-		for (;;) {
-			// everything above the threshold refines, the largest buckets first; the rest of its bucket waits
-			const low = bucket(threshold);
-			let parked = -1;
-			let waiting = 0;
-			for (let b = queue.top; b >= low;) {
-				const k = queue.pop(b);
-				if (k < 0) {
-					b--;
-					continue;
-				}
-				const s = queue.sizes[k];
-				if (s <= threshold) {
-					queue.next[k] = parked;
-					parked = k;
-					waiting++;
-					continue;
-				}
-				const page = touched[queue.pages[k]];
-				const node = queue.nodes[k];
-				const count = page.nodes.counts[node];
-				if (count - 1 > cap - used) continue;
-				const link = page.nodes.links[queue.ranks[k]];
-				const row = follow(page, link, s, s > DEEP * threshold);
-				if (row === 'fetched') {
-					missing++;
-					continue;
-				}
-				// a link past the listed rows, or past its page, is the writer's fault; the parent stays
-				if (!row || linkStart(link) + count > row.count) continue;
-				const target = this.#pages.get(row.id);
-				if (!target) {
-					if (want(row.id, row.count, s)) missing++;
-					continue;
-				}
-				let index = target.index;
-				if (target.stamp !== stamp) {
-					if (!room(row.count)) continue;
-					index = touch(target);
-				}
-				used += count - 1;
-				page.refined[node >> 5] |= 1 << (node & 31);
-				b = Math.max(b, enter(index, linkStart(link), count));
-			}
-			queue.heads[low] = parked;
-			queue.size += waiting;
-			queue.top = low;
-			if (!queue.size || used >= budget) break;
-			threshold = Math.max(T_MIN, threshold / 2, 0.99 * threshold * Math.sqrt(used / budget));
-		}
-
-		// a page arriving late is drawn at once, so the parents nearest the threshold want theirs now, below every refinement
-		const near = threshold * AHEAD;
-		for (let b = queue.top; b >= 0 && b >= bucket(near); b--) {
-			for (let k = queue.pop(b); k >= 0; k = queue.pop(b)) {
-				const s = queue.sizes[k];
-				if (s <= near) continue;
-				const page = touched[queue.pages[k]];
-				const row = follow(page, page.nodes.links[queue.ranks[k]], s, false);
-				if (!row || row === 'fetched') continue;
-				const target = this.#pages.get(row.id);
-				// one fetched ahead is read, so the pool keeps it until its parent refines
-				if (!target) want(row.id, row.count, s);
-				else if (target.stamp !== stamp && room(row.count)) touch(target);
+		for (let i = 0; i < order.length; i++) {
+			const page = order[i];
+			if (refined.has(page.id)) continue;
+			cut.push(page);
+			keep.add(page.id);
+			if (!resident(page.id)) {
+				missing += visible[i];
+				pending.push({ page, near: near[i] });
 			}
 		}
-
-		// ahead off the .idx within the budget: the pages under a page whose members would split, so bands load together
-		const ahead = this.#ahead;
-		ahead.reset();
-		// ranked after the pages the cut waits on, which block drawing now
-		const later = new Map<number, number>();
-		const wantLater = (id: number, count: number, priority: number) => {
-			if (pages.has(id)) return true;
-			const known = later.get(id);
-			if (known !== undefined) {
-				if (priority > known) later.set(id, priority);
-				return true;
-			}
-			if (!room(count)) return false;
-			later.set(id, priority);
-			taken += slots(count);
-			return true;
-		};
-		const walked: [Unit, Row][] = [];
-		const enterRow = (unit: Unit, row: Row) => {
-			const b = row.box;
-			const r = Math.hypot(b[3] - b[0], b[4] - b[1], b[5] - b[2]) / 2;
-			let most = 0;
-			for (let k = 0, v = 0; v < views.length; k += 12, v++) {
-				const [e, n, h] = views[v].eye;
-				const dx = unit.e + (b[0] + b[3]) / 2 - e;
-				const dy = unit.n + (b[1] + b[4]) / 2 - n;
-				most = Math.max(most, span(k, dx, dy, (b[2] + b[5]) / 2 - h, r));
-			}
-			// its members' size were they to tile the box
-			const s = most / Math.sqrt(Math.max(1, row.count));
-			if (s > threshold) ahead.push(walked.length, 0, 0, s);
-			walked.push([unit, row]);
-		};
-		let reach = 0;
-		for (const unit of this.#units.values()) {
-			const top = unit.root ? unit.rows.find((row) => row.top) : undefined;
-			if (!top) continue;
-			reach += top.count;
-			enterRow(unit, top);
+		const ranked: { wanted: Wanted; rank: number }[] = [];
+		for (const item of wanted) {
+			let rank = -1;
+			for (const page of item.over) rank = Math.max(rank, priority.get(page.id) ?? -1);
+			if (rank >= 0) ranked.push({ wanted: item, rank });
 		}
-		for (let b = ahead.top; b >= 0 && reach < budget;) {
-			const k = ahead.pop(b);
-			if (k < 0) {
-				b--;
-				continue;
-			}
-			const s = ahead.sizes[k];
-			const [unit, row] = walked[ahead.pages[k]];
-			const under = this.#under(unit, row, (path) => fetch(path, s));
-			if (!under?.length) continue;
-			let grow = -row.count;
-			for (const [, child] of under) grow += child.count;
-			if (reach + grow > budget) continue;
-			let full = false;
-			for (const [, child] of under) {
-				const page = this.#pages.get(child.id);
-				if (!page) {
-					if (!wantLater(child.id, child.count, s)) full = true;
-				} else if (page.stamp !== stamp) {
-					if (room(child.count)) touch(page);
-					else full = true;
-				}
-			}
-			if (full) break;
-			reach += grow;
-			for (const [u, child] of under) enterRow(u, child);
-			b = ahead.top;
-		}
-
-		const masks: Drawn[] = [];
-		const pending = new Map<number, Uint32Array>();
-		let projected = 0;
-		for (const page of touched) {
-			const { seen, refined } = page;
-			const mask = new Uint32Array(seen.length);
-			let any = 0;
-			for (let w = 0; w < seen.length; w++) any |= mask[w] = seen[w] & ~refined[w];
-			const before = this.#applied.get(page.id);
-			if (any) {
-				pending.set(page.id, mask);
-				projected += page.nodes.counts.length;
-			}
-			if (before ? !same(before, mask) : any)
-				masks.push({ id: page.id, mask: any ? mask : new Uint32Array(0) });
-		}
-		for (const id of this.#applied.keys()) {
-			if (this.#pages.get(id)?.stamp !== stamp) masks.push({ id, mask: new Uint32Array(0) });
-		}
-		this.#pending = pending;
-		const ranked = <K>(wanted: Map<K, number>) =>
-			[...wanted].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).map(([key]) => key);
+		ranked.sort((a, b) => b.rank - a.rank);
 		return {
-			masks,
-			touched: touched.map((page) => page.id),
-			load: [...ranked(pages), ...ranked(later)],
-			idx: ranked(files),
-			planned: used,
-			missing,
-			detail: threshold,
-			projected,
-			ms: performance.now() - started
+			cut,
+			// fringe last: it holds up the screen's pages in the workers, and its uploads cost moving frames
+			load: pending
+				.filter(({ near }) => near || (!predicted && missing === 0))
+				.map(({ page }) => page),
+			idx: ranked.map((entry) => entry.wanted),
+			keep,
+			planned,
+			missing
 		};
+	}
+
+	/** the fringe footprint, the larger of now and ahead */
+	#measure(page: PageNode, view: View, predicted: View | undefined): Measure {
+		const current = this.#project(page, view, FRINGE);
+		const shown = current.shown;
+		let { pixels, weight } = current;
+		let near = shown;
+		if (predicted) {
+			const ahead = this.#project(page, predicted, FRINGE);
+			if (ahead.pixels > pixels) ({ pixels, weight } = ahead);
+			near ||= ahead.shown;
+		}
+		return { page, shown, near, visible: shown ? visibleSplats(page, view) : 0, pixels, weight };
+	}
+
+	#project(page: PageNode, view: View, margin: number): Footprint {
+		const { width, height, tan, near, far } = view;
+		return footprint(
+			page.box,
+			view.view,
+			width,
+			height,
+			tan,
+			near,
+			far,
+			margin,
+			this.#out,
+			view.origin
+		);
 	}
 }
 
-function same(a: Uint32Array, b: Uint32Array): boolean {
-	if (a.length !== b.length) return false;
-	for (let w = 0; w < a.length; w++) if (a[w] !== b[w]) return false;
-	return true;
+function visibleSplats(page: PageNode, view: View): number {
+	const { width, height, tan, near, far, origin } = view;
+	const mask = shownQuadrants(
+		page.box,
+		square(page),
+		view.view,
+		width,
+		height,
+		tan,
+		near,
+		far,
+		origin
+	);
+	let splats = 0;
+	for (let q = 0; q < 4; q++) if (mask & (1 << q)) splats += quadrantSplats(page.row, q);
+	return splats;
+}
+
+/** resident, with every child known and at least one there */
+function refinable(page: PageNode, resident: (id: number) => boolean): boolean {
+	const { children } = page;
+	return (
+		page.g > 0 &&
+		resident(page.id) &&
+		!children.includes(undefined) &&
+		children.some((c) => c !== null)
+	);
+}
+
+/** max-heap of steps: on screen first, then by ratio */
+class Queue {
+	#items: Step[] = [];
+
+	get size(): number {
+		return this.#items.length;
+	}
+
+	push(step: Step): void {
+		const items = this.#items;
+		items.push(step);
+		let i = items.length - 1;
+		while (i > 0) {
+			const up = (i - 1) >> 1;
+			if (!before(step, items[up])) break;
+			items[i] = items[up];
+			i = up;
+		}
+		items[i] = step;
+	}
+
+	pop(): Step {
+		const items = this.#items;
+		const top = items[0];
+		const last = items.pop()!;
+		if (items.length) {
+			let i = 0;
+			while (2 * i + 1 < items.length) {
+				let child = 2 * i + 1;
+				if (child + 1 < items.length && before(items[child + 1], items[child])) child++;
+				if (!before(items[child], last)) break;
+				items[i] = items[child];
+				i = child;
+			}
+			items[i] = last;
+		}
+		return top;
+	}
+}
+
+function before(a: Step, b: Step): boolean {
+	return a.shown !== b.shown ? a.shown : a.ratio > b.ratio;
 }

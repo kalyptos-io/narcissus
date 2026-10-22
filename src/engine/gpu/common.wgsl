@@ -34,15 +34,16 @@ struct Page {
 	origin: vec3f,
 	count: u32,
 	step: vec3f,
-	pad0: u32,
+	q1: u32,
 	scaleMin: vec3f,
-	pad1: u32,
+	q2: u32,
 	scaleMax: vec3f,
-	pad2: u32,
+	q3: u32,
 	dcMin: vec3f,
-	pad3: u32,
+	// quadrant k opacity 0-255 at bits 8k
+	factors: u32,
 	dcMax: vec3f,
-	pad4: u32,
+	pad: u32,
 	shScale: array<vec4f, 3>,
 }
 
@@ -51,7 +52,8 @@ struct Cluster {
 	page: u32,
 	// first pool record
 	slot: u32,
-	pad: u32,
+	// index in the page of its first splat
+	first: u32,
 	count: u32,
 	// extents relative to the page origin
 	boxMin: vec3f,
@@ -69,7 +71,7 @@ struct Projected {
 	colour: vec2u,
 }
 
-// what a shade hook may change; position in the floating-origin frame, depth in view metres; opacity past 1 is flat-topped
+// what a shade hook may change; position in the floating-origin frame, depth in view metres
 struct Splat {
 	position: vec3f,
 	depth: f32,
@@ -83,18 +85,7 @@ fn fraction(word: u32, bit: u32) -> f32 {
 	return f32(extractBits(word, bit, 8u)) / 255.0;
 }
 
-// the opacity f16 in the high half of a geometry record's last word
-fn opacityOf(g: vec4u) -> f32 {
-	return unpack2x16float(g.w).y;
-}
-
-// whether the cut draws pool record rec; word is cut[rec >> 5u]
-fn inCut(word: u32, rec: u32) -> bool {
-	return (word & (1u << (rec & 31u))) != 0u;
-}
-
-// sigmas out to where a splat of opacity covers under 1/255, at most 3 unless flat-topped past 1
+// sigmas out to where a gaussian of opacity falls under 1/255, at most 3; the quad raster draws
 fn reach(opacity: f32) -> f32 {
-	let r = sqrt(max(2.0 * log(255.0 * opacity), 0.0));
-	return select(min(3.0, r), r, opacity > 1.0);
+	return min(3.0, sqrt(max(2.0 * log(255.0 * opacity), 0.0)));
 }

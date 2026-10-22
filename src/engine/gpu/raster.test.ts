@@ -35,8 +35,8 @@ async function texels(device: GPUDevice, texture: GPUTexture) {
 	};
 }
 
-/** one splat at 10 m, 3 px sigma, centred on texel (16, 15), of opacity as f16 bits */
-async function draw(withDepth: boolean, opacity = 0x3a00) {
+/** one splat at 10 m, 3 px sigma, centred on texel (16, 15) */
+async function draw(withDepth: boolean) {
 	const device = await testDevice();
 	const buffers = frameBuffers(device, 4, 1);
 	const sort = new Sort(device, buffers);
@@ -50,7 +50,7 @@ async function draw(withDepth: boolean, opacity = 0x3a00) {
 	const splat = new ArrayBuffer(PROJECTED_WORDS * 4);
 	new Float32Array(splat, 0, 2).set([16.5, 16.5]);
 	// f16 pairs: major (3, 0), minor (0, 3), rg (1, 0.5), b and opacity (0.25, 0.75)
-	new Uint32Array(splat, 8, 4).set([0x4200, 0x42000000, 0x38003c00, (opacity << 16) | 0x3400]);
+	new Uint32Array(splat, 8, 4).set([0x4200, 0x42000000, 0x38003c00, 0x3a003400]);
 	device.queue.writeBuffer(buffers.projected, 0, splat);
 	device.queue.writeBuffer(buffers.sort, sort.values, new Uint32Array([0]));
 	// 10 m sits a third of the way from near to far in log depth
@@ -97,17 +97,6 @@ describe('Raster', () => {
 		expect(colour(16, 12)[0]).toBeCloseTo(SIGMA_ALPHA, 2);
 		expect(colour(22, 15)[0]).toBeLessThan(colour(19, 15)[0]);
 		expect(colour(0, 0)).toEqual([...SKY, 1]);
-	});
-
-	it('flat-tops a splat past opacity 1 and draws it past 3 sigma', async () => {
-		const flat = (g: number) => 1 - (1 - g) ** 4;
-		const { colour } = await draw(false, 0x4400);
-		expect(colour(16, 15)[0]).toBeCloseTo(1, 2);
-		expect(colour(19, 15)[0]).toBeCloseTo(flat(Math.exp(-0.5)), 2);
-		// 10 px out is 3.33 sigma, inside the reach of opacity 4 and past that of 1
-		expect(colour(26, 15)[0]).toBeCloseTo(flat(Math.exp(-0.5 * (10 / 3) ** 2)), 2);
-		expect(colour(26, 15)[0]).toBeGreaterThan(0.005);
-		expect((await draw(false)).colour(26, 15)[0]).toBe(0);
 	});
 
 	it('writes the log-depth span of the splat where it drew, 1 elsewhere, and the same colour', async () => {

@@ -15,8 +15,6 @@ const GUARD: f32 = 1.3;
 @group(0) @binding(8) var<storage, read_write> sort: array<u32>;
 
 @group(0) @binding(9) var<uniform> visible: u32;
-// a bit per pool record, set where the cut draws it
-@group(0) @binding(10) var<storage, read> cut: array<u32>;
 var<workgroup> kept: atomic<u32>;
 var<workgroup> base: u32;
 
@@ -59,21 +57,20 @@ fn rotate(q: vec4f) -> mat3x3f {
 
 // false when splat t of the cluster cannot show; else its Projected and sort key
 fn shown(cluster: Cluster, t: u32, dest: ptr<function, Projected>, key: ptr<function, u32>) -> bool {
-	let rec = cluster.slot + t;
-	if (!inCut(cut[rec >> 5u], rec)) {
-		return false;
-	}
 	let page = pages[cluster.page];
+	let rec = cluster.slot + t;
 	let g = geometry[rec];
 	let w0 = colours[rec * 3u];
 	let w1 = colours[rec * 3u + 1u];
 	let w2 = colours[rec * 3u + 2u];
+	let i = cluster.first + t;
+	let quadrant = u32(i >= page.q1) + u32(i >= page.q2) + u32(i >= page.q3);
 
 	// decode
 	var s: Splat;
 	let q = vec3f(f32(g.x & 0xffffu), f32(g.x >> 16u), f32(g.y & 0xffffu));
 	s.position = page.origin + q * page.step;
-	s.opacity = opacityOf(g);
+	s.opacity = fraction(g.y, 16u) * fraction(page.factors, 8u * quadrant);
 	let level = vec3f(fraction(g.z, 24u), fraction(g.w, 0u), fraction(g.w, 8u));
 	s.scale = exp(mix(page.scaleMin, page.scaleMax, level));
 	let dc = mix(page.dcMin, page.dcMax, vec3f(fraction(w0, 0u), fraction(w0, 8u), fraction(w0, 16u)));
@@ -119,7 +116,7 @@ fn shown(cluster: Cluster, t: u32, dest: ptr<function, Projected>, key: ptr<func
 	let mid = 0.5 * (a + c);
 	let rad = length(vec2f(0.5 * (a - c), b));
 	let major = sqrt(mid + rad);
-	if (reach(s.opacity) * major < 0.5) {
+	if (3.0 * major < 0.5) {
 		return false;
 	}
 	let minor = sqrt(max(mid - rad, 0.0));

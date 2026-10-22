@@ -1,4 +1,4 @@
-// usage: [WORLD=<world dir>|synthetic] [SOURCE=synthetic|http|page] [WORLD_URL=<remote world.json>] [POSE_A=e,n,h,yaw,pitch,dist] [POSE_B=e,n,h,yaw,pitch,dist] [BUDGET=4000000] [VIEW_DISTANCE=1500] [SKY=r,g,b] [PORT=9351] [PROFILE=<file> writes the moves' main-thread cpuprofile] node bench/quick.mjs [--baseline writes the baseline] [--stop closes chrome]
+// usage: [WORLD=<world dir>] [SOURCE=http|synthetic|page] [WORLD_URL=<remote world.json>] [POSE_A=e,n,h,yaw,pitch,dist] [POSE_B=e,n,h,yaw,pitch,dist] [BUDGET=4000000] [VIEW_DISTANCE=1500] [SKY=r,g,b] [PORT=9351] [PROFILE=<file> writes the moves' main-thread cpuprofile] node bench/quick.mjs [--baseline writes the baseline] [--stop closes chrome]
 /** @import { AddressInfo } from 'node:net' */
 /** @import { Options, Repetition } from './quick.ts' */
 import { existsSync, lstatSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
@@ -13,12 +13,11 @@ const bench = import.meta.dirname;
 const repo = resolve(bench, '..');
 const out = join(bench, 'runs/quick');
 const {
-	WORLD = 'synthetic',
-	SOURCE = 'synthetic',
+	WORLD = join(bench, 'runs/world'),
+	SOURCE = 'http',
 	WORLD_URL,
-	// heights on the synthetic ground
-	POSE_A = '724706.45,6178123.51,44.61,230.3,-35,588.3',
-	POSE_B = '724000,6178000,44.57,0,-35,80',
+	POSE_A = '724706.45,6178123.51,24.14,230.3,-35,588.3',
+	POSE_B = '724000,6178000,3.22,0,-35,80',
 	BUDGET = '4000000',
 	VIEW_DISTANCE = '1500',
 	SKY = '0.62,0.72,0.8',
@@ -83,8 +82,7 @@ if (changed > built || !existsSync(join(site, 'quick.html'))) {
 mark('built');
 
 // serve
-const world = WORLD === 'synthetic' ? WORLD : resolve(WORLD);
-const server = createServer(files(site, world));
+const server = createServer(files(site, resolve(WORLD)));
 await new Promise((done) => server.listen(0, '127.0.0.1', () => done(undefined)));
 const address = /** @type {AddressInfo} */ (server.address());
 const url = `http://127.0.0.1:${address.port}/quick.html`;
@@ -181,7 +179,7 @@ const result = {
 	cpuRate,
 	valid: reasons.length === 0,
 	reasons,
-	world,
+	world: resolve(WORLD),
 	options,
 	metrics
 };

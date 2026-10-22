@@ -4,15 +4,15 @@ import { parseCol, sampleCol } from './col.ts';
 import { parseIdx, parseUnitPath } from './idx.ts';
 import { inflate } from './inflate.ts';
 import { decodePage, pageHeader, readSplat } from './page.ts';
-import { C0, PARAMS, VERSION } from './spec.ts';
+import { C0, PARAMS } from './spec.ts';
 import { parseWorld } from './world.ts';
 
 interface Row {
 	g: number;
 	i: number;
 	j: number;
-	flags: number;
 	count: number;
+	quadrants: number[];
 	box: number[];
 	offset: number;
 	length: number;
@@ -48,12 +48,9 @@ interface Expected {
 			position: number[];
 			rotation: number[];
 			scale: number[];
-			opacity: number;
+			alpha: number;
 			colour: number[];
 			sh: number[];
-			children: number;
-			/** a parent's, as docs/format.md packs it */
-			link?: number;
 		}[];
 	}[];
 }
@@ -63,10 +60,6 @@ const EXPECTED = new URL('expected.json', DIR);
 
 const read = (path: string) => new Uint8Array(readFileSync(new URL(path, DIR)));
 const load = () => JSON.parse(readFileSync(EXPECTED, 'utf8')) as Expected;
-const written = (
-	JSON.parse(readFileSync(new URL('world.json', DIR), 'utf8')) as { version: unknown }
-).version;
-const stale = written !== VERSION;
 
 function close(
 	what: string,
@@ -81,13 +74,7 @@ function close(
 }
 
 // another writer of the format made the fixture, so every value here is a cross-check
-if (stale) {
-	console.warn(
-		`fixtures/tree is version ${String(written)}: the golden fixture tests skip until guldmund writes a version ${VERSION} tree`
-	);
-}
-
-describe.skipIf(stale)('golden fixture', () => {
+describe('golden fixture', () => {
 	it('parses its world.json and reaches the root units', () => {
 		const { world, units } = load();
 		const worldUrl = new URL(world, DIR);
@@ -130,9 +117,11 @@ describe.skipIf(stale)('golden fixture', () => {
 		for (const entry of load().pages) {
 			const { offset, length } = entry.row;
 			const payload = await inflate(read(entry.pack).subarray(offset, offset + length));
-			expect(pageHeader(payload).count).toBe(entry.row.count);
+			expect(pageHeader(payload)).toEqual({
+				count: entry.row.count,
+				quadrants: entry.row.quadrants
+			});
 			const page = decodePage(payload, entry.col ? await parseCol(read(entry.col)) : null);
-			const { counts, links } = page.nodes;
 			const p = page.params;
 			const dcStep = (c: number) => (C0 * (p[PARAMS.dcMax + c] - p[PARAMS.dcMin + c])) / 255;
 			const shStep = (m: number) => p[PARAMS.shScale + m] / 127;
@@ -142,14 +131,9 @@ describe.skipIf(stale)('golden fixture', () => {
 				close(`${at} position`, v.position, s.position, () => 1e-4);
 				close(`${at} rotation`, v.rotation, s.rotation, () => 1e-5);
 				close(`${at} scale`, v.scale, s.scale, (k) => 1e-5 * s.scale[k]);
-				close(`${at} opacity`, [v.opacity], [s.opacity], () => 1e-6 * Math.max(1, s.opacity));
+				close(`${at} alpha`, [v.alpha], [s.alpha], () => 1e-6);
 				close(`${at} colour`, v.colour, s.colour, (c) => dcStep(c) + 1e-6);
 				close(`${at} sh`, v.sh, s.sh, (m) => shStep(m) + 1e-6);
-				expect(counts[s.t], `${at} children`).toBe(s.children);
-				if (s.children) {
-					const rank = counts.subarray(0, s.t).filter((count) => count > 0).length;
-					expect(links[rank], `${at} link`).toBe(s.link);
-				}
 			}
 		}
 	});

@@ -65,7 +65,7 @@ export function directory(url: string): string {
 	return path.slice(0, path.lastIndexOf('/') + 1);
 }
 
-/** throws an Error with a user-facing message when json is not a version 2 world */
+/** throws an Error with a user-facing message when json is not a version 1 world */
 export function parseWorld(json: unknown): World {
 	const w = record(json, 'an unreadable world.json');
 	if (w.version !== VERSION) {

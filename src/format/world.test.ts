@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { directory, parseWorld } from './world.ts';
 
 const world = {
-	version: 2,
+	version: 1,
 	crs: 'EPSG:25832',
 	height: 'DVR90',
 	leaf: 250,
@@ -11,7 +11,7 @@ const world = {
 };
 
 describe('parseWorld', () => {
-	it('accepts a version 2 world', () => {
+	it('accepts a version 1 world', () => {
 		expect(parseWorld(JSON.parse(JSON.stringify(world)))).toEqual({ ...world, extra: {} });
 	});
 
@@ -27,11 +27,8 @@ describe('parseWorld', () => {
 	});
 
 	it('rejects another version with a sentence that names both', () => {
-		expect(() => parseWorld({ ...world, version: 1 })).toThrow(
-			'This world is version 1; narcissus reads 2.'
-		);
 		expect(() => parseWorld({ ...world, version: 3 })).toThrow(
-			'This world is version 3; narcissus reads 2.'
+			'This world is version 3; narcissus reads 1.'
 		);
 	});
 

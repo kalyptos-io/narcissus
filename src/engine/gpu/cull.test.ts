@@ -46,9 +46,11 @@ function frame(
 	return f;
 }
 
-/** a page with cluster boxes scattered around centre, records left zero */
+/** a page with random quadrants and cluster boxes scattered around centre, records left zero */
 function page(rand: () => number, centre: readonly number[]): DecodedPage {
 	const count = 1 + Math.floor(rand() * 4 * CLUSTER);
+	const cuts = [rand(), rand(), rand()].map((r) => Math.floor(r * count));
+	const [q1, q2, q3] = cuts.sort((a, b) => a - b);
 	const params = new Float32Array(PAGE_PARAMS);
 	const origin = [rand() * 250, rand() * 250, rand() * 50];
 	params.set(origin, PARAMS.origin);
@@ -64,29 +66,12 @@ function page(rand: () => number, centre: readonly number[]): DecodedPage {
 	}
 	return {
 		count,
+		quadrants: [q1, q2, q3],
 		geometry: new Uint32Array(count * GEOMETRY_WORDS),
 		colour: new Uint32Array(count * COLOUR_WORDS),
 		params,
-		clusters,
-		nodes: {
-			counts: new Uint8Array(count),
-			centres: new Float32Array(0),
-			radii: new Float32Array(0),
-			links: new Uint32Array(0)
-		}
+		clusters
 	};
-}
-
-/** a cut mask over count records, each cluster drawn whole, in part or not at all */
-function mask(rand: () => number, count: number): Uint32Array {
-	const words = new Uint32Array(Math.ceil(count / CLUSTER) * (CLUSTER / 32));
-	for (let first = 0; first < count; first += CLUSTER) {
-		const share = [0, 0, 0.1, 1][Math.floor(rand() * 4)];
-		for (let t = first; t < Math.min(first + CLUSTER, count); t++) {
-			if (rand() < share) words[t >> 5] |= 1 << (t & 31);
-		}
-	}
-	return words;
 }
 
 async function cull(device: GPUDevice, pool: Pool, eye: [number, number, number]) {
@@ -106,9 +91,8 @@ async function reference(device: GPUDevice, pool: Pool, uniforms: Float32Array) 
 	const list = new Uint32Array(await readBuffer(device, pool.list));
 	const clusterBytes = await readBuffer(device, pool.clusters);
 	const pageBytes = await readBuffer(device, pool.pages);
-	const cut = new Uint32Array(await readBuffer(device, pool.cut));
 	const [cu, cf] = [new Uint32Array(clusterBytes), new Float32Array(clusterBytes)];
-	const pf = new Float32Array(pageBytes);
+	const [pu, pf] = [new Uint32Array(pageBytes), new Float32Array(pageBytes)];
 	const frustum = uniforms.subarray(48, 72);
 	const visible: number[] = [];
 	for (const slot of list.subarray(0, pool.listed)) {
@@ -117,23 +101,29 @@ async function reference(device: GPUDevice, pool: Pool, uniforms: Float32Array) 
 		const origin = pf.subarray(p, p + 3);
 		const min = [0, 1, 2].map((k) => Math.fround(origin[k] + cf[c + 4 + k]));
 		const max = [0, 1, 2].map((k) => Math.fround(origin[k] + cf[c + 8 + k]));
-		const lit = cut.subarray((slot * CLUSTER) / 32, ((slot + 1) * CLUSTER) / 32).some((w) => w);
+		const starts = [0, pu[p + 7], pu[p + 11], pu[p + 15], pu[p + 3]];
+		const [first, end] = [cu[c + 2], cu[c + 2] + cu[c + 3]];
+		let lit = false;
+		for (let k = 0; k < 4; k++) {
+			const overlaps = Math.max(starts[k], first) < Math.min(starts[k + 1], end);
+			if (overlaps && ((pu[p + 19] >>> (8 * k)) & 255) !== 0) lit = true;
+		}
 		if (lit && boxVisible(frustum, min, max)) visible.push(slot);
 	}
 	return visible;
 }
 
 describe('Cull', () => {
-	it('keeps the clusters inside the frustum with a drawn record, as the cpu does', async () => {
+	it('keeps the clusters inside the frustum with a lit quadrant, as the cpu does', async () => {
 		const device = await testDevice();
 		const rand = mulberry32(7);
 		const eye: [number, number, number] = [125, 125, 20];
 		const pool = new Pool(device, 128 * CLUSTER);
 		const drawn: Drawn[] = [];
 		for (let id = 0; id < 24; id++) {
-			const decoded = page(rand, eye);
-			expect(pool.add(id, decoded, [0, 0], () => true)).toBe(true);
-			drawn.push({ id, mask: mask(rand, decoded.count) });
+			expect(pool.add(id, page(rand, eye), [0, 0], () => true)).toBe(true);
+			const [a, b, c, d] = [0, 1, 2, 3].map(() => [0, 0, 96, 255][Math.floor(rand() * 4)]);
+			drawn.push({ id, factors: (a | (b << 8) | (c << 16) | (d << 24)) >>> 0 });
 		}
 		pool.upload(Infinity);
 		pool.draw(drawn);

@@ -1,6 +1,5 @@
-import type { Col, DecodedPage, PageNodes } from './types.ts';
+import type { Col, DecodedPage, PageRow } from './types.ts';
 import { sampleCol } from './col.ts';
-import { fromHalf } from './half.ts';
 import {
 	BASE_PLANES,
 	C0,
@@ -8,7 +7,6 @@ import {
 	COL_CHANNELS,
 	COLOUR_WORDS,
 	GEOMETRY_WORDS,
-	LINK_PLANES,
 	PAGE_HEADER,
 	PAGE_PARAMS,
 	PARAMS,
@@ -30,26 +28,12 @@ function rotation(index: number, a: number, b: number, c: number, out: Float64Ar
 	out[index > 2 ? 2 : 3] = v2;
 }
 
-/** sigmas from the centre at which a splat of opacity covers 1/255 or less: k(α) of the .idx box */
-export function sigmas(opacity: number): number {
-	return opacity <= 1 ? 3 : Math.sqrt(2 * Math.log(255 * opacity));
-}
-
-/** the size a cut weighs a node by: the mean of its scales in metres, grown with opacity past 1 */
-export function radius(s0: number, s1: number, s2: number, opacity: number): number {
-	if (opacity <= 1) return (s0 + s1 + s2) / 3;
-	// gaussian-splat-lite's growth, on the opacity its files store: past 1 squeezed into 1..2
-	const stored = Math.min(2, 1 + 0.25 * (Math.sqrt(1 + Math.E * Math.log(opacity)) - 1));
-	return ((s0 + s1 + s2) / 3) * (1 + 2.8 * (stored - 1));
-}
-
-/** k-sigma half extents along x, y, z of unit quaternion q (w x y z) and scales s, into out */
+/** 3-sigma half extents along x, y, z of unit quaternion q (w x y z) and scales s, into out */
 export function extents(
 	q: ArrayLike<number>,
 	s0: number,
 	s1: number,
 	s2: number,
-	k: number,
 	out: Float64Array
 ): void {
 	const qw = q[0];
@@ -69,23 +53,9 @@ export function extents(
 	const m20 = 2 * (qi * qk - qw * qj);
 	const m21 = 2 * (qj * qk + qw * qi);
 	const m22 = 1 - 2 * (qi * qi + qj * qj);
-	out[0] = k * Math.sqrt(m00 * m00 * a0 + m01 * m01 * a1 + m02 * m02 * a2);
-	out[1] = k * Math.sqrt(m10 * m10 * a0 + m11 * m11 * a1 + m12 * m12 * a2);
-	out[2] = k * Math.sqrt(m20 * m20 * a0 + m21 * m21 * a1 + m22 * m22 * a2);
-}
-
-/** a link's first node of the family in its page */
-export const linkStart = (link: number) => link & 0xfffff;
-/** a link's page row in its unit */
-export const linkRow = (link: number) => (link >>> 20) & 0x1ff;
-/** a link's unit: 0 for its own, 1 + q for its child at quadrant q */
-export const linkUnit = (link: number) => link >>> 29;
-
-/** each node's index into its page's links: the parents before it in the page */
-export function linkRanks(counts: Uint8Array): Uint32Array {
-	const ranks = new Uint32Array(counts.length);
-	for (let t = 1; t < counts.length; t++) ranks[t] = ranks[t - 1] + (counts[t - 1] ? 1 : 0);
-	return ranks;
+	out[0] = 3 * Math.sqrt(m00 * m00 * a0 + m01 * m01 * a1 + m02 * m02 * a2);
+	out[1] = 3 * Math.sqrt(m10 * m10 * a0 + m11 * m11 * a1 + m12 * m12 * a2);
+	out[2] = 3 * Math.sqrt(m20 * m20 * a0 + m21 * m21 * a1 + m22 * m22 * a2);
 }
 
 function header(payload: Uint8Array): DataView {
@@ -93,58 +63,33 @@ function header(payload: Uint8Array): DataView {
 	return new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
 }
 
-interface Layout {
-	view: DataView;
-	count: number;
-	parents: number;
-	k: number;
-	/** offsets of the link planes and the codebook */
-	links: number;
-	book: number;
-}
-
-function layout(payload: Uint8Array): Layout {
+function layout(payload: Uint8Array): { view: DataView; count: number; k: number; book: number } {
 	const view = header(payload);
 	const count = view.getUint32(0, true);
-	const parents = view.getUint32(4, true);
 	const k = view.getUint16(16, true);
-	const links = PAGE_HEADER + (BASE_PLANES + (k > 0 ? 2 : 0)) * count;
-	const book = links + LINK_PLANES * parents;
+	const book = PAGE_HEADER + (BASE_PLANES + (k > 0 ? 2 : 0)) * count;
 	const size = book + k * SH_COEFFS;
-	if (parents > count || payload.length !== size) {
+	if (payload.length !== size) {
 		throw new Error(`page payload holds ${payload.length} bytes, its header needs ${size}`);
 	}
-	return { view, count, parents, k, links, book };
+	return { view, count, k, book };
+}
+
+function quadrants(view: DataView): [number, number, number] {
+	return [view.getUint32(4, true), view.getUint32(8, true), view.getUint32(12, true)];
 }
 
 /**
  * an inflated page payload as pool records, with col (when given) added to every splat's dc and
- * sh1 at its unit-local centre, the cluster boxes of its splats' k(α)-sigma extents, and the
- * nodes a cut reads
+ * sh1 at its unit-local centre, and the cluster boxes of its splats' 3-sigma extents
  */
 export function decodePage(payload: Uint8Array, col: Col | null): DecodedPage {
-	const { view, count: n, parents: m, k, links, book } = layout(payload);
+	const { view, count: n, k, book } = layout(payload);
 	const params = new Float32Array(PAGE_PARAMS);
 	for (let f = 0; f < PAGE_PARAMS; f++) params[f] = view.getFloat32(20 + 4 * f, true);
 	if (k === 0) params.fill(0, PARAMS.shScale);
 	const geometry = new Uint32Array(n * GEOMETRY_WORDS);
 	const clusters = new Float32Array(Math.ceil(n / CLUSTER) * 6);
-	const pc = PAGE_HEADER + PLANES.children * n;
-	const nodes: PageNodes = {
-		counts: payload.slice(pc, pc + n) as Uint8Array<ArrayBuffer>,
-		centres: new Float32Array(3 * m),
-		radii: new Float32Array(m),
-		links: new Uint32Array(m)
-	};
-	for (let s = 0; s < m; s++) {
-		const at = links + s;
-		nodes.links[s] =
-			(payload[at] |
-				(payload[at + m] << 8) |
-				(payload[at + 2 * m] << 16) |
-				(payload[at + 3 * m] << 24)) >>>
-			0;
-	}
 
 	const scales = new Float64Array(3 * 256);
 	for (let a = 0; a < 3; a++) {
@@ -152,15 +97,11 @@ export function decodePage(payload: Uint8Array, col: Col | null): DecodedPage {
 		const span = params[PARAMS.scaleMax + a] - lo;
 		for (let b = 0; b < 256; b++) scales[a * 256 + b] = Math.exp(lo + (b / 255) * span);
 	}
-	const ox = params[PARAMS.origin];
-	const oy = params[PARAMS.origin + 1];
-	const oz = params[PARAMS.origin + 2];
 	const stepX = params[PARAMS.step];
 	const stepY = params[PARAMS.step + 1];
 	const stepZ = params[PARAMS.step + 2];
 	const px = PAGE_HEADER + PLANES.position * n;
-	const po = PAGE_HEADER + PLANES.opacityLow * n;
-	const ph = PAGE_HEADER + PLANES.opacityHigh * n;
+	const pa = PAGE_HEADER + PLANES.alpha * n;
 	const pi = PAGE_HEADER + PLANES.rotationIndex * n;
 	const pr = PAGE_HEADER + PLANES.rotation * n;
 	const ps = PAGE_HEADER + PLANES.scale * n;
@@ -170,7 +111,6 @@ export function decodePage(payload: Uint8Array, col: Col | null): DecodedPage {
 	let qx = 0;
 	let qy = 0;
 	let qz = 0;
-	let parent = 0;
 	for (let c = 0, t = 0; t < n; c++) {
 		let x0 = Infinity;
 		let y0 = Infinity;
@@ -192,19 +132,14 @@ export function decodePage(payload: Uint8Array, col: Col | null): DecodedPage {
 			const s0 = payload[ps + t];
 			const s1 = payload[ps + n + t];
 			const s2 = payload[ps + 2 * n + t];
-			const bits = payload[po + t] | (payload[ph + t] << 8);
 			const w = t * GEOMETRY_WORDS;
 			geometry[w] = qx | (qy << 16);
-			geometry[w + 1] = qz | (index << 24);
+			geometry[w + 1] = qz | (payload[pa + t] << 16) | (index << 24);
 			geometry[w + 2] = r0 | (r1 << 8) | (r2 << 16) | (s0 << 24);
-			geometry[w + 3] = s1 | (s2 << 8) | (bits << 16);
+			geometry[w + 3] = s1 | (s2 << 8);
 
-			const opacity = fromHalf(bits);
-			const sx = scales[s0];
-			const sy = scales[256 + s1];
-			const sz = scales[512 + s2];
 			rotation(index, r0, r1, r2, q);
-			extents(q, sx, sy, sz, sigmas(opacity), e);
+			extents(q, scales[s0], scales[256 + s1], scales[512 + s2], e);
 			const cx = qx * stepX;
 			const cy = qy * stepY;
 			const cz = qz * stepZ;
@@ -214,23 +149,14 @@ export function decodePage(payload: Uint8Array, col: Col | null): DecodedPage {
 			x1 = Math.max(x1, cx + e[0]);
 			y1 = Math.max(y1, cy + e[1]);
 			z1 = Math.max(z1, cz + e[2]);
-			if (nodes.counts[t] === 0) continue;
-			if (parent < m) {
-				nodes.centres[3 * parent] = ox + cx;
-				nodes.centres[3 * parent + 1] = oy + cy;
-				nodes.centres[3 * parent + 2] = oz + cz;
-				nodes.radii[parent] = radius(sx, sy, sz, opacity);
-			}
-			parent++;
 		}
 		clusters.set([x0, y0, z0, x1, y1, z1], c * 6);
 	}
-	if (parent !== m) throw new Error(`page holds ${parent} parents, its header ${m}`);
 
 	const colour = col
 		? correctedColour(payload, n, k, book, geometry, params, col)
 		: fileColour(payload, n, k, book);
-	return { count: n, geometry, colour, params, clusters, nodes };
+	return { count: n, quadrants: quadrants(view), geometry, colour, params, clusters };
 }
 
 /** the file's dc and codebook bytes unchanged */
@@ -340,10 +266,10 @@ function correctedColour(
 	return colour;
 }
 
-/** the node and parent counts of a payload's header, for checks against its row */
-export function pageHeader(payload: Uint8Array): { count: number; parents: number } {
+/** the splat count and quadrants of a payload's header, for checks against its row */
+export function pageHeader(payload: Uint8Array): Pick<PageRow, 'count' | 'quadrants'> {
 	const view = header(payload);
-	return { count: view.getUint32(0, true), parents: view.getUint32(4, true) };
+	return { count: view.getUint32(0, true), quadrants: quadrants(view) };
 }
 
 export interface SplatValues {
@@ -353,8 +279,7 @@ export interface SplatValues {
 	rotation: [number, number, number, number];
 	/** metres */
 	scale: [number, number, number];
-	/** 0 to 1000; past 1 the splat is flat-topped */
-	opacity: number;
+	alpha: number;
 	/** displayed base colour, 0.5 + C0 f_dc */
 	colour: [number, number, number];
 	/** sh[c][m] at 3c + m */
@@ -385,7 +310,7 @@ export function readSplat(page: DecodedPage, t: number): SplatValues {
 		position: three((a) => p[PARAMS.origin + a] + q[a] * p[PARAMS.step + a]),
 		rotation: [r[0], r[1], r[2], r[3]],
 		scale: three((a) => Math.exp(decode(PARAMS.scaleMin, PARAMS.scaleMax, a, byte(g, 11 + a)))),
-		opacity: fromHalf(g[3] >>> 16),
+		alpha: byte(g, 6) / 255,
 		colour: three((a) => 0.5 + C0 * decode(PARAMS.dcMin, PARAMS.dcMax, a, byte(c, a))),
 		sh
 	};

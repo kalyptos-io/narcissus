@@ -213,10 +213,8 @@ function capture(): Uint8ClampedArray {
 	return shot.getImageData(0, 0, ...SHOT).data;
 }
 
-/** a frame and its picture; the frames before it take the plans for the camera, since a step that waits on one draws in a later task */
+/** a frame and its picture */
 async function snap(): Promise<Uint8ClampedArray> {
-	await engine.step();
-	await engine.step();
 	const pending = engine.step();
 	const picture = capture();
 	await pending;
@@ -259,7 +257,7 @@ async function move(): Promise<Repetition> {
 	const yaw = (t: number) => ({ ...b, yaw: b.yaw + (DRAG_DEG * t) / DRAG_MS });
 	const drag = await animate(DRAG_MS, yaw, behind);
 	performance.mark('drag:end');
-	// how long the view stays short of its detail once the camera stops
+	// how long the view stays short of its detail once the camera stops; fades come on top
 	const stopped = performance.now();
 	await detailed();
 	const settleMs = performance.now() - stopped;
