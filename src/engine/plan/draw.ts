@@ -7,7 +7,7 @@ import type { PageNode } from '../world/tree.ts';
 
 export const FADE_MS = 250;
 /** share of the budget fading splats, and the pool slots of pages held for them, may take */
-export const FADE_CAP = 0.25;
+export const FADE_CAP = 1;
 
 /** one page quadrant that draws, or drew and is held while its area fades in under others */
 interface Entry {
@@ -23,6 +23,10 @@ interface Entry {
 	start: number | null;
 	/** the factor a held drawer keeps */
 	frozen: number;
+	/** when a held drawer, its ramps over it done, began to fade out under them */
+	out: number | null;
+	/** held for a ramp at least once since it left the cover */
+	covered: boolean;
 	held: boolean;
 }
 
@@ -56,6 +60,8 @@ export class Fader {
 			if (!cover.has(key)) {
 				e.frozen = factor(e, now);
 				e.start = null;
+				e.out = null;
+				e.covered = false;
 				e.held = true;
 			}
 		}
@@ -68,9 +74,11 @@ export class Fader {
 				entries.set(key, added);
 				fresh.add(added);
 			} else if (e.held) {
+				const f = factor(e, now);
 				e.held = false;
-				if (e.frozen < 255) {
-					e.start = now - (e.frozen / 255) * FADE_MS;
+				e.out = null;
+				if (f < 255) {
+					e.start = now - (f / 255) * FADE_MS;
 					fresh.add(e);
 				}
 			}
@@ -117,6 +125,9 @@ export class Fader {
 				pin(out.page);
 			}
 		}
+		// drawers fading out under finished ramps take the same cap
+		for (const e of entries.values())
+			if (e.held && e.out !== null && !holding.has(e)) spent += e.splats;
 		const cap = FADE_CAP * budget;
 		for (const e of fresh) {
 			const extra = overlapping(e).filter((out) => !holding.has(out));
@@ -134,9 +145,17 @@ export class Fader {
 		const drawn = new Map<number, Drawn>();
 		let fading = false;
 		for (const [key, e] of entries) {
-			if (e.held && !holding.has(e)) {
-				entries.delete(key);
-				continue;
+			if (e.held && holding.has(e)) {
+				if (e.out !== null) e.frozen = factor(e, now);
+				e.out = null;
+				e.covered = true;
+			} else if (e.held) {
+				// fade out under what covered it; one never covered (a capped swap) goes at once
+				if (e.covered && e.out === null) e.out = now;
+				if (!e.covered || factor(e, now) === 0) {
+					entries.delete(key);
+					continue;
+				}
 			}
 			if (e.held || e.start !== null) fading = true;
 			const f = factor(e, now);
@@ -191,6 +210,8 @@ function entry(page: PageNode, q: number, now: number): Entry {
 		splats: quadrantSplats(page.row, q),
 		start: now,
 		frozen: 0,
+		out: null,
+		covered: false,
 		held: false
 	};
 }
@@ -203,7 +224,10 @@ export function quadrantSplats({ count, quadrants }: PageRow, q: number): number
 }
 
 function factor(e: Entry, now: number): number {
-	if (e.held) return e.frozen;
+	if (e.held)
+		return e.out === null
+			? e.frozen
+			: Math.max(0, Math.round(e.frozen * (1 - (now - e.out) / FADE_MS)));
 	if (e.start === null) return 255;
 	return Math.min(255, Math.round(((now - e.start) / FADE_MS) * 255));
 }

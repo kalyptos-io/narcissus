@@ -85,17 +85,25 @@ describe('fader', () => {
 			expect(step.fading).toBe(true);
 		}
 		expect(factors(refining[1].drawn, children[0])).toBe(0x66666666);
-		let frame = fader.update(children, all, 1000 + FADE_MS, BUDGET);
+		// the parent fades out under its children once their ramps are done
+		for (const now of [1000 + FADE_MS, 1100 + FADE_MS]) {
+			const step = fader.update(children, all, now, BUDGET);
+			expect(children.map((c) => factors(step.drawn, c))).toEqual(ALL_OPAQUE);
+			expect(step.fading).toBe(true);
+		}
+		let frame = fader.update(children, all, 1000 + 2 * FADE_MS, BUDGET);
 		expect(frame.fading).toBe(false);
 		expect(factors(frame.drawn, parent)).toBe(0);
 		expect(children.map((c) => factors(frame.drawn, c))).toEqual(ALL_OPAQUE);
 
-		const coarsening = [2000, 2100, 2200].map((now) => fader.update([parent], all, now, BUDGET));
+		const coarsening = [2000, 2100, 2200, 2000 + FADE_MS, 2100 + FADE_MS].map((now) =>
+			fader.update([parent], all, now, BUDGET)
+		);
 		for (const step of coarsening) {
 			expect(covered(step.drawn, parent, children)).toBe(true);
 			expect(step.fading).toBe(true);
 		}
-		frame = fader.update([parent], all, 2000 + FADE_MS, BUDGET);
+		frame = fader.update([parent], all, 2000 + 2 * FADE_MS, BUDGET);
 		expect(frame.fading).toBe(false);
 		expect(frame.drawn).toEqual([{ id: parent.id, factors: OPAQUE }]);
 	});
@@ -122,7 +130,8 @@ describe('fader', () => {
 		expect(factors(frame.drawn, parent)).toBe(0x0000ffff);
 		expect(covered(frame.drawn, parent, children)).toBe(true);
 		expect(frame.fading).toBe(true);
-		frame = fader.update(children, all, 1000 + FADE_MS, budget);
+		fader.update(children, all, 1000 + FADE_MS, budget);
+		frame = fader.update(children, all, 1000 + 2 * FADE_MS, budget);
 		expect(children.map((c) => factors(frame.drawn, c))).toEqual(ALL_OPAQUE);
 		expect(frame.fading).toBe(false);
 	});
@@ -152,8 +161,19 @@ describe('fader', () => {
 		const fader = settled(parent);
 		let frame = fader.update(children, all, 1000, BUDGET);
 		expect(factors(frame.drawn, parent)).toBe(0x00ffffff);
-		frame = fader.update(children, all, 1000 + FADE_MS, BUDGET);
+		fader.update(children, all, 1000 + FADE_MS, BUDGET);
+		frame = fader.update(children, all, 1000 + 2 * FADE_MS, BUDGET);
 		expect(factors(frame.drawn, parent)).toBe(0);
 		expect(frame.fading).toBe(false);
+	});
+
+	it('fades the parent out under its children over FADE_MS rather than dropping it', () => {
+		const { parent, children } = family();
+		const fader = settled(parent);
+		fader.update(children, all, 1000, BUDGET);
+		fader.update(children, all, 1000 + FADE_MS, BUDGET);
+		const half = fader.update(children, all, 1000 + 1.5 * FADE_MS, BUDGET);
+		expect(factors(half.drawn, parent)).toBe(0x80808080);
+		expect(children.map((c) => factors(half.drawn, c))).toEqual(ALL_OPAQUE);
 	});
 });
