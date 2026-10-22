@@ -7,10 +7,10 @@ const MiB = 2 ** 20;
 const DEG = Math.PI / 180;
 
 describe('capacities', () => {
-	it('gives the pool 2.5 and a frame 2 times the budget in whole clusters', () => {
+	it('gives the pool 3.25 and a frame 2 times the budget in whole clusters', () => {
 		const limits = { maxStorageBufferBindingSize: 2 ** 31, maxBufferSize: 2 ** 32 };
 		const { pool, frame } = capacities(2_000_000, limits);
-		expect(pool).toBe(5_000_192);
+		expect(pool).toBe(6_500_096);
 		expect(frame).toBe(4_000_000);
 		expect(pool % CLUSTER).toBe(0);
 		expect(frame % CLUSTER).toBe(0);

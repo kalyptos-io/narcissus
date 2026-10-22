@@ -115,8 +115,8 @@ export async function createEngine(
 const NEAR = 0.2;
 /** bytes of queued pages one frame may upload */
 const UPLOAD_BYTES = 24 * 1024 * 1024;
-/** splats the pool holds, per splat of budget */
-const POOL_SHARE = 2.5;
+/** splats the pool holds, per splat of budget: the plan's room, then pages held for fades */
+const POOL_SHARE = 2.25 + FADE_CAP;
 /** splats one frame may project, per splat of budget: the plan's on screen, then pages fading out */
 const FRAME_SHARE = 1 + FADE_CAP;
 /** metres: the floating origin's grid, and how far the camera may stray from it */
