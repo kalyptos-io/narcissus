@@ -25,6 +25,9 @@ export class Overlay {
 	#pipeline: GPURenderPipeline;
 	#instances: GPUBuffer | null = null;
 	#count = 0;
+	/** the group lasts while the depth view stays the same */
+	#depth: GPUTextureView | undefined;
+	#group: GPUBindGroup | undefined;
 
 	constructor(device: GPUDevice, format: GPUTextureFormat, uniforms: GPUBuffer) {
 		this.#device = device;
@@ -92,20 +95,23 @@ export class Overlay {
 	/** draws over target, which holds the finished frame; depth is the splats' log-depth span */
 	encode(encoder: GPUCommandEncoder, target: GPUTextureView, depth: GPUTextureView): void {
 		if (!this.#count) return;
-		const group = this.#device.createBindGroup({
-			label: 'overlay',
-			layout: this.#pipeline.getBindGroupLayout(0),
-			entries: [
-				{ binding: 0, resource: { buffer: this.#uniforms } },
-				{ binding: 1, resource: depth }
-			]
-		});
+		if (depth !== this.#depth) {
+			this.#depth = depth;
+			this.#group = this.#device.createBindGroup({
+				label: 'overlay',
+				layout: this.#pipeline.getBindGroupLayout(0),
+				entries: [
+					{ binding: 0, resource: { buffer: this.#uniforms } },
+					{ binding: 1, resource: depth }
+				]
+			});
+		}
 		const pass = encoder.beginRenderPass({
 			label: 'overlay',
 			colorAttachments: [{ view: target, loadOp: 'load', storeOp: 'store' }]
 		});
 		pass.setPipeline(this.#pipeline);
-		pass.setBindGroup(0, group);
+		pass.setBindGroup(0, this.#group!);
 		pass.setVertexBuffer(0, this.#instances!);
 		pass.draw(4, this.#count);
 		pass.end();

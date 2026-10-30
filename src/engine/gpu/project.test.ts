@@ -430,14 +430,12 @@ describe('Project', () => {
 		const square = (y0: number, y1: number, x = 10) =>
 			Float64Array.from([-x, y0, x, y0, x, y1, -x, y1]);
 		const mask = (y0: number, y1: number, z: [number, number], layer = 0, x = 10) => {
-			const id = pool.masks.add({ polygon: square(y0, y1, x), z }, new Set([layer]));
-			pool.remask([-x, y0, x, y1]);
+			const id = pool.addMask({ polygon: square(y0, y1, x), z }, new Set([layer]));
 			pool.draw([{ id: 1, factors: FACTORS }]);
 			return id;
 		};
 		const drop = (id: number) => {
-			pool.masks.delete(id);
-			pool.remask([-Infinity, -Infinity, Infinity, Infinity]);
+			pool.deleteMask(id);
 			pool.draw([{ id: 1, factors: FACTORS }]);
 		};
 		const all = [-Infinity, Infinity] as [number, number];

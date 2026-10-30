@@ -248,6 +248,7 @@ export class Renderer {
 		this.#buffers.destroy();
 		this.#sort.destroy();
 		this.#raster.destroy();
+		this.#pick.destroy();
 		this.#overlay.destroy();
 		this.#timing.destroy();
 		this.#count.destroy();

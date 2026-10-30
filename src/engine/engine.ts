@@ -245,10 +245,13 @@ function push(samples: number[], value: number): void {
 }
 
 interface Shown {
-	layer: Layer | null;
+	layer: Layer;
 	pages: { id: number; count: number; box: Float64Array }[];
-	visible: boolean;
-	opacity: number;
+}
+
+/** Drawn factors of a layer's pages, every quadrant at its opacity; 0 while it draws nothing */
+function factors({ visible, opacity }: Layer): number {
+	return visible ? (Math.round(opacity * 255) * 0x01010101) >>> 0 : 0;
 }
 
 interface Installed<T> {
@@ -300,7 +303,6 @@ class GpuEngine implements Engine {
 	/** pool splats the layers' pages pin */
 	#pinned = 0;
 	#layerNumbers = new WeakMap<Layer, number>();
-	#layerDrawn: Drawn[] = [];
 	/** the pool draws anew though the cut stays: layers or masks changed */
 	#redraw = false;
 	/** lines and markers by id, radius in css pixels */
@@ -345,8 +347,8 @@ class GpuEngine implements Engine {
 	#shades: Installed<Shade>[] = [];
 	#posts: Installed<Post>[] = [];
 	#picks: Picking[] = [];
-	/** the last frame submitted and its float64 view; null while the gpu holds none to pick in */
-	#rendered: { frame: Frame; view: Float64Array } | null = null;
+	/** the last frame submitted; null while the gpu holds none to pick in */
+	#rendered: Frame | null = null;
 	#measures: Measuring[] = [];
 	#idlers: (() => void)[] = [];
 	#lostListeners = new Set<(reason: string) => void>();
@@ -448,15 +450,36 @@ class GpuEngine implements Engine {
 		this.#rebudget();
 
 		const number = ++this.#layerCount;
-		const drawn = new Set(this.#drawn.map((d) => d.id));
-		const keep = (id: number) => drawn.has(id) || (this.#plan?.keep.has(id) ?? false);
-		const shown: Shown = { layer: null, pages: [], visible: true, opacity: 1 };
+		const keep = (id: number) => this.#feed?.protects(id) ?? false;
+		const changed = () => this.#changeLayers();
+		let visible = true;
+		let opacity = 1;
 		const remove = () => {
 			if (this.#destroyed || !this.#layers.delete(number)) return;
 			for (const { id } of shown.pages) this.#pool.remove(id);
 			this.#pinned -= pinned;
-			this.#changeLayers();
+			changed();
 		};
+		const layer: Layer = {
+			splats: pages.reduce((sum, { page }) => sum + page.count, 0),
+			box: boxOf(pages.map(({ box }) => box)),
+			get visible() {
+				return visible;
+			},
+			set visible(on: boolean) {
+				visible = on;
+				changed();
+			},
+			get opacity() {
+				return opacity;
+			},
+			set opacity(value: number) {
+				opacity = Math.min(1, Math.max(0, value));
+				changed();
+			},
+			remove
+		};
+		const shown: Shown = { layer, pages: [] };
 		this.#layers.set(number, shown);
 		for (const { page, box } of pages) {
 			const id = --this.#layerPage;
@@ -466,29 +489,8 @@ class GpuEngine implements Engine {
 			}
 			shown.pages.push({ id, count: page.count, box });
 		}
-		this.#changeLayers();
-		const changed = () => this.#changeLayers();
-		const layer: Layer = {
-			splats: shown.pages.reduce((sum, { count }) => sum + count, 0),
-			box: boxOf(pages.map(({ box }) => box)),
-			get visible() {
-				return shown.visible;
-			},
-			set visible(visible: boolean) {
-				shown.visible = visible;
-				changed();
-			},
-			get opacity() {
-				return shown.opacity;
-			},
-			set opacity(opacity: number) {
-				shown.opacity = Math.min(1, Math.max(0, opacity));
-				changed();
-			},
-			remove
-		};
+		changed();
 		this.#layerNumbers.set(layer, number);
-		shown.layer = layer;
 		return layer;
 	}
 
@@ -500,15 +502,13 @@ class GpuEngine implements Engine {
 		const layers = new Set(
 			targets.map((t) => (t === 'world' ? 0 : (this.#layerNumbers.get(t) ?? -1)))
 		);
-		const masks = this.#pool.masks;
+		const pool = this.#pool;
 		const prism = { polygon: Float64Array.from(polygon.flat()), z: [z[0], z[1]] as const };
-		const id = masks.add(prism, layers);
-		const area = masks.area(id)!;
+		const id = pool.addMask(prism, layers);
 		let enabled = true;
 		let removed = false;
 		const remask = () => {
 			if (this.#destroyed) return;
-			this.#pool.remask(area);
 			this.#redraw = true;
 			this.requestFrame();
 		};
@@ -520,13 +520,13 @@ class GpuEngine implements Engine {
 			set enabled(on: boolean) {
 				if (removed || on === enabled) return;
 				enabled = on;
-				masks.enable(id, on);
+				pool.enableMask(id, on);
 				remask();
 			},
 			remove() {
 				if (removed) return;
 				removed = true;
-				masks.delete(id);
+				pool.deleteMask(id);
 				remask();
 			}
 		};
@@ -535,23 +535,36 @@ class GpuEngine implements Engine {
 	addLine(points: readonly Point[], style: LineStyle = {}): Line {
 		const { colour = WHITE, width = 2, closed = false, occlude = true } = style;
 		const capsules = (points: readonly Point[]) => {
+			finite(points);
 			const ends = closed && points.length > 2 ? [...points, points[0]] : points;
 			const pairs =
 				ends.length > 1 ? ends.slice(1).map((b, k) => [ends[k], b]) : [[ends[0], ends[0]]];
 			return pairs.map(([a, b]) => ({ a, b, radius: width / 2, colour, occlude }));
 		};
-		const { set, remove } = this.#graphic(capsules(finite(points)));
-		return { set: (points) => set(capsules(finite(points))), remove };
+		const id = ++this.#graphicCount;
+		const reshape = () => {
+			this.#reshaped = true;
+			this.requestFrame();
+		};
+		this.#graphics.set(id, capsules(points));
+		reshape();
+		return {
+			set: (points) => {
+				const next = capsules(points);
+				if (!this.#graphics.has(id)) return;
+				this.#graphics.set(id, next);
+				reshape();
+			},
+			remove: () => {
+				if (this.#graphics.delete(id)) reshape();
+			}
+		};
 	}
 
 	addMarker(point: Point, style: MarkerStyle = {}): Marker {
-		const { colour = WHITE, size = 12, occlude = true } = style;
-		const capsules = (point: Point) => {
-			const [a] = finite([point]);
-			return [{ a, b: a, radius: size / 2, colour, occlude }];
-		};
-		const { set, remove } = this.#graphic(capsules(point));
-		return { set: (point) => set(capsules(point)), remove };
+		const { size = 12, ...rest } = style;
+		const line = this.addLine([point], { ...rest, width: size });
+		return { set: (point) => line.set([point]), remove: line.remove };
 	}
 
 	toScreen([e, n, h]: Point): [number, number] | null {
@@ -652,8 +665,7 @@ class GpuEngine implements Engine {
 			gpuMs: gpu.gpuMs,
 			passes: gpu.passes,
 			drawn: gpu.drawn,
-			planned: this.#plan?.planned ?? 0,
-			missing: this.#plan?.missing ?? 0,
+			...this.#progressNow(),
 			pages: {
 				resident: Array.from(pool.ids()).length,
 				drawn: this.#drawn.length,
@@ -663,8 +675,7 @@ class GpuEngine implements Engine {
 			memory: { pool: pool.bytes, buffers: gpu.bytes },
 			capacity: pool.capacity,
 			budget: this.#budget,
-			scale: this.#quality.scale,
-			loading: feed !== null && !feed.idle
+			scale: this.#quality.scale
 		};
 	}
 
@@ -794,27 +805,6 @@ class GpuEngine implements Engine {
 		void this.open(url).then(() => (this.#reopening = false), retry);
 	};
 
-	/** a graphic of capsules, radius in css pixels: set replaces them, remove frees it */
-	#graphic(capsules: Capsule[]): { set: (capsules: Capsule[]) => void; remove: () => void } {
-		const id = ++this.#graphicCount;
-		const reshape = () => {
-			this.#reshaped = true;
-			this.requestFrame();
-		};
-		this.#graphics.set(id, capsules);
-		reshape();
-		return {
-			set: (capsules) => {
-				if (!this.#graphics.has(id)) return;
-				this.#graphics.set(id, capsules);
-				reshape();
-			},
-			remove: () => {
-				if (this.#graphics.delete(id)) reshape();
-			}
-		};
-	}
-
 	/** the layers' pages draw anew, and the plan's budget changes with them */
 	#changeLayers(): void {
 		this.#redraw = true;
@@ -828,8 +818,8 @@ class GpuEngine implements Engine {
 		const min = [0, 0, 0];
 		const max = [0, 0, 0];
 		let sum = 0;
-		for (const { pages, visible, opacity } of this.#layers.values()) {
-			if (!visible || opacity === 0) continue;
+		for (const { layer, pages } of this.#layers.values()) {
+			if (!factors(layer)) continue;
 			for (const { count, box } of pages) {
 				for (let a = 0; a < 3; a++) {
 					min[a] = box[a] - o[a];
@@ -841,13 +831,12 @@ class GpuEngine implements Engine {
 		return sum;
 	}
 
-	/** the visible layers' pages, every quadrant at the layer's opacity */
+	/** the pages of the layers that draw */
 	#drawLayers(): Drawn[] {
 		const drawn: Drawn[] = [];
-		for (const { pages, visible, opacity } of this.#layers.values()) {
-			const byte = Math.round(opacity * 255);
-			if (!visible || byte === 0) continue;
-			for (const { id } of pages) drawn.push({ id, factors: (byte * 0x01010101) >>> 0 });
+		for (const { layer, pages } of this.#layers.values()) {
+			const f = factors(layer);
+			if (f) for (const { id } of pages) drawn.push({ id, factors: f });
 		}
 		return drawn;
 	}
@@ -964,13 +953,10 @@ class GpuEngine implements Engine {
 			feed.update(plan, new Set(drawn.map((d) => d.id)), now);
 		}
 		if (pool.upload(UPLOAD_BYTES) > 0) this.#arrived = true;
-		const restyled = this.#redraw;
-		if (restyled) {
-			this.#layerDrawn = this.#drawLayers();
+		if (drawn !== this.#drawn || this.#arrived || this.#redraw) {
 			this.#redraw = false;
-		}
-		if (drawn !== this.#drawn || this.#arrived || restyled) {
-			pool.draw(this.#layerDrawn.length ? drawn.concat(this.#layerDrawn) : drawn);
+			const layers = this.#drawLayers();
+			pool.draw(layers.length ? drawn.concat(layers) : drawn);
 		}
 		this.#fading = fading;
 		this.#drawn = drawn;
@@ -983,7 +969,7 @@ class GpuEngine implements Engine {
 		}
 		const heights = this.#measures.splice(0).map((measuring) => this.#measure(measuring, origin));
 		const done = this.#renderer.render(frame, this.#planes, this.#options.sky, heights);
-		this.#rendered = { frame, view: this.#view.slice() };
+		this.#rendered = frame;
 		if (this.#picks.length) this.#answer();
 		const cpuMs = performance.now() - now;
 
@@ -1000,7 +986,7 @@ class GpuEngine implements Engine {
 			void done.then(() => idlers.forEach((resolve) => resolve()));
 		}
 		if (animated) this.#sample(now, cpuMs, moved);
-		this.#report(plan, feed);
+		this.#report();
 		// the feed calls onArrive for whatever it changes, so loads in flight need no frames
 		const warming = now < this.#warmUntil;
 		const pending = pool.queued > 0 || this.#arrived || this.#heading;
@@ -1058,7 +1044,9 @@ class GpuEngine implements Engine {
 
 	/** the waiting picks against the last frame, whose uniforms and cull the gpu still holds */
 	#answer(): void {
-		const { frame, view } = this.#rendered!;
+		const frame = this.#rendered!;
+		// the next frame rewrites the view before the gpu answers
+		const view = this.#view.slice();
 		const [cssWidth, cssHeight] = this.#css;
 		const size = [frame.width, frame.height] as const;
 		for (const { x, y, resolve } of this.#picks.splice(0)) {
@@ -1070,19 +1058,24 @@ class GpuEngine implements Engine {
 				found && {
 					point: unproject(pixel, size, found.depth, frame.proj, view, frame.origin),
 					normal: found.normal,
-					layer: found.layer ? (this.#layers.get(found.layer)?.layer ?? null) : null
+					layer: this.#layers.get(found.layer)?.layer ?? null
 				};
 			void this.#renderer.pick(pixel[0], pixel[1], frame).then((found) => resolve(hit(found)));
 		}
 	}
 
-	/** progress to its listeners when it changed */
-	#report(plan: Plan | null, feed: Feed | null): void {
-		const progress = {
-			planned: plan?.planned ?? 0,
-			missing: plan?.missing ?? 0,
+	#progressNow(): Progress {
+		const feed = this.#feed;
+		return {
+			planned: this.#plan?.planned ?? 0,
+			missing: this.#plan?.missing ?? 0,
 			loading: feed !== null && !feed.idle
 		};
+	}
+
+	/** progress to its listeners when it changed */
+	#report(): void {
+		const progress = this.#progressNow();
 		const last = this.#progress;
 		const same =
 			progress.planned === last.planned &&

@@ -94,6 +94,9 @@ export class Feed {
 		this.#prune();
 	}
 
+	/** a page the pool must not evict for another: plan.keep or drawn holds it */
+	protects = (id: number): boolean => this.#plan.keep.has(id) || this.#drawn.has(id);
+
 	/** idx fetches and page batches in flight */
 	get loading(): number {
 		return this.#idx.size + this.#batches.size;
@@ -175,10 +178,7 @@ export class Feed {
 		if (this.#destroyed) return;
 		const node = this.#tree.pages.get(id);
 		if (!node) return;
-		const { keep } = this.#plan;
-		const drawn = this.#drawn;
-		const protect = (id: number) => keep.has(id) || drawn.has(id);
-		if (this.#pool.add(id, page, [node.unit.e, node.unit.n], protect)) {
+		if (this.#pool.add(id, page, [node.unit.e, node.unit.n], this.protects)) {
 			this.#held.add(id);
 			if (this.#refused.delete(id)) this.#unwake(id);
 		} else {

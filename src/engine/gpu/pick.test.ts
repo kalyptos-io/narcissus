@@ -107,11 +107,10 @@ describe('Pick', () => {
 	it('never finds a splat a mask hides', async () => {
 		const { pool, buffers, draw, centre } = await setup();
 		pool.add(1, page([10, 20]), [0, 0], () => false);
-		pool.masks.add(
+		pool.addMask(
 			{ polygon: Float64Array.from([7, 9, 9, 9, 9, 11, 7, 11]), z: [-Infinity, Infinity] },
 			new Set([0])
 		);
-		pool.remask([7, 9, 9, 11]);
 		draw([1]);
 		expect((await centre())!.depth).toBeCloseTo(20, 2);
 		pool.destroy();

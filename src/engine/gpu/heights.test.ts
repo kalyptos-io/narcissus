@@ -96,14 +96,13 @@ describe('Heights', () => {
 		);
 		pool.add(0, solid, [0, 0], () => true);
 		pool.upload(Infinity);
-		pool.masks.add(
+		pool.addMask(
 			{
 				polygon: Float64Array.from([102, 201, 103, 201, 103, 202, 102, 202]),
 				z: [-Infinity, Infinity]
 			},
 			new Set([0])
 		);
-		pool.remask([102, 201, 103, 202]);
 		pool.draw([{ id: 0, factors: 0xffffffff }]);
 		const tops = await heights(pool, 100, 200, 4);
 		expect(tops[4 + 1]).toBeCloseTo(5, 4);

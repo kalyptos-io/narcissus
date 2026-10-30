@@ -1,20 +1,27 @@
 import type { Mat4 } from './mat4.ts';
 
-// left, right, bottom, top, near, far
-const ROWS: [number, number][] = [
-	[0, 1],
-	[0, -1],
-	[1, 1],
-	[1, -1],
-	[2, 0],
-	[2, -1]
+// left, right, bottom, top, near, far: clip row, its ndc bound, the side inside faces
+const ROWS: [number, number, number][] = [
+	[0, -1, 1],
+	[0, 1, -1],
+	[1, -1, 1],
+	[1, 1, -1],
+	[2, 0, 1],
+	[2, 1, -1]
 ];
 
-/** the six planes of a webgpu view-projection (clip z 0..1), normalised; inside when n.p + d >= 0 */
-export function planes(out: Float32Array | Float64Array, m: Mat4): typeof out {
-	const row = (r: number, k: number) => m[k * 4 + r];
-	ROWS.forEach(([r, sign], p) => {
-		for (let k = 0; k < 4; k++) out[p * 4 + k] = sign ? row(3, k) + sign * row(r, k) : row(r, k);
+/**
+ * the six planes of a webgpu view-projection (clip z 0..1), normalised; inside when n.p + d >= 0.
+ * sides moves left, right, bottom, top to those ndc bounds
+ */
+export function planes(
+	out: Float32Array | Float64Array,
+	m: Mat4,
+	sides?: readonly number[]
+): typeof out {
+	ROWS.forEach(([r, full, sign], p) => {
+		const bound = sides?.[p] ?? full;
+		for (let k = 0; k < 4; k++) out[p * 4 + k] = sign * (m[k * 4 + r] - bound * m[k * 4 + 3]);
 		const len = Math.hypot(out[p * 4], out[p * 4 + 1], out[p * 4 + 2]) || 1;
 		for (let k = 0; k < 4; k++) out[p * 4 + k] /= len;
 	});

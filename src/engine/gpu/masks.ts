@@ -1,6 +1,7 @@
 // masks on the gpu: prisms that hide splats by centre, in group 1 of the passes that test them
 
 import { IN, CROSS, relate, type Prism } from '../math/prism.ts';
+import { bufferGroup, bufferLayout } from './buffers.ts';
 
 /** u32 words of a record in masks.wgsl */
 const MASK_WORDS = 8;
@@ -30,21 +31,12 @@ export class Masks {
 
 	constructor(device: GPUDevice) {
 		this.#device = device;
-		this.layout = device.createBindGroupLayout({
-			label: 'masks',
-			entries: [
-				{ binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } }
-			]
-		});
+		this.layout = bufferLayout(device, 'masks', GPUShaderStage.COMPUTE, ['read-only-storage']);
 		this.#buffer = this.#make(64);
 	}
 
 	get group(): GPUBindGroup {
-		return (this.#group ??= this.#device.createBindGroup({
-			label: 'masks',
-			layout: this.layout,
-			entries: [{ binding: 0, resource: { buffer: this.#buffer } }]
-		}));
+		return (this.#group ??= bufferGroup(this.#device, 'masks', this.layout, [this.#buffer]));
 	}
 
 	get size(): number {

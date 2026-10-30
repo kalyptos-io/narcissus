@@ -132,11 +132,9 @@ export class Controls {
 
 	/** puts the focus on a ground point; heading and tilt stay, a far view closes in */
 	moveTo(e: number, n: number): void {
-		this.#land(false);
 		const t = this.#target;
 		const dist = Math.min(t.dist, defaultView.dist);
-		this.#target = this.#clamp({ ...t, e, n, h: this.#ground(e, n), dist });
-		this.#wake();
+		this.#steer(this.#clamp({ ...t, e, n, h: this.#ground(e, n), dist }));
 	}
 
 	/** shows the pose at once; fields left out stay */
@@ -229,13 +227,8 @@ export class Controls {
 		const hit = await this.#engine.pick(e.offsetX, e.offsetY);
 		if (!hit || this.#abort.signal.aborted) return;
 		const [he, hn, hh] = hit.point;
-		this.#land(false);
-		this.#target = clampPose(
-			lookAt(cameraOf(this.#current), { e: he, n: hn, h: hh }),
-			undefined,
-			this.#limits
-		);
-		this.#wake();
+		const view = lookAt(cameraOf(this.#current), { e: he, n: hn, h: hh });
+		this.#steer(clampPose(view, undefined, this.#limits));
 	};
 
 	/** a host consumes an event by calling preventDefault in a capture listener */
@@ -303,6 +296,13 @@ export class Controls {
 		if (flying || this.#trip || this.#current !== this.#target) this.#wake();
 		else this.#last = null;
 	};
+
+	/** current chases pose; a flight ends */
+	#steer(pose: Pose) {
+		this.#land(false);
+		this.#target = pose;
+		this.#wake();
+	}
 
 	#land(arrived: boolean) {
 		const trip = this.#trip;

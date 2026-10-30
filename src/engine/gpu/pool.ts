@@ -9,6 +9,7 @@ import {
 } from '../../format/index.ts';
 import { CLUSTER_WORDS, PAGE_WORDS, slots } from './layout.ts';
 import { Masks } from './masks.ts';
+import type { Prism } from '../math/prism.ts';
 import type { Drawn } from '../types.ts';
 
 /** u32 words of Page.factors and Page.layer */
@@ -109,9 +110,9 @@ export class Pool {
 	#masked: (readonly number[])[];
 	#maskedChanged = false;
 
-	constructor(device: GPUDevice, capacity: number, masks = new Masks(device)) {
+	constructor(device: GPUDevice, capacity: number) {
 		this.capacity = capacity;
-		this.masks = masks;
+		this.masks = new Masks(device);
 		this.#device = device;
 		const slots = this.slots;
 		this.#allocate();
@@ -265,21 +266,22 @@ export class Pool {
 		if (this.masks.size) this.masks.write();
 	}
 
-	/** relates the clusters of uploaded pages over the world area min e, n, max e, n to the masks again */
-	remask(area: readonly [number, number, number, number]): void {
-		const floats = this.#clusterFloats;
-		for (const entry of this.#entries.values()) {
-			if (entry.page !== null) continue;
-			const meets = entry.slots.some((slot) => {
-				const w = slot * CLUSTER_WORDS;
-				const [x0, y0] = [entry.base[0] + floats[w + 4], entry.base[1] + floats[w + 5]];
-				const [x1, y1] = [entry.base[0] + floats[w + 8], entry.base[1] + floats[w + 9]];
-				return x1 >= area[0] && y1 >= area[1] && x0 <= area[2] && y0 <= area[3];
-			});
-			if (meets) this.#relate(entry);
-		}
-		// the records move when masks come and go, so the lists' indices do too
-		this.#maskedChanged = true;
+	/** a new mask over targets, layer numbers with 0 for the world; it hides from the next draw */
+	addMask(prism: Prism, targets: ReadonlySet<number>): number {
+		const id = this.masks.add(prism, targets);
+		this.#remask(this.masks.area(id)!);
+		return id;
+	}
+
+	enableMask(id: number, enabled: boolean): void {
+		this.masks.enable(id, enabled);
+		this.#remask(this.masks.area(id)!);
+	}
+
+	deleteMask(id: number): void {
+		const area = this.masks.area(id)!;
+		this.masks.delete(id);
+		this.#remask(area);
 	}
 
 	/** room for capacity splats, the pages held staying in place; new buffers, so new bind groups */
@@ -493,17 +495,38 @@ export class Pool {
 		this.#tableDirty.mark(word, word + 1);
 	}
 
+	/** relates the clusters of uploaded pages over the world area min e, n, max e, n to the masks again */
+	#remask(area: readonly [number, number, number, number]): void {
+		const min = [0, 0, 0];
+		const max = [0, 0, 0];
+		for (const entry of this.#entries.values()) {
+			if (entry.page !== null) continue;
+			const meets = entry.slots.some((slot) => {
+				this.#box(entry, slot, min, max);
+				return max[0] >= area[0] && max[1] >= area[1] && min[0] <= area[2] && min[1] <= area[3];
+			});
+			if (meets) this.#relate(entry);
+		}
+		// the records move when masks come and go, so the lists' indices do too
+		this.#maskedChanged = true;
+	}
+
+	/** world box of the cluster in slot of an uploaded entry */
+	#box(entry: Entry, slot: number, min: number[], max: number[]): void {
+		const floats = this.#clusterFloats;
+		const w = slot * CLUSTER_WORDS;
+		for (let k = 0; k < 3; k++) {
+			min[k] = entry.base[k] + floats[w + 4 + k];
+			max[k] = entry.base[k] + floats[w + 8 + k];
+		}
+	}
+
 	/** the masks over each cluster of an uploaded entry; its active clusters follow on its next draw */
 	#relate(entry: Entry): void {
-		const floats = this.#clusterFloats;
 		const min = [0, 0, 0];
 		const max = [0, 0, 0];
 		for (const slot of entry.slots) {
-			const w = slot * CLUSTER_WORDS;
-			for (let k = 0; k < 3; k++) {
-				min[k] = entry.base[k] + floats[w + 4 + k];
-				max[k] = entry.base[k] + floats[w + 8 + k];
-			}
+			this.#box(entry, slot, min, max);
 			const crossing: number[] = [];
 			const hidden = this.masks.relate(entry.layer, min, max, crossing) ? 1 : 0;
 			const was = this.#masked[slot];

@@ -113,11 +113,10 @@ async function layers(p: Pose, count: number) {
 	for (let k = 0; k < count; k++) {
 		const centre = [p.e + (k - (count - 1) / 2) * LAYER_GAP, p.n, p.h];
 		const r = (i: number) => Math.abs(Math.sin(i * 12.9898 + k * 78.233) * 43758.5453) % 1;
-		const across = [LAYER_SIDE, LAYER_SIDE, 0];
 		const { pack, origin } = await encodeLayer({
 			count: n,
 			position: Float64Array.from({ length: n * 3 }, (_, i) =>
-				i % 3 === 2 ? centre[2] + r(i) * LAYER_TALL : centre[i % 3] + (r(i) - 0.5) * across[i % 3]
+				i % 3 === 2 ? centre[2] + r(i) * LAYER_TALL : centre[i % 3] + (r(i) - 0.5) * LAYER_SIDE
 			),
 			rotation: Float32Array.from({ length: n * 4 }, (_, i) => (i % 4 === 0 ? 1 : r(i) - 0.5)),
 			scale: Float32Array.from({ length: n * 3 }, (_, i) => Math.log(0.02 + 0.05 * r(i + 1))),
