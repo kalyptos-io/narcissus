@@ -132,6 +132,7 @@ export class Controls {
 
 	/** puts the focus on a ground point; heading and tilt stay, a far view closes in */
 	moveTo(e: number, n: number): void {
+		this.#land(false);
 		const t = this.#target;
 		const dist = Math.min(t.dist, defaultView.dist);
 		this.#target = this.#clamp({ ...t, e, n, h: this.#ground(e, n), dist });

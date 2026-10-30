@@ -160,6 +160,13 @@ describe('Controls', () => {
 		expect(await second).toBe(true);
 	});
 
+	it('resolves false when moveTo moves the camera', async () => {
+		const arrived = controls.flyTo({ e: 500 });
+		frames(5);
+		controls.moveTo(-200, 0);
+		expect(await arrived).toBe(false);
+	});
+
 	it('resolves false when the signal aborts', async () => {
 		const abort = new AbortController();
 		const arrived = controls.flyTo({ e: 500 }, { signal: abort.signal });
