@@ -7,6 +7,8 @@ import { bufferGroup, bufferLayout } from './buffers.ts';
 const MASK_WORDS = 8;
 /** f32 stand-in for an open height range */
 const FAR = 3e38;
+/** cells across past which a mask is tested by every box rather than filed by cell */
+const SPAN = 4;
 
 interface Held {
 	prism: Prism;
@@ -28,6 +30,7 @@ export class Masks {
 	#origin: readonly [number, number, number] = [0, 0, 0];
 	/** the lists of the last write, as mask ids */
 	#lists: number[] = [];
+	#grid: Grid | null = null;
 
 	constructor(device: GPUDevice) {
 		this.#device = device;
@@ -54,6 +57,7 @@ export class Masks {
 			area[3] = Math.max(area[3], polygon[k + 1]);
 		}
 		this.#masks.set(++this.#next, { prism, targets, enabled: true, area });
+		this.#grid = null;
 		return this.#next;
 	}
 
@@ -63,7 +67,7 @@ export class Masks {
 	}
 
 	delete(id: number): void {
-		this.#masks.delete(id);
+		if (this.#masks.delete(id)) this.#grid = null;
 	}
 
 	/** world min e, n, max e, n of a mask's polygon */
@@ -81,7 +85,8 @@ export class Masks {
 		max: ArrayLike<number>,
 		crossing: number[]
 	): boolean {
-		for (const [id, { prism, targets, enabled, area }] of this.#masks) {
+		for (const id of (this.#grid ??= new Grid(this.#masks)).near(min, max)) {
+			const { prism, targets, enabled, area } = this.#masks.get(id)!;
 			if (!enabled || !targets.has(layer)) continue;
 			if (max[0] < area[0] || max[1] < area[1] || min[0] > area[2] || min[1] > area[3]) continue;
 			const relation = relate(prism, min, max);
@@ -145,4 +150,54 @@ export class Masks {
 			usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
 		});
 	}
+}
+
+/** the masks by area: a grid at about a typical mask's size, and those that span many cells */
+class Grid {
+	#all: number[];
+	#cell: number;
+	#cells = new Map<string, number[]>();
+	#wide: number[] = [];
+
+	constructor(masks: ReadonlyMap<number, Held>) {
+		this.#all = [...masks.keys()];
+		const sides = [...masks.values()]
+			.map(({ area }) => Math.max(area[2] - area[0], area[3] - area[1]))
+			.sort((a, b) => a - b);
+		this.#cell = Math.max(sides[sides.length >> 1] ?? 1, 1e-3);
+		for (const [id, { area }] of masks) {
+			const [x0, y0, x1, y1] = cells(area[0], area[1], area[2], area[3], this.#cell);
+			if (x1 - x0 >= SPAN || y1 - y0 >= SPAN) {
+				this.#wide.push(id);
+				continue;
+			}
+			for (let x = x0; x <= x1; x++)
+				for (let y = y0; y <= y1; y++) {
+					const list = this.#cells.get(`${x},${y}`);
+					if (list) list.push(id);
+					else this.#cells.set(`${x},${y}`, [id]);
+				}
+		}
+	}
+
+	/** ids of the masks whose area may meet the box min to max, each once */
+	near(min: ArrayLike<number>, max: ArrayLike<number>): Iterable<number> {
+		const [x0, y0, x1, y1] = cells(min[0], min[1], max[0], max[1], this.#cell);
+		// a box over more cells than there are masks: reading them all is cheaper
+		if ((x1 - x0 + 1) * (y1 - y0 + 1) > this.#all.length) return this.#all;
+		const out = new Set(this.#wide);
+		for (let x = x0; x <= x1; x++)
+			for (let y = y0; y <= y1; y++)
+				for (const id of this.#cells.get(`${x},${y}`) ?? []) out.add(id);
+		return out;
+	}
+}
+
+function cells(x0: number, y0: number, x1: number, y1: number, cell: number) {
+	return [
+		Math.floor(x0 / cell),
+		Math.floor(y0 / cell),
+		Math.floor(x1 / cell),
+		Math.floor(y1 / cell)
+	] as const;
 }

@@ -34,17 +34,17 @@ layer.visible = mask.enabled = false;
 
 The rule: a splat of a target is hidden while its centre lies inside the polygon by the even-odd rule and within `z`.
 
-It holds at every level of detail, through the fades between levels, and while pages stream: the test runs on each splat before it is projected, whatever page drew it. Clusters that a mask covers wholly are left out before the GPU sees them. Only splats in clusters that an edge of a mask crosses are tested one by one. `enabled` turns a mask off and on, and `remove()` ends it. `engine.heights()` follows the masks too. `engine.ground()` does not: it reads the coarse ground from the tree's index.
+It holds at every level of detail, through the fades between levels, and while pages stream: the test runs on each splat before it is projected, whatever page drew it. Clusters that a mask covers wholly are left out before the GPU sees them. Only splats in clusters that an edge of a mask crosses are tested one by one. `enabled` turns a mask off and on, and `remove()` ends it. Changes apply at the next frame, and all the changes made between two frames cost one pass over the pages they touch, so a page can hold thousands of small masks. `engine.heights()` follows the masks too. `engine.ground()` does not: it reads the coarse ground from the tree's index.
 
 ## Picking
 
 `engine.pick(x, y)`, with canvas CSS pixels such as a pointer event's `offsetX` and `offsetY`, resolves with a `Hit` or `null` over the sky:
 
-- `point`: where the pixel's ray reaches the hit splat's depth.
+- `point`: where the pixel's ray meets the hit splat's plane.
 - `normal`: the splat's thinnest axis, toward the camera. Splats on a surface lie flat along it, so it is the surface normal there.
 - `layer`: the `Layer` hit, or `null` for the world.
 
-The hit is the nearest splat that draws the pixel at 0.5 opacity or more, after masks and plugins, as the last frame showed it. A pick renders no frame. It is one small compute pass over the clusters under the pixel, so it is fast enough for every pointer move. It answers about a frame later, so a page should not start a new pick while one is pending.
+The hit is where the splats that the last frame drew over the pixel, blended front to back, first cover half of it, after masks and plugins. Faint splats that blend into a surface therefore give a hit too. When more splats lie over the pixel than the pick holds, it resolves `null` once and holds more on the next pick. A pick renders no frame. It is one small compute pass over the clusters under the pixel, so it is fast enough for every pointer move. It answers about a frame later, so a page should not start a new pick while one is pending.
 
 ## Lines and markers
 
