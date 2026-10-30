@@ -1,5 +1,8 @@
-// a pool splat decoded and its screen covariance, shared by project and pick; each declares the
-// uniforms, geometry, colours and pages bindings these read
+// a pool splat decoded, its screen covariance and how the frame draws it, shared by project and
+// pick; each declares the uniforms, geometry, colours and pages bindings these read
+
+// ndc reach past the frustum, so splats centred just outside still cover the edge
+const GUARD: f32 = 1.3;
 
 // i8 over 127, sign-extended by extractBits on i32
 fn code(word: u32, bit: u32) -> f32 {
@@ -84,4 +87,51 @@ fn covariance(g: vec4u, scale: vec3f, viewPos: vec3f) -> vec3f {
 	let u = j0 * wm;
 	let v = j1 * wm;
 	return vec3f(dot(u, u) + uniforms.lowPass, dot(u, v), dot(v, v) + uniforms.lowPass);
+}
+
+// a splat as the frame draws it: its view depth, its centre in pixels from the bottom-left, and
+// its quad's axis with the sigmas along it and across
+struct Drawn {
+	depth: f32,
+	centre: vec2f,
+	axis: vec2f,
+	major: f32,
+	minor: f32,
+}
+
+// false where the frame draws none of the shaded splat: too faint, out of range, centred past the
+// guard band, under half a pixel, or off the screen
+fn drawn(s: Splat, g: vec4u, d: ptr<function, Drawn>) -> bool {
+	if (s.opacity < 1.0 / 255.0) {
+		return false;
+	}
+	let viewPos = (uniforms.view * vec4f(s.position, 1.0)).xyz;
+	let depth = -viewPos.z;
+	if (depth < uniforms.near || depth > uniforms.far) {
+		return false;
+	}
+	let clip = uniforms.proj * vec4f(viewPos, 1.0);
+	let ndc = clip.xy / clip.w;
+	if (any(abs(ndc) > vec2f(GUARD))) {
+		return false;
+	}
+
+	let cov = covariance(g, s.scale, viewPos);
+	let mid = 0.5 * (cov.x + cov.z);
+	let rad = length(vec2f(0.5 * (cov.x - cov.z), cov.y));
+	let major = sqrt(mid + rad);
+	if (3.0 * major < 0.5) {
+		return false;
+	}
+	let minor = sqrt(max(mid - rad, 0.0));
+	let angle = 0.5 * atan2(2.0 * cov.y, cov.x - cov.z);
+	let axis = vec2f(cos(angle), sin(angle));
+	// the quad raster draws; a centre inside the guard band can still miss the screen
+	let centre = (ndc * 0.5 + 0.5) * uniforms.viewport;
+	let extent = reach(s.opacity) * (abs(axis) * major + abs(axis.yx) * minor);
+	if (any(centre + extent < vec2f(0.0)) || any(centre - extent > uniforms.viewport)) {
+		return false;
+	}
+	*d = Drawn(depth, centre, axis, major, minor);
+	return true;
 }

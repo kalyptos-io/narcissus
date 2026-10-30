@@ -15,16 +15,30 @@ const NEAR = 0.5;
 const FAR = 300;
 const EYE: [number, number, number] = [8, 0, 1.5];
 
-/** flat 1 m discs facing south, the camera's way, at these northings */
-function page(northings: number[]) {
-	const n = northings.length;
+/** a disc: its northing on the camera's axis, or its place; its alpha, size and turn about east */
+interface Disc {
+	north?: number;
+	at?: [number, number, number];
+	alpha?: number;
+	size?: number;
+	tilt?: number;
+}
+
+/** discs facing south, the camera's way, 1 m and solid unless given */
+function page(discs: (number | Disc)[]) {
+	const all = discs.map((d): Disc => (typeof d === 'number' ? { north: d } : d));
+	const n = all.length;
 	const { payload } = encodePage(
 		{
 			count: n,
-			position: Float64Array.from(northings.flatMap((y) => [8, y, 1.5])),
-			rotation: Float32Array.from({ length: n * 4 }, (_, k) => (k % 4 === 0 ? 1 : 0)),
-			scale: Float32Array.from({ length: n * 3 }, (_, k) => Math.log(k % 3 === 1 ? 0.01 : 0.5)),
-			alpha: new Float32Array(n).fill(1),
+			position: Float64Array.from(all.flatMap((d) => d.at ?? [8, d.north!, 1.5])),
+			rotation: Float32Array.from(
+				all.flatMap(({ tilt = 0 }) => [Math.cos(tilt / 2), Math.sin(tilt / 2), 0, 0])
+			),
+			scale: Float32Array.from(
+				all.flatMap(({ size = 0.5 }) => [Math.log(size), Math.log(0.01), Math.log(size)])
+			),
+			alpha: Float32Array.from(all.map(({ alpha = 1 }) => alpha)),
 			dc: new Float32Array(n * 3),
 			sh: null
 		},
@@ -59,10 +73,10 @@ function frame(device: GPUDevice, buffer: GPUBuffer): Frame {
 	};
 }
 
-async function setup() {
+async function setup(slots = 4096) {
 	const device = await testDevice();
-	const pool = new Pool(device, 4096);
-	const buffers = frameBuffers(device, 4096, pool.slots);
+	const pool = new Pool(device, slots);
+	const buffers = frameBuffers(device, slots, pool.slots);
 	const pick = new Pick(device, pool, buffers);
 	const at = frame(device, buffers.uniforms);
 	/** the drawn pages as the last frame's cull would have listed them */
@@ -81,12 +95,14 @@ async function setup() {
 		buffers,
 		draw,
 		centre: () => pick.run(SIZE / 2, SIZE / 2, at),
-		corner: () => pick.run(2, 2, at)
+		corner: () => pick.run(2, 2, at),
+		/** the pixel whose ray climbs `slope` metres a metre north */
+		above: (slope: number) => pick.run(SIZE / 2, SIZE / 2 - (slope * at.proj[5] * SIZE) / 2, at)
 	};
 }
 
 describe('Pick', () => {
-	it('finds the nearest solid splat, its layer and its face, and nothing over the sky', async () => {
+	it('finds the surface, its layer and its face, and nothing over the sky', async () => {
 		const { pool, buffers, draw, centre, corner } = await setup();
 		pool.add(1, page([10, 20]), [0, 0], () => false);
 		draw([1]);
@@ -100,6 +116,56 @@ describe('Pick', () => {
 		pool.add(-1, page([5]), [0, 0], () => false, 3);
 		draw([1, -1]);
 		expect(await centre()).toMatchObject({ depth: expect.closeTo(5, 2), layer: 3 });
+		pool.destroy();
+		buffers.destroy();
+	});
+
+	it('never finds a splat the frame does not draw, as one whose centre is off the screen', async () => {
+		const { pool, buffers, draw, centre } = await setup();
+		// 3 m east of the camera's axis at 1 m: far past the guard band, though its spread reaches it
+		pool.add(1, page([{ at: [11, 1, 1.5], size: 3 }, 10]), [0, 0], () => false);
+		draw([1]);
+		expect((await centre())!.depth).toBeCloseTo(10, 2);
+		pool.destroy();
+		buffers.destroy();
+	});
+
+	it('finds where the faint splats in front add up to half, as the frame blends them', async () => {
+		const { pool, buffers, draw, centre } = await setup();
+		pool.add(
+			1,
+			page([{ north: 10, alpha: 0.3 }, { north: 12, alpha: 0.3 }, 20]),
+			[0, 0],
+			() => false
+		);
+		draw([1]);
+		// 1 - 0.7 * 0.7 = 0.51 at the second
+		expect((await centre())!.depth).toBeCloseTo(12, 2);
+		pool.destroy();
+		buffers.destroy();
+	});
+
+	it('meets a turned splat where the ray crosses its plane, not at its centre', async () => {
+		const { pool, buffers, draw, above } = await setup();
+		pool.add(1, page([{ north: 10, tilt: Math.PI / 4 }]), [0, 0], () => false);
+		draw([1]);
+		// its plane is y - 10 = -(z - 1.5), the ray z - 1.5 = slope y
+		const slope = 0.02;
+		expect((await above(slope))!.depth).toBeCloseTo(10 / (1 + slope), 1);
+		pool.destroy();
+		buffers.destroy();
+	});
+
+	it('finds none while more splats lie over the pixel than it keeps, then grows to keep them', async () => {
+		const { pool, buffers, draw, centre } = await setup(8192);
+		// 5000 faint discs a centimetre apart, at an alpha a byte holds; the k-th brings it to half
+		const alpha = 4 / 255;
+		const k = Math.ceil(Math.log(0.5) / Math.log(1 - alpha));
+		const discs = Array.from({ length: 5000 }, (_, i) => ({ north: 10 + i / 100, alpha }));
+		pool.add(1, page(discs), [0, 0], () => false);
+		draw([1]);
+		expect(await centre()).toBeNull();
+		expect((await centre())!.depth).toBeCloseTo(10 + (k - 1) / 100, 2);
 		pool.destroy();
 		buffers.destroy();
 	});

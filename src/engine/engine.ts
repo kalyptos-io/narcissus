@@ -82,8 +82,9 @@ export interface Engine {
 	/** canvas size in css pixels and the device pixel ratio to render at */
 	resize(width: number, height: number, ratio: number): void;
 	/**
-	 * the surface under canvas css pixel (x, y), or null over nothing: the nearest splat that draws
-	 * it at 0.5 opacity or more, as the last frame showed it; it renders no frame of its own
+	 * the surface under canvas css pixel (x, y), or null over nothing: where the splats the last
+	 * frame drew there, blended front to back, first cover half the pixel, met on that splat's
+	 * plane; it renders no frame of its own
 	 */
 	pick(x: number, y: number): Promise<Hit | null>;
 	ground(e: number, n: number): number | undefined;
