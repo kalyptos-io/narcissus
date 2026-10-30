@@ -8,7 +8,7 @@ export type { Layer } from './layer.ts';
 export type { Mask, MaskOptions } from './mask.ts';
 export type { Colour, Line, LineStyle, Marker, MarkerStyle } from './overlay.ts';
 export type { World } from '../format/index.ts';
-export type { Box, Camera, Settings, Stats } from './types.ts';
+export type { Box, Camera, Progress, Settings, Stats } from './types.ts';
 export { grade } from './plugins/grade.ts';
 export { dof } from './plugins/dof.ts';
 export { fog } from './plugins/fog.ts';

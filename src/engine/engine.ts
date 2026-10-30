@@ -27,7 +27,7 @@ import { percentile, pixelRatio, Quality } from './quality.ts';
 import { Feed } from './stream/feed.ts';
 import { http } from '../adapters/http.ts';
 import { Loader } from './stream/loader.ts';
-import type { Camera, Drawn, Settings, Stats } from './types.ts';
+import type { Camera, Drawn, Progress, Settings, Stats } from './types.ts';
 import { Tree } from './world/tree.ts';
 
 export interface EngineOptions {
@@ -100,6 +100,8 @@ export interface Engine {
 	use(plugin: Plugin): () => void;
 	/** device loss, with its reason; the engine is then dead */
 	onLost(fn: (reason: string) => void): () => void;
+	/** fn(progress) each time the planned or missing splats, or whether pages load, change */
+	onProgress(fn: (progress: Progress) => void): () => void;
 	/** fn(now) starts each frame the loop draws, so a camera it sets shows in that frame */
 	onFrame(fn: (now: number) => void): () => void;
 	/** the camera may soon move: after a rest, frames run a moment so the gpu is up to speed by then */
@@ -349,6 +351,8 @@ class GpuEngine implements Engine {
 	#idlers: (() => void)[] = [];
 	#lostListeners = new Set<(reason: string) => void>();
 	#frameListeners = new Set<(now: number) => void>();
+	#progressListeners = new Set<(progress: Progress) => void>();
+	#progress: Progress = { planned: 0, missing: 0, loading: false };
 	/** frame listeners run; a camera they set needs no frame of its own */
 	#starting = false;
 	#destroyed = false;
@@ -696,6 +700,11 @@ class GpuEngine implements Engine {
 		return () => this.#frameListeners.delete(fn);
 	}
 
+	onProgress(fn: (progress: Progress) => void): () => void {
+		this.#progressListeners.add(fn);
+		return () => this.#progressListeners.delete(fn);
+	}
+
 	onLost(fn: (reason: string) => void): () => void {
 		this.#lostListeners.add(fn);
 		return () => this.#lostListeners.delete(fn);
@@ -991,6 +1000,7 @@ class GpuEngine implements Engine {
 			void done.then(() => idlers.forEach((resolve) => resolve()));
 		}
 		if (animated) this.#sample(now, cpuMs, moved);
+		this.#report(plan, feed);
 		// the feed calls onArrive for whatever it changes, so loads in flight need no frames
 		const warming = now < this.#warmUntil;
 		const pending = pool.queued > 0 || this.#arrived || this.#heading;
@@ -1064,6 +1074,23 @@ class GpuEngine implements Engine {
 				};
 			void this.#renderer.pick(pixel[0], pixel[1], frame).then((found) => resolve(hit(found)));
 		}
+	}
+
+	/** progress to its listeners when it changed */
+	#report(plan: Plan | null, feed: Feed | null): void {
+		const progress = {
+			planned: plan?.planned ?? 0,
+			missing: plan?.missing ?? 0,
+			loading: feed !== null && !feed.idle
+		};
+		const last = this.#progress;
+		const same =
+			progress.planned === last.planned &&
+			progress.missing === last.missing &&
+			progress.loading === last.loading;
+		if (same) return;
+		this.#progress = progress;
+		for (const fn of this.#progressListeners) fn(progress);
 	}
 
 	/** a heights request in this frame's floating origin */

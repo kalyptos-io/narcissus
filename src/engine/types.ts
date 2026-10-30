@@ -57,3 +57,6 @@ export interface Stats {
 	scale: number;
 	loading: boolean;
 }
+
+/** how far the view has loaded, as stats() also gives it */
+export type Progress = Pick<Stats, 'planned' | 'missing' | 'loading'>;
