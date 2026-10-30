@@ -181,7 +181,7 @@ export class Controls {
 	#pick = async (e: MouseEvent) => {
 		const hit = await this.#engine.pick(e.offsetX, e.offsetY);
 		if (!hit || this.#abort.signal.aborted) return;
-		const [he, hn, hh] = hit;
+		const [he, hn, hh] = hit.point;
 		this.#target = clampPose(
 			lookAt(cameraOf(this.#current), { e: he, n: hn, h: hh }),
 			undefined,

@@ -4,7 +4,8 @@ import { CLUSTER, GEOMETRY_WORDS, directory, parseWorld, type World } from '../f
 import { PROJECTED_WORDS, slots } from './gpu/layout.ts';
 import { requestGpu, type Gpu } from './gpu/device.ts';
 import { Pool } from './gpu/pool.ts';
-import { Renderer, type DepthPick, type HeightsRequest } from './gpu/renderer.ts';
+import type { Found } from './gpu/pick.ts';
+import { Renderer, type HeightsRequest } from './gpu/renderer.ts';
 import { boxOf, layerPages, type Layer } from './layer.ts';
 import type { Mask, MaskOptions } from './mask.ts';
 import { boxVisible, planes } from './math/frustum.ts';
@@ -41,6 +42,15 @@ export interface EngineOptions {
 	manual?: boolean;
 }
 
+export interface Hit {
+	/** where the pixel's ray meets the splat's depth, world coordinates */
+	point: [number, number, number];
+	/** unit; the splat's thinnest axis, toward the camera */
+	normal: [number, number, number];
+	/** null for the world */
+	layer: Layer | null;
+}
+
 export interface StepReport {
 	/** main-thread ms of the frame */
 	cpuMs: number;
@@ -64,8 +74,11 @@ export interface Engine {
 	configure(settings: Partial<Settings>): void;
 	/** canvas size in css pixels and the device pixel ratio to render at */
 	resize(width: number, height: number, ratio: number): void;
-	/** world point under canvas css pixel (x, y), or null over nothing */
-	pick(x: number, y: number): Promise<[number, number, number] | null>;
+	/**
+	 * the surface under canvas css pixel (x, y), or null over nothing: the nearest splat that draws
+	 * it at 0.5 opacity or more, as the last frame showed it; it renders no frame of its own
+	 */
+	pick(x: number, y: number): Promise<Hit | null>;
 	ground(e: number, n: number): number | undefined;
 	/** ground(e, n) once every .idx over (e, n) is read */
 	groundAt(e: number, n: number): Promise<number | undefined>;
@@ -214,6 +227,7 @@ function push(samples: number[], value: number): void {
 }
 
 interface Shown {
+	layer: Layer | null;
 	pages: { id: number; count: number; box: Float64Array }[];
 	visible: boolean;
 	opacity: number;
@@ -225,10 +239,10 @@ interface Installed<T> {
 }
 
 interface Picking {
-	/** target pixels */
+	/** canvas css pixels */
 	x: number;
 	y: number;
-	resolve: (point: [number, number, number] | null) => void;
+	resolve: (hit: Hit | null) => void;
 }
 
 interface Measuring {
@@ -309,6 +323,8 @@ class GpuEngine implements Engine {
 	#shades: Installed<Shade>[] = [];
 	#posts: Installed<Post>[] = [];
 	#picks: Picking[] = [];
+	/** the last frame submitted and its float64 view; null while the gpu holds none to pick in */
+	#rendered: { frame: Frame; view: Float64Array } | null = null;
 	#measures: Measuring[] = [];
 	#idlers: (() => void)[] = [];
 	#lostListeners = new Set<(reason: string) => void>();
@@ -410,7 +426,7 @@ class GpuEngine implements Engine {
 		const number = ++this.#layerCount;
 		const drawn = new Set(this.#drawn.map((d) => d.id));
 		const keep = (id: number) => drawn.has(id) || (this.#plan?.keep.has(id) ?? false);
-		const shown: Shown = { pages: [], visible: true, opacity: 1 };
+		const shown: Shown = { layer: null, pages: [], visible: true, opacity: 1 };
 		const remove = () => {
 			if (this.#destroyed || !this.#layers.delete(number)) return;
 			for (const { id } of shown.pages) this.#pool.remove(id);
@@ -448,6 +464,7 @@ class GpuEngine implements Engine {
 			remove
 		};
 		this.#layerNumbers.set(layer, number);
+		shown.layer = layer;
 		return layer;
 	}
 
@@ -530,15 +547,12 @@ class GpuEngine implements Engine {
 		this.#fit();
 	}
 
-	pick(x: number, y: number): Promise<[number, number, number] | null> {
+	pick(x: number, y: number): Promise<Hit | null> {
 		if (this.#destroyed || this.#lost) return Promise.resolve(null);
-		const [width, height] = this.#target;
-		const [cssWidth, cssHeight] = this.#css;
-		const tx = (x * width) / Math.max(1, cssWidth);
-		const ty = (y * height) / Math.max(1, cssHeight);
 		return new Promise((resolve) => {
-			this.#picks.push({ x: tx, y: ty, resolve });
-			this.requestFrame();
+			this.#picks.push({ x, y, resolve });
+			if (this.#rendered) this.#answer();
+			else this.requestFrame();
 		});
 	}
 
@@ -686,6 +700,7 @@ class GpuEngine implements Engine {
 		for (const entry of this.#posts) entry.off = renderer.post(entry.hook);
 		this.#renderer = renderer;
 		this.#frameCapacity = frame;
+		this.#rendered = null;
 	}
 
 	#feedFor(tree: Tree, loader: Loader): Feed {
@@ -866,9 +881,10 @@ class GpuEngine implements Engine {
 		}
 		this.#fading = fading;
 		this.#drawn = drawn;
-		const picks = this.#picks.splice(0).map((picking) => this.#pick(picking, frame));
 		const heights = this.#measures.splice(0).map((measuring) => this.#measure(measuring, origin));
-		const done = this.#renderer.render(frame, this.#planes, this.#options.sky, picks, heights);
+		const done = this.#renderer.render(frame, this.#planes, this.#options.sky, heights);
+		this.#rendered = { frame, view: this.#view.slice() };
+		if (this.#picks.length) this.#answer();
 		const cpuMs = performance.now() - now;
 
 		// what comes next
@@ -939,13 +955,24 @@ class GpuEngine implements Engine {
 		return { ...at, view: viewMatrix(this.#ahead, eye, c.yaw * DEG, c.pitch * DEG) };
 	}
 
-	/** a pick answered with this frame's matrices, which its depth belongs to */
-	#pick({ x, y, resolve }: Picking, frame: Frame): DepthPick {
-		const view = this.#view.slice();
-		const origin = this.#origin;
+	/** the waiting picks against the last frame, whose uniforms and cull the gpu still holds */
+	#answer(): void {
+		const { frame, view } = this.#rendered!;
+		const [cssWidth, cssHeight] = this.#css;
 		const size = [frame.width, frame.height] as const;
-		const point = (depth: number) => unproject([x, y], size, depth, frame.proj, view, origin);
-		return { x, y, resolve: (depth) => resolve(depth === null ? null : point(depth)) };
+		for (const { x, y, resolve } of this.#picks.splice(0)) {
+			const pixel = [
+				(x * size[0]) / Math.max(1, cssWidth),
+				(y * size[1]) / Math.max(1, cssHeight)
+			] as const;
+			const hit = (found: Found | null): Hit | null =>
+				found && {
+					point: unproject(pixel, size, found.depth, frame.proj, view, frame.origin),
+					normal: found.normal,
+					layer: found.layer ? (this.#layers.get(found.layer)?.layer ?? null) : null
+				};
+			void this.#renderer.pick(pixel[0], pixel[1], frame).then((found) => resolve(hit(found)));
+		}
 	}
 
 	/** a heights request in this frame's floating origin */

@@ -4,6 +4,7 @@ import common from './common.wgsl?raw';
 import masks from './masks.wgsl?raw';
 import { WORK } from './layout.ts';
 import source from './project.wgsl?raw';
+import splat from './splat.wgsl?raw';
 import type { Pool } from './pool.ts';
 
 export class Project {
@@ -77,20 +78,7 @@ export class Project {
 	}
 
 	#build(): GPUComputePipeline {
-		const shades = this.#shades;
-		const calls = shades.map(({ shade, slot }) => {
-			const slots = Array.from({ length: shade.uniforms }, (_, k) => `plugins[${slot + k}]`);
-			return `\t${shade.name}(s, array<vec4f, ${shade.uniforms}>(${slots.join(', ')}));`;
-		});
-		const code = [
-			common,
-			masks,
-			source,
-			...shades.map(({ shade }) => shade.wgsl),
-			'fn shade(s: ptr<function, Splat>) {',
-			...calls,
-			'}'
-		].join('\n');
+		const code = shaded([common, masks, splat, source], this.#shades);
 		const module = this.#device.createShaderModule({ label: 'project', code });
 		return this.#device.createComputePipeline({
 			label: 'project',
@@ -98,4 +86,19 @@ export class Project {
 			compute: { module, entryPoint: 'project' }
 		});
 	}
+}
+
+/** wgsl of parts, the hooks, and a shade(s) that runs them in order, each from its first slot */
+export function shaded(parts: string[], shades: { shade: Shade; slot: number }[]): string {
+	const calls = shades.map(({ shade, slot }) => {
+		const slots = Array.from({ length: shade.uniforms }, (_, k) => `plugins[${slot + k}]`);
+		return `\t${shade.name}(s, array<vec4f, ${shade.uniforms}>(${slots.join(', ')}));`;
+	});
+	return [
+		...parts,
+		...shades.map(({ shade }) => shade.wgsl),
+		'fn shade(s: ptr<function, Splat>) {',
+		...calls,
+		'}'
+	].join('\n');
 }
