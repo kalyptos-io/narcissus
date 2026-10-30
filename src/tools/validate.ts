@@ -5,14 +5,10 @@ import {
 	decodePage,
 	directory,
 	inflate,
-	PACK_MAGIC,
-	PACK_TRAILER,
+	packRows,
 	parseCol,
 	parseUnitPath,
-	ROW_BYTES,
-	rowAt,
 	unitPath,
-	VERSION,
 	type PageRow
 } from '../format/index.ts';
 import { Missing, type Fetch } from '../ports.ts';
@@ -125,7 +121,8 @@ async function checkUnit(source: Fetch, base: string, unit: Unit, deep: boolean,
 			}
 			return part;
 		};
-		const table = await packTable(read, idx.packSize);
+		const rows = await packRows(read, idx.packSize);
+		const table = new Map(rows.map((row) => [`${row.g}/${row.i}/${row.j}`, row]));
 		for (const row of idx.rows) {
 			const key = `${row.g}/${row.i}/${row.j}`;
 			const page = `page ${key}`;
@@ -140,34 +137,6 @@ async function checkUnit(source: Fetch, base: string, unit: Unit, deep: boolean,
 	} catch (error) {
 		fault(pack, told(error));
 	}
-}
-
-/** the rows of a pack's page table by g/i/j, through read(start, end) */
-async function packTable(
-	read: (start: number, end: number) => Promise<Uint8Array>,
-	size: number
-): Promise<Map<string, PageRow>> {
-	if (size < PACK_TRAILER) throw new Error('is shorter than a pack trailer');
-	const trailer = await read(size - PACK_TRAILER, size);
-	const view = new DataView(trailer.buffer, trailer.byteOffset, trailer.byteLength);
-	if (String.fromCharCode(...trailer.subarray(8, 12)) !== PACK_MAGIC) {
-		throw new Error('does not end in a pack trailer');
-	}
-	const version = view.getUint16(12, true);
-	if (version !== VERSION) throw new Error(`is version ${version}; narcissus reads ${VERSION}`);
-	const offset = view.getUint32(0, true);
-	const rows = view.getUint32(4, true);
-	if (offset + rows * ROW_BYTES !== size - PACK_TRAILER) {
-		throw new Error('has a page table that does not end at its trailer');
-	}
-	const bytes = await read(offset, size - PACK_TRAILER);
-	const table = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-	const byPage = new Map<string, PageRow>();
-	for (let r = 0; r < rows; r++) {
-		const row = rowAt(table, r * ROW_BYTES);
-		byPage.set(`${row.g}/${row.i}/${row.j}`, row);
-	}
-	return byPage;
 }
 
 /** what is wrong with a page blob against its row, or nothing */

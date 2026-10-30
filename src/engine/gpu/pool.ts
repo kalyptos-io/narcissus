@@ -10,8 +10,9 @@ import {
 import { CLUSTER_WORDS, PAGE_WORDS, slots } from './layout.ts';
 import type { Drawn } from '../types.ts';
 
-/** u32 word of Page.factors */
+/** u32 words of Page.factors and Page.layer */
 const FACTORS = 19;
+const LAYER = 23;
 /** a word gap below which two changed ranges of a table go up as one write */
 const MERGE_WORDS = 1024;
 
@@ -30,6 +31,8 @@ interface Entry {
 	/** page origin in world metres */
 	base: [number, number, number];
 	factors: number;
+	/** 0 for the world's pages; a layer's are pinned: never evicted, kept through clear */
+	layer: number;
 }
 
 /** word ranges of a cpu mirror changed since the last flush */
@@ -139,13 +142,14 @@ export class Pool {
 
 	/**
 	 * queues page id of the unit with south-west corner (e, n), evicting the least recently drawn
-	 * pages keep rejects; false when it cannot fit even then
+	 * pages keep rejects; false when it cannot fit even then. a page of a layer other than 0 is pinned
 	 */
 	add(
 		id: number,
 		page: DecodedPage,
 		unit: readonly [number, number],
-		keep: (id: number) => boolean
+		keep: (id: number) => boolean,
+		layer = 0
 	): boolean {
 		if (this.#entries.has(id)) return true;
 		// at least one slot, so page-table slots never run out before cluster slots
@@ -162,7 +166,8 @@ export class Pool {
 			mask: 0,
 			table: this.#tables.pop()!,
 			base: [page.params[o] + unit[0], page.params[o + 1] + unit[1], page.params[o + 2]],
-			factors: 0
+			factors: 0,
+			layer
 		};
 		this.#entries.set(id, entry);
 		this.#touch(entry);
@@ -184,8 +189,9 @@ export class Pool {
 		if (entry.page === null && entry.factors !== 0) this.#setFactors(entry, 0);
 	}
 
+	/** removes every page but the pinned */
 	clear(): void {
-		for (const id of this.#entries.keys()) this.remove(id);
+		for (const entry of this.#entries.values()) if (entry.layer === 0) this.remove(entry.id);
 	}
 
 	/** pages queued and not yet uploaded */
@@ -316,7 +322,7 @@ export class Pool {
 		if (free >= need) return true;
 		const evict: number[] = [];
 		for (let entry = this.#oldest; entry; entry = entry.next) {
-			if (entry.page !== null || keep(entry.id)) continue;
+			if (entry.page !== null || entry.layer !== 0 || keep(entry.id)) continue;
 			evict.push(entry.id);
 			free += entry.slots.length;
 			if (free >= need) break;
@@ -390,6 +396,7 @@ export class Pool {
 		table[w + 15] = q3;
 		f.set(p.subarray(PARAMS.dcMin, PARAMS.dcMin + 3), w + 16);
 		f.set(p.subarray(PARAMS.dcMax, PARAMS.dcMax + 3), w + 20);
+		table[w + LAYER] = entry.layer;
 		f.set(p.subarray(PARAMS.shScale, PARAMS.shScale + 9), w + 24);
 		this.#tableDirty.mark(w, w + PAGE_WORDS);
 

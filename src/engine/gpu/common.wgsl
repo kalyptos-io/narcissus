@@ -43,7 +43,8 @@ struct Page {
 	// quadrant k opacity 0-255 at bits 8k
 	factors: u32,
 	dcMax: vec3f,
-	pad: u32,
+	// 0 for the world, else the layer that holds the page
+	layer: u32,
 	shScale: array<vec4f, 3>,
 }
 

@@ -6,6 +6,13 @@ export interface Drawn {
 	factors: number;
 }
 
+/** world metres, min and max per axis, as World.extent */
+export interface Box {
+	e: readonly [number, number];
+	n: readonly [number, number];
+	h: readonly [number, number];
+}
+
 /** degrees; yaw clockwise from north, pitch negative looks down, fov vertical */
 export interface Camera {
 	e: number;
