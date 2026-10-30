@@ -2,6 +2,7 @@
 
 import {
 	createEngine,
+	encodeLayer,
 	http,
 	parsePose,
 	viewOf,
@@ -22,6 +23,8 @@ export interface Options {
 	/** a remote world.json to stream instead of the served world */
 	world?: string;
 	frameLimitMs: number;
+	/** layers put by each pose's focus, each with a mask on the world under it */
+	layers?: number;
 }
 
 export interface Repetition {
@@ -49,6 +52,12 @@ const HITCH_MS = 50;
 const PACE_MS = 10;
 const IDLE_MS = 60_000;
 const MIB = 2 ** 20;
+/** a layer: splats, metres across and up, the masked band around it, and the gap between layers */
+const LAYER_SPLATS = 150_000;
+const LAYER_SIDE = 10;
+const LAYER_TALL = 6;
+const LAYER_BAND = 2;
+const LAYER_GAP = 16;
 
 const canvas = document.querySelector('canvas')!;
 const shot = new OffscreenCanvas(...SHOT).getContext('2d', { willReadFrequently: true })!;
@@ -98,6 +107,37 @@ async function detailed() {
 	} while (engine.stats().missing > 0);
 }
 
+/** count layers in a row through p's focus, each with a world mask over it and its band */
+async function layers(p: Pose, count: number) {
+	const n = LAYER_SPLATS;
+	for (let k = 0; k < count; k++) {
+		const centre = [p.e + (k - (count - 1) / 2) * LAYER_GAP, p.n, p.h];
+		const r = (i: number) => Math.abs(Math.sin(i * 12.9898 + k * 78.233) * 43758.5453) % 1;
+		const across = [LAYER_SIDE, LAYER_SIDE, 0];
+		const { pack, origin } = await encodeLayer({
+			count: n,
+			position: Float64Array.from({ length: n * 3 }, (_, i) =>
+				i % 3 === 2 ? centre[2] + r(i) * LAYER_TALL : centre[i % 3] + (r(i) - 0.5) * across[i % 3]
+			),
+			rotation: Float32Array.from({ length: n * 4 }, (_, i) => (i % 4 === 0 ? 1 : r(i) - 0.5)),
+			scale: Float32Array.from({ length: n * 3 }, (_, i) => Math.log(0.02 + 0.05 * r(i + 1))),
+			alpha: Float32Array.from({ length: n }, (_, i) => 0.5 + 0.5 * r(i + 2)),
+			dc: Float32Array.from({ length: n * 3 }, (_, i) => r(i + 3) - 0.5),
+			sh: null
+		});
+		await engine.addLayer({ bytes: pack }, origin);
+		const [e, north] = centre;
+		const half = LAYER_SIDE / 2 + LAYER_BAND;
+		const polygon = [
+			[e - half, north - half],
+			[e + half, north - half],
+			[e + half, north + half],
+			[e - half, north + half]
+		] as const;
+		engine.addMask({ polygon, targets: ['world'] });
+	}
+}
+
 async function ready(options: Options) {
 	frameLimitMs = options.frameLimitMs;
 	a = pose(options.a);
@@ -116,6 +156,9 @@ async function ready(options: Options) {
 	look(a);
 	await settle();
 	const idleMs = performance.now() - start;
+	await layers(a, options.layers ?? 0);
+	await layers(b, options.layers ?? 0);
+	await settle();
 	const info = (await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' }))?.info;
 	const adapter = info ? info.description || `${info.vendor} ${info.architecture}` : 'none';
 	return { idleMs, adapter };
