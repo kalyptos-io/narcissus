@@ -70,6 +70,9 @@ fn shown(cluster: Cluster, t: u32, dest: ptr<function, Projected>, key: ptr<func
 	var s: Splat;
 	let q = vec3f(f32(g.x & 0xffffu), f32(g.x >> 16u), f32(g.y & 0xffffu));
 	s.position = page.origin + q * page.step;
+	if (masked(cluster, s.position)) {
+		return false;
+	}
 	s.opacity = fraction(g.y, 16u) * fraction(page.factors, 8u * quadrant);
 	let level = vec3f(fraction(g.z, 24u), fraction(g.w, 0u), fraction(g.w, 8u));
 	s.scale = exp(mix(page.scaleMin, page.scaleMax, level));

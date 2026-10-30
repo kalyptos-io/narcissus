@@ -6,6 +6,7 @@ import { requestGpu, type Gpu } from './gpu/device.ts';
 import { Pool } from './gpu/pool.ts';
 import { Renderer, type DepthPick, type HeightsRequest } from './gpu/renderer.ts';
 import { boxOf, layerPages, type Layer } from './layer.ts';
+import type { Mask, MaskOptions } from './mask.ts';
 import { boxVisible, planes } from './math/frustum.ts';
 import {
 	invert,
@@ -58,6 +59,7 @@ export interface Engine {
 		source: { url: string } | { bytes: Uint8Array },
 		origin: readonly [number, number]
 	): Promise<Layer>;
+	addMask(mask: MaskOptions): Mask;
 	setCamera(camera: Camera): void;
 	configure(settings: Partial<Settings>): void;
 	/** canvas size in css pixels and the device pixel ratio to render at */
@@ -265,8 +267,10 @@ class GpuEngine implements Engine {
 	#layerPage = 0;
 	/** pool splats the layers' pages pin */
 	#pinned = 0;
+	#layerNumbers = new WeakMap<Layer, number>();
 	#layerDrawn: Drawn[] = [];
-	#layersChanged = false;
+	/** the pool draws anew though the cut stays: layers or masks changed */
+	#redraw = false;
 
 	#camera: Camera = { e: 0, n: 0, h: 0, yaw: 0, pitch: 0, fov: 45 };
 	#cameraAt = -Infinity;
@@ -424,7 +428,7 @@ class GpuEngine implements Engine {
 		}
 		this.#changeLayers();
 		const changed = () => this.#changeLayers();
-		return {
+		const layer: Layer = {
 			splats: shown.pages.reduce((sum, { count }) => sum + count, 0),
 			box: boxOf(pages.map(({ box }) => box)),
 			get visible() {
@@ -442,6 +446,48 @@ class GpuEngine implements Engine {
 				changed();
 			},
 			remove
+		};
+		this.#layerNumbers.set(layer, number);
+		return layer;
+	}
+
+	addMask({ polygon, z = [-Infinity, Infinity], targets }: MaskOptions): Mask {
+		if (this.#destroyed) throw new Error(DESTROYED);
+		if (polygon.length < 3 || !polygon.flat().every(Number.isFinite)) {
+			throw new Error('A mask needs three or more corners, each two finite numbers.');
+		}
+		const layers = new Set(
+			targets.map((t) => (t === 'world' ? 0 : (this.#layerNumbers.get(t) ?? -1)))
+		);
+		const masks = this.#pool.masks;
+		const prism = { polygon: Float64Array.from(polygon.flat()), z: [z[0], z[1]] as const };
+		const id = masks.add(prism, layers);
+		const area = masks.area(id)!;
+		let enabled = true;
+		let removed = false;
+		const remask = () => {
+			if (this.#destroyed) return;
+			this.#pool.remask(area);
+			this.#redraw = true;
+			this.requestFrame();
+		};
+		remask();
+		return {
+			get enabled() {
+				return enabled;
+			},
+			set enabled(on: boolean) {
+				if (removed || on === enabled) return;
+				enabled = on;
+				masks.enable(id, on);
+				remask();
+			},
+			remove() {
+				if (removed) return;
+				removed = true;
+				masks.delete(id);
+				remask();
+			}
 		};
 	}
 
@@ -665,7 +711,7 @@ class GpuEngine implements Engine {
 
 	/** the layers' pages draw anew, and the plan's budget changes with them */
 	#changeLayers(): void {
-		this.#layersChanged = true;
+		this.#redraw = true;
 		this.#dirty = true;
 		this.requestFrame();
 	}
@@ -810,12 +856,12 @@ class GpuEngine implements Engine {
 			feed.update(plan, new Set(drawn.map((d) => d.id)), now);
 		}
 		if (pool.upload(UPLOAD_BYTES) > 0) this.#arrived = true;
-		const layers = this.#layersChanged;
-		if (layers) {
+		const restyled = this.#redraw;
+		if (restyled) {
 			this.#layerDrawn = this.#drawLayers();
-			this.#layersChanged = false;
+			this.#redraw = false;
 		}
-		if (drawn !== this.#drawn || this.#arrived || layers) {
+		if (drawn !== this.#drawn || this.#arrived || restyled) {
 			pool.draw(this.#layerDrawn.length ? drawn.concat(this.#layerDrawn) : drawn);
 		}
 		this.#fading = fading;

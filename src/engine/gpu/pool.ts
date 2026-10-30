@@ -8,11 +8,16 @@ import {
 	type DecodedPage
 } from '../../format/index.ts';
 import { CLUSTER_WORDS, PAGE_WORDS, slots } from './layout.ts';
+import { Masks } from './masks.ts';
 import type { Drawn } from '../types.ts';
 
 /** u32 words of Page.factors and Page.layer */
 const FACTORS = 19;
 const LAYER = 23;
+/** u32 words of Cluster.maskList and Cluster.maskCount */
+const MASK_LIST = 7;
+const MASK_COUNT = 11;
+const NONE: readonly number[] = [];
 /** a word gap below which two changed ranges of a table go up as one write */
 const MERGE_WORDS = 1024;
 
@@ -76,6 +81,7 @@ export class Pool {
 	listed = 0;
 	/** splats */
 	capacity: number;
+	readonly masks: Masks;
 
 	#device: GPUDevice;
 	#entries = new Map<number, Entry>();
@@ -98,9 +104,14 @@ export class Pool {
 	#clusterDirty = new Dirty();
 	#list: Uint32Array<ArrayBuffer>;
 	#drawn: Entry[] = [];
+	/** per slot: 1 when a mask hides every splat, else the masks that may hide some */
+	#hidden: Uint8Array;
+	#masked: (readonly number[])[];
+	#maskedChanged = false;
 
-	constructor(device: GPUDevice, capacity: number) {
+	constructor(device: GPUDevice, capacity: number, masks = new Masks(device)) {
 		this.capacity = capacity;
+		this.masks = masks;
 		this.#device = device;
 		const slots = this.slots;
 		this.#allocate();
@@ -112,6 +123,8 @@ export class Pool {
 		this.#clusterWords = new Uint32Array(slots * CLUSTER_WORDS);
 		this.#clusterFloats = new Float32Array(this.#clusterWords.buffer);
 		this.#list = new Uint32Array(slots);
+		this.#hidden = new Uint8Array(slots);
+		this.#masked = new Array<readonly number[]>(slots).fill(NONE);
 	}
 
 	/** clusters the pool can hold */
@@ -181,7 +194,12 @@ export class Pool {
 		this.#unlink(entry);
 		this.#entries.delete(id);
 		this.#queue.delete(id);
-		for (const slot of entry.slots) this.#taken[slot] = 0;
+		for (const slot of entry.slots) {
+			this.#taken[slot] = 0;
+			this.#hidden[slot] = 0;
+			if (this.#masked[slot].length) this.#maskedChanged = true;
+			this.#masked[slot] = NONE;
+		}
 		this.#firstFree = Math.min(this.#firstFree, entry.slots[0]);
 		this.#free += entry.slots.length;
 		this.#tables.push(entry.table);
@@ -219,7 +237,7 @@ export class Pool {
 			const entry = this.#entries.get(id);
 			if (!entry || entry.page !== null) continue;
 			const active = entry.active;
-			if (entry.factors !== factors) this.#setFactors(entry, factors);
+			if (entry.factors !== factors || entry.mask < 0) this.#setFactors(entry, factors);
 			changed ||= active !== entry.active;
 			this.#touch(entry);
 			changed ||= this.#drawn[count] !== entry;
@@ -230,6 +248,7 @@ export class Pool {
 		changed ||= this.#drawn.length !== count;
 		this.#drawn.length = count;
 		this.listed = listed;
+		if (this.#maskedChanged) this.#flushMasks();
 		const queue = this.#device.queue;
 		this.#tableDirty.flush(queue, this.pages, this.#table);
 		this.#clusterDirty.flush(queue, this.clusters, this.#clusterWords);
@@ -242,6 +261,25 @@ export class Pool {
 		for (const entry of this.#entries.values()) if (entry.page === null) this.#place(entry);
 		this.#device.queue.writeBuffer(this.pages, 0, this.#table);
 		this.#tableDirty.clear();
+		this.masks.setOrigin(this.#origin);
+		if (this.masks.size) this.masks.write();
+	}
+
+	/** relates the clusters of uploaded pages over the world area min e, n, max e, n to the masks again */
+	remask(area: readonly [number, number, number, number]): void {
+		const floats = this.#clusterFloats;
+		for (const entry of this.#entries.values()) {
+			if (entry.page !== null) continue;
+			const meets = entry.slots.some((slot) => {
+				const w = slot * CLUSTER_WORDS;
+				const [x0, y0] = [entry.base[0] + floats[w + 4], entry.base[1] + floats[w + 5]];
+				const [x1, y1] = [entry.base[0] + floats[w + 8], entry.base[1] + floats[w + 9]];
+				return x1 >= area[0] && y1 >= area[1] && x0 <= area[2] && y0 <= area[3];
+			});
+			if (meets) this.#relate(entry);
+		}
+		// the records move when masks come and go, so the lists' indices do too
+		this.#maskedChanged = true;
 	}
 
 	/** room for capacity splats, the pages held staying in place; new buffers, so new bind groups */
@@ -276,10 +314,15 @@ export class Pool {
 		const list = new Uint32Array(slots);
 		list.set(this.#list);
 		this.#list = list;
+		const hidden = new Uint8Array(slots);
+		hidden.set(this.#hidden);
+		this.#hidden = hidden;
+		for (let s = before; s < slots; s++) this.#masked.push(NONE);
 	}
 
 	destroy(): void {
 		for (const b of this.#buffers()) b.destroy();
+		this.masks.destroy();
 	}
 
 	#buffers(): GPUBuffer[] {
@@ -401,6 +444,7 @@ export class Pool {
 		this.#tableDirty.mark(w, w + PAGE_WORDS);
 
 		entry.page = null;
+		if (this.masks.size) this.#relate(entry);
 		const records = page.count * (GEOMETRY_WORDS + COLOUR_WORDS) * 4;
 		return records + n * CLUSTER_WORDS * 4 + PAGE_WORDS * 4;
 	}
@@ -416,8 +460,12 @@ export class Pool {
 		for (let q = 0; q < 4; q++) if ((factors >>> (8 * q)) & 255) mask |= 1 << q;
 		if (mask !== entry.mask) {
 			entry.mask = mask;
-			if (mask === 15 && this.#table[entry.table * PAGE_WORDS + 3] > 0) entry.active = entry.slots;
-			else {
+			const hidden = this.#hidden;
+			if (mask === 15 && this.#table[entry.table * PAGE_WORDS + 3] > 0) {
+				entry.active = entry.slots.some((slot) => hidden[slot])
+					? entry.slots.filter((slot) => !hidden[slot])
+					: entry.slots;
+			} else {
 				const active: number[] = [];
 				const page = entry.table * PAGE_WORDS;
 				let first = 0;
@@ -430,7 +478,7 @@ export class Pool {
 							c < Math.ceil(end / CLUSTER);
 							c++
 						) {
-							active.push(entry.slots[c]);
+							if (!hidden[entry.slots[c]]) active.push(entry.slots[c]);
 							last = c;
 						}
 					}
@@ -443,6 +491,48 @@ export class Pool {
 		const word = entry.table * PAGE_WORDS + FACTORS;
 		this.#table[word] = factors;
 		this.#tableDirty.mark(word, word + 1);
+	}
+
+	/** the masks over each cluster of an uploaded entry; its active clusters follow on its next draw */
+	#relate(entry: Entry): void {
+		const floats = this.#clusterFloats;
+		const min = [0, 0, 0];
+		const max = [0, 0, 0];
+		for (const slot of entry.slots) {
+			const w = slot * CLUSTER_WORDS;
+			for (let k = 0; k < 3; k++) {
+				min[k] = entry.base[k] + floats[w + 4 + k];
+				max[k] = entry.base[k] + floats[w + 8 + k];
+			}
+			const crossing: number[] = [];
+			const hidden = this.masks.relate(entry.layer, min, max, crossing) ? 1 : 0;
+			const was = this.#masked[slot];
+			if (hidden !== this.#hidden[slot]) entry.mask = -1;
+			this.#hidden[slot] = hidden;
+			if (was.length || crossing.length) this.#maskedChanged = true;
+			this.#masked[slot] = crossing.length ? crossing : NONE;
+		}
+	}
+
+	/** every cluster's list into the masks' buffer, and its place into the cluster table */
+	#flushMasks(): void {
+		this.#maskedChanged = false;
+		const words = this.#clusterWords;
+		const lists: number[] = [];
+		let at = this.masks.listBase;
+		for (let slot = 0; slot < this.#masked.length; slot++) {
+			const masked = this.#masked[slot];
+			const w = slot * CLUSTER_WORDS;
+			const place = masked.length ? at : 0;
+			if (words[w + MASK_LIST] !== place || words[w + MASK_COUNT] !== masked.length) {
+				words[w + MASK_LIST] = place;
+				words[w + MASK_COUNT] = masked.length;
+				this.#clusterDirty.mark(w, w + CLUSTER_WORDS);
+			}
+			for (const id of masked) lists.push(id);
+			at += masked.length;
+		}
+		this.masks.write(lists);
 	}
 
 	/** need free slots: one run when the pool has one, else the lowest free ones */

@@ -5,6 +5,7 @@ export type { Engine, EngineOptions, StepReport } from './engine.ts';
 export type { Cache, Fetch } from '../ports.ts';
 export type { Frame, Host, Plugin, Post, PostPass, Shade } from './plugin.ts';
 export type { Layer } from './layer.ts';
+export type { Mask, MaskOptions } from './mask.ts';
 export type { World } from '../format/index.ts';
 export type { Box, Camera, Settings, Stats } from './types.ts';
 export { grade } from './plugins/grade.ts';

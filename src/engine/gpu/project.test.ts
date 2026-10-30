@@ -418,6 +418,50 @@ describe('Project', () => {
 		context.buffers.destroy();
 	});
 
+	it('hides splats whose centre a mask over their layer holds, mid-fade too', async () => {
+		const context = await setup();
+		const { pool } = context;
+		// the splats on screen sit at y 10, 25, 50 and 80; those at 50 and 80 fade at half
+		const box = new Float32Array([50, 0, 0, 110, 110, 20]);
+		pool.remove(1);
+		pool.add(1, { ...page(), clusters: box }, [0, 0], () => false);
+		pool.upload(Infinity);
+		pool.draw([{ id: 1, factors: FACTORS }]);
+		const square = (y0: number, y1: number, x = 10) =>
+			Float64Array.from([-x, y0, x, y0, x, y1, -x, y1]);
+		const mask = (y0: number, y1: number, z: [number, number], layer = 0, x = 10) => {
+			const id = pool.masks.add({ polygon: square(y0, y1, x), z }, new Set([layer]));
+			pool.remask([-x, y0, x, y1]);
+			pool.draw([{ id: 1, factors: FACTORS }]);
+			return id;
+		};
+		const drop = (id: number) => {
+			pool.masks.delete(id);
+			pool.remask([-Infinity, -Infinity, Infinity, Infinity]);
+			pool.draw([{ id: 1, factors: FACTORS }]);
+		};
+		const all = [-Infinity, Infinity] as [number, number];
+
+		let id = mask(20, 60, all);
+		expect((await run(context)).count).toBe(2);
+		drop(id);
+		expect((await run(context)).count).toBe(4);
+		// only the splat at y 25 lies in the height range
+		id = mask(20, 60, [2, 10]);
+		expect((await run(context)).count).toBe(3);
+		drop(id);
+		// a mask over the whole cluster leaves nothing to list
+		id = mask(-100, 200, all, 0, 100);
+		expect(pool.listed).toBe(0);
+		drop(id);
+		expect(pool.listed).toBe(1);
+		// a mask over another layer leaves the world alone
+		mask(20, 60, all, 5);
+		expect((await run(context)).count).toBe(4);
+		pool.destroy();
+		context.buffers.destroy();
+	});
+
 	it('uses the current visible count after an empty frame', async () => {
 		const context = await setup();
 		expect((await run(context)).count).toBe(4);

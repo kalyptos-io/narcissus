@@ -51,6 +51,9 @@ fn heights(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) t
 		}
 		let q = vec3f(f32(g.x & 0xffffu), f32(g.x >> 16u), f32(g.y & 0xffffu));
 		let p = page.origin + q * page.step;
+		if (masked(cluster, p)) {
+			continue;
+		}
 		let cell = floor(p.xy - area.corner);
 		if (any(cell < vec2f(0.0)) || any(cell >= vec2f(size))) {
 			continue;

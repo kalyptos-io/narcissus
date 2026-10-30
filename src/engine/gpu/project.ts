@@ -1,6 +1,7 @@
 import type { Shade } from '../plugin.ts';
 import { bufferGroup, bufferLayout, type FrameBuffers } from './buffers.ts';
 import common from './common.wgsl?raw';
+import masks from './masks.wgsl?raw';
 import { WORK } from './layout.ts';
 import source from './project.wgsl?raw';
 import type { Pool } from './pool.ts';
@@ -32,7 +33,7 @@ export class Project {
 			'storage',
 			'uniform'
 		]);
-		this.#layout = device.createPipelineLayout({ bindGroupLayouts: [layout] });
+		this.#layout = device.createPipelineLayout({ bindGroupLayouts: [layout, pool.masks.layout] });
 		const resources = [
 			buffers.uniforms,
 			buffers.plugins,
@@ -69,6 +70,7 @@ export class Project {
 		const pass = encoder.beginComputePass({ label: 'project', timestampWrites: timestamps });
 		pass.setPipeline((this.#pipeline ??= this.#build()));
 		pass.setBindGroup(0, this.#group);
+		pass.setBindGroup(1, this.#pool.masks.group);
 		// chrome validates indirect args on its gpu process's main thread, a cost every frame
 		pass.dispatchWorkgroups(count);
 		pass.end();
@@ -82,6 +84,7 @@ export class Project {
 		});
 		const code = [
 			common,
+			masks,
 			source,
 			...shades.map(({ shade }) => shade.wgsl),
 			'fn shade(s: ptr<function, Splat>) {',
