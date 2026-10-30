@@ -1,4 +1,4 @@
-import type { Camera, World } from '../engine/index.ts';
+import type { Box, Camera, World } from '../engine/index.ts';
 
 /** easting, northing and height in world coordinates, metres */
 export interface Point {
@@ -37,6 +37,14 @@ export const LIMITS: Limits = { pitch: [-90, -20], dist: [1, 2_485], clearance: 
 // sine of the flattest view angle pan and fly scale for; keeps a level view moving
 const FLAT = 0.1;
 const RAD = Math.PI / 180;
+// room around a fitted box's bounding sphere, as a factor of its radius
+const MARGIN = 1.1;
+// shortest and longest flight, ms
+const FLIGHT_MS = [600, 2500] as const;
+// flight ms per e-fold of the way, measured in view distances
+const SPAN_MS = 300;
+// metres a flight rises at its peak per metre of ground it hops
+const RISE = 0.5;
 
 const clamp = (v: number, [lo, hi]: readonly [number, number]) => Math.min(hi, Math.max(lo, v));
 const wrap = (deg: number) => ((deg % 360) + 360) % 360;
@@ -184,6 +192,39 @@ export function blend(a: Pose, b: Pose, t: number): Pose {
 		yaw: wrap(a.yaw + turn(a.yaw, b.yaw) * t),
 		pitch: a.pitch + (b.pitch - a.pitch) * t,
 		dist: a.dist * (b.dist / a.dist) ** t
+	};
+}
+
+/** a pose that shows all of box: focus at its centre, heading and tilt from pose */
+export function fit(box: Box, pose: Pose): Pose {
+	const mid = ([lo, hi]: readonly [number, number]) => (lo + hi) / 2;
+	const radius = Math.hypot(box.e[1] - box.e[0], box.n[1] - box.n[0], box.h[1] - box.h[0]) / 2;
+	return {
+		e: mid(box.e),
+		n: mid(box.n),
+		h: mid(box.h),
+		yaw: pose.yaw,
+		pitch: pose.pitch,
+		dist: (MARGIN * radius) / Math.sin((FOV * RAD) / 2)
+	};
+}
+
+/** an eased path from one pose to another over ms; a long hop rises so the view keeps its bearings */
+export function flight(from: Pose, to: Pose): { ms: number; at(t: number): Pose } {
+	const ground = Math.hypot(to.e - from.e, to.n - from.n);
+	const span =
+		Math.log1p(ground / Math.min(from.dist, to.dist)) + Math.abs(Math.log(to.dist / from.dist));
+	// log of the dist factor at the peak
+	const rise = Math.log1p((RISE * ground) / Math.max(from.dist, to.dist));
+	return {
+		ms: clamp(FLIGHT_MS[0] + SPAN_MS * span, FLIGHT_MS),
+		at(t) {
+			if (t <= 0) return from;
+			if (t >= 1) return to;
+			const s = t * t * (3 - 2 * t);
+			const p = blend(from, to, s);
+			return { ...p, dist: p.dist * Math.exp(4 * rise * s * (1 - s)) };
+		}
 	};
 }
 

@@ -4,7 +4,10 @@ import {
 	blend,
 	cameraOf,
 	clampPose,
+	fit,
+	flight,
 	fly,
+	FOV,
 	formatPose,
 	height,
 	LIMITS,
@@ -265,5 +268,65 @@ describe('opening', () => {
 			n: (6175983.75 + 6179013.84) / 2,
 			h: -6.87
 		});
+	});
+});
+
+describe('fit', () => {
+	const box = { e: [100, 300], n: [-50, 350], h: [10, 40] } as const;
+
+	it('centres the box and keeps heading and tilt', () => {
+		const p = fit(box, pose(30, -50, 1));
+		expect([p.e, p.n, p.h, p.yaw, p.pitch]).toEqual([200, 150, 25, 30, -50]);
+	});
+
+	it.each([
+		[0, -90],
+		[30, -50],
+		[200, -20]
+	])('shows every corner at yaw %d pitch %d, with a little room', (yaw, pitch) => {
+		const p = fit(box, pose(yaw, pitch, 1));
+		let edge = 0;
+		for (const e of box.e)
+			for (const n of box.n)
+				for (const h of box.h) {
+					const s = project(p, FOV, { e, n, h });
+					edge = Math.max(edge, Math.abs(s.x), Math.abs(s.y));
+				}
+		expect(edge).toBeLessThan(0.5);
+		expect(edge).toBeGreaterThan(0.25);
+	});
+});
+
+describe('flight', () => {
+	const from = pose(350, -35, 300);
+	const to = { ...pose(10, -60, 200), e: at.e + 80 };
+
+	it('starts at from and ends at to exactly', () => {
+		const f = flight(from, to);
+		expect(f.at(0)).toEqual(from);
+		expect(f.at(1)).toEqual(to);
+	});
+
+	it('eases in and out along a monotone path', () => {
+		const f = flight(from, to);
+		const es = Array.from({ length: 21 }, (_, i) => f.at(i / 20).e);
+		for (let i = 1; i < es.length; i++) expect(es[i]).toBeGreaterThanOrEqual(es[i - 1]);
+		expect(es[1] - es[0]).toBeLessThan((es[11] - es[9]) / 4);
+		expect(es[20] - es[19]).toBeLessThan((es[11] - es[9]) / 4);
+	});
+
+	it('turns the short way round', () => {
+		const yaw = flight(from, to).at(0.5).yaw;
+		expect(Math.min(yaw, 360 - yaw)).toBeCloseTo(0, 9);
+	});
+
+	it('rises above both ends on a long hop and takes longer', () => {
+		const near = flight(from, { ...from, e: at.e + 30 });
+		const far = flight(from, { ...from, e: at.e + 20_000 });
+		expect(near.at(0.5).dist).toBeLessThan(from.dist * 1.1);
+		expect(far.at(0.5).dist).toBeGreaterThan(from.dist * 10);
+		expect(far.ms).toBeGreaterThan(near.ms);
+		expect(far.ms).toBeLessThanOrEqual(2500);
+		expect(near.ms).toBeGreaterThanOrEqual(600);
 	});
 });
