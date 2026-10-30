@@ -43,6 +43,7 @@ npx @kalyptos/narcissus publish ./world remote:bucket/world
 
 - [docs/format.md](docs/format.md): the specification of Guldmund Trees
 - [docs/hosting.md](docs/hosting.md): how to serve, publish and show a world
+- [docs/embedding.md](docs/embedding.md): the hooks for a page that embeds the viewer: layers, masks, picking, graphics and the camera
 - [docs/architecture.md](docs/architecture.md): how the code is built, and how to add a source or a plugin
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 

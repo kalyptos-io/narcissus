@@ -83,6 +83,6 @@ With a bundler, `import '@kalyptos/narcissus/element'` defines the element. Impo
 | `camera`        | the view to open on: `E,N,H,yaw,pitch,distance`; with `H` empty, `E,N,,yaw,pitch,distance`, it looks at the ground there | above the middle of the world, looking at its ground                                          |
 | `sky`           | the colour behind the world: `r,g,b`, each 0 to 1                                                                        | a pale blue                                                                                   |
 
-The element sends a `ready` event when a world is open and an `error` event with a message when it cannot go on. Its `engine` and `controls` properties give the page the full API.
+The element sends a `ready` event when a world is open and an `error` event with a message when it cannot go on. Its `engine` and `controls` properties give the page the full API; [embedding.md](embedding.md) shows how to add splats, hide parts of the world, pick and steer the camera.
 
 A page with a content security policy must allow `worker-src blob:`, because the engine starts its workers from a blob. The engine keeps the bytes it has read in the browser's origin private file system, so a second visit reads less from the network.

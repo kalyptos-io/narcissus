@@ -1,4 +1,4 @@
-// writers from the spec, for tests and synthetic worlds
+// writers from the spec: layer packs for hosts, and the files of tests and synthetic worlds
 
 import type { Col, Idx, PageRow } from './types.ts';
 import { deflate } from './inflate.ts';
@@ -284,6 +284,37 @@ export function encodePack(pages: { row: PageRow; blob: Uint8Array }[]): Uint8Ar
 	writeMagic(out, at + 8, PACK_MAGIC);
 	view.setUint16(at + 12, VERSION, true);
 	return out;
+}
+
+/**
+ * world-ENU splats as the pack of one page, which a layer draws; origin is the south-west corner in
+ * whole metres that the pack's positions count from
+ */
+export async function encodeLayer(
+	splats: Splats
+): Promise<{ pack: Uint8Array; origin: [number, number] }> {
+	const { count: n, position } = splats;
+	if (n === 0) throw new Error('a layer needs at least one splat');
+	const lo = [Infinity, Infinity];
+	const hi = [-Infinity, -Infinity];
+	for (let t = 0; t < n; t++) {
+		for (let a = 0; a < 2; a++) {
+			lo[a] = Math.min(lo[a], position[t * 3 + a]);
+			hi[a] = Math.max(hi[a], position[t * 3 + a]);
+		}
+	}
+	const origin: [number, number] = [Math.floor(lo[0]), Math.floor(lo[1])];
+	const local = Float64Array.from(position);
+	for (let t = 0; t < n; t++) {
+		local[t * 3] -= origin[0];
+		local[t * 3 + 1] -= origin[1];
+	}
+	// the smallest page square from the origin that holds every centre
+	const span = Math.max(hi[0] - origin[0], hi[1] - origin[1]);
+	let g = 0;
+	while (PAGE_SIDE * 2 ** g <= span) g++;
+	const { payload, row } = encodePage({ ...splats, position: local }, { g, i: 0, j: 0 });
+	return { pack: encodePack([{ row, blob: await deflate(payload) }]), origin };
 }
 
 function writeMagic(out: Uint8Array, at: number, magic: string): void {

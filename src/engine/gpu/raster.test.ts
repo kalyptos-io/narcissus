@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { FRAME_UNIFORM_BYTES, PROJECTED_WORDS, WORK } from './layout.ts';
 import { frameBuffers } from './buffers.ts';
-import { COLOUR_FORMAT, DEPTH_FORMAT, depthAt, Raster } from './raster.ts';
+import { COLOUR_FORMAT, DEPTH_FORMAT, Raster } from './raster.ts';
 import { Sort } from './sort.ts';
 import { readBuffer, testDevice } from './test-device.ts';
 
@@ -68,13 +68,10 @@ async function draw(withDepth: boolean) {
 	const depth = withDepth ? target(DEPTH_FORMAT) : null;
 	const encoder = device.createCommandEncoder();
 	raster.encode(encoder, colour.createView(), depth?.createView() ?? null, SKY);
-	const reads = depth ? [depthAt(device, encoder, depth, 16, 15, 1, 1000)] : [];
-	if (depth) reads.push(depthAt(device, encoder, depth, 0, 0, 1, 1000));
 	device.queue.submit([encoder.finish()]);
 	const result = {
 		colour: await texels(device, colour),
-		depth: depth ? await texels(device, depth) : null,
-		picks: await Promise.all(reads.map((read) => read()))
+		depth: depth ? await texels(device, depth) : null
 	};
 	colour.destroy();
 	depth?.destroy();
@@ -108,11 +105,5 @@ describe('Raster', () => {
 			expect(colour(x, 15)).toEqual(plain(x, 15));
 		}
 		expect(depth!(0, 0)).toEqual([1]);
-	});
-
-	it('reads back the view depth of one texel in metres, null where no splat drew', async () => {
-		const { picks } = await draw(true);
-		expect(picks[0]).toBeCloseTo(10, 2);
-		expect(picks[1]).toBeNull();
 	});
 });

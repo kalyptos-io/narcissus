@@ -43,7 +43,8 @@ struct Page {
 	// quadrant k opacity 0-255 at bits 8k
 	factors: u32,
 	dcMax: vec3f,
-	pad: u32,
+	// 0 for the world, else the layer that holds the page
+	layer: u32,
 	shScale: array<vec4f, 3>,
 }
 
@@ -57,9 +58,10 @@ struct Cluster {
 	count: u32,
 	// extents relative to the page origin
 	boxMin: vec3f,
-	pad0: u32,
+	// word in masks.wgsl's buffer of the list of masks that may hide some of its splats
+	maskList: u32,
 	boxMax: vec3f,
-	pad1: u32,
+	maskCount: u32,
 }
 
 // a splat on screen; pixels with y up from the bottom-left of the target

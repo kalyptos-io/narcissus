@@ -1,4 +1,4 @@
-// usage: [WORLD=<world dir>] [SOURCE=http|synthetic|page] [WORLD_URL=<remote world.json>] [POSE_A=e,n,h,yaw,pitch,dist] [POSE_B=e,n,h,yaw,pitch,dist] [BUDGET=4000000] [VIEW_DISTANCE=1500] [SKY=r,g,b] [PORT=9351] [PROFILE=<file> writes the moves' main-thread cpuprofile] node bench/quick.mjs [--baseline writes the baseline] [--stop closes chrome]
+// usage: [WORLD=<world dir>] [SOURCE=http|synthetic|page] [WORLD_URL=<remote world.json>] [POSE_A=e,n,h,yaw,pitch,dist] [POSE_B=e,n,h,yaw,pitch,dist] [BUDGET=4000000] [VIEW_DISTANCE=1500] [SKY=r,g,b] [LAYERS=0 layers of 150k splats, masked over the world, by each pose] [PORT=9351] [PROFILE=<file> writes the moves' main-thread cpuprofile] node bench/quick.mjs [--baseline writes the baseline] [--stop closes chrome]
 /** @import { AddressInfo } from 'node:net' */
 /** @import { Options, Repetition } from './quick.ts' */
 import { existsSync, lstatSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
@@ -25,6 +25,7 @@ const {
 	PROFILE,
 	CPU_RATE = '1',
 	FRAME_LIMIT_MS = '100',
+	LAYERS = '0',
 	SNAPSHOT
 } = process.env;
 // a hung frame would leave an evaluate waiting forever
@@ -116,7 +117,9 @@ const options = {
 	sky: /** @type {[number, number, number]} */ (SKY.split(',').map(Number)),
 	source: /** @type {Options['source']} */ (SOURCE),
 	world: WORLD_URL,
-	frameLimitMs
+	frameLimitMs,
+	// left out at 0, so baselines from before layers still match
+	...(Number(LAYERS) > 0 ? { layers: Number(LAYERS) } : {})
 };
 mark('chrome');
 const { idleMs, adapter } = await page.evaluate(`bench.ready(${JSON.stringify(options)})`);

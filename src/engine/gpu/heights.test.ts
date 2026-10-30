@@ -84,6 +84,32 @@ describe('Heights', () => {
 		pool.destroy();
 	});
 
+	it('leaves out splats a mask hides', async () => {
+		const device = await testDevice();
+		const pool = new Pool(device, CLUSTER);
+		const solid = page(
+			[100, 200, 0],
+			[
+				[[1.5, 1.5, 5], 255, 0],
+				[[2.5, 1.5, 7], 255, 0]
+			]
+		);
+		pool.add(0, solid, [0, 0], () => true);
+		pool.upload(Infinity);
+		pool.addMask(
+			{
+				polygon: Float64Array.from([102, 201, 103, 201, 103, 202, 102, 202]),
+				z: [-Infinity, Infinity]
+			},
+			new Set([0])
+		);
+		pool.draw([{ id: 0, factors: 0xffffffff }]);
+		const tops = await heights(pool, 100, 200, 4);
+		expect(tops[4 + 1]).toBeCloseTo(5, 4);
+		expect(tops[4 + 2]).toBeNaN();
+		pool.destroy();
+	});
+
 	it('is empty when nothing is drawn', async () => {
 		const device = await testDevice();
 		const pool = new Pool(device, CLUSTER);

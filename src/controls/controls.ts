@@ -4,6 +4,7 @@ import {
 	cameraOf,
 	clampPose,
 	defaultView,
+	flight,
 	fly,
 	FOV,
 	height,
@@ -29,6 +30,13 @@ const FLY = 0.5;
 const TAU = 0.05;
 
 type Ground = (e: number, n: number) => number;
+
+interface Trip {
+	path: ReturnType<typeof flight>;
+	/** frame time the trip set off, null before its first frame */
+	start: number | null;
+	land(arrived: boolean): void;
+}
 
 /** metres one screen pixel spans at dist in a view pixels tall */
 export function metresPerPixel(dist: number, pixels: number): number {
@@ -59,6 +67,8 @@ export function smooth(
 
 /** map camera: left drag orbits, right/middle/shift drag pans the ground, wheel zooms, f flies */
 export class Controls {
+	/** false ignores pointer, wheel and key input; flights still run */
+	enabled = true;
 	#canvas: HTMLCanvasElement;
 	#engine: Engine;
 	#ground: Ground;
@@ -74,7 +84,8 @@ export class Controls {
 	/** where input has put the camera; current chases it */
 	#target: Pose;
 	#current: Pose;
-	#listeners = new Set<() => void>();
+	#trip: Trip | null = null;
+	#listeners = new Set<(pose: Pose) => void>();
 	#offFrame: () => void;
 	#last: number | null = null;
 
@@ -113,8 +124,8 @@ export class Controls {
 		return { ...this.#current };
 	}
 
-	/** fires on every frame the user moves the camera */
-	onChange(fn: () => void): () => void {
+	/** fires with the shown pose each time it changes, from input, flights and jumps */
+	onChange(fn: (pose: Pose) => void): () => void {
 		this.#listeners.add(fn);
 		return () => this.#listeners.delete(fn);
 	}
@@ -123,22 +134,53 @@ export class Controls {
 	moveTo(e: number, n: number): void {
 		const t = this.#target;
 		const dist = Math.min(t.dist, defaultView.dist);
-		this.#target = this.#clamp({ ...t, e, n, h: this.#ground(e, n), dist });
-		this.#wake();
+		this.#steer(this.#clamp({ ...t, e, n, h: this.#ground(e, n), dist }));
+	}
+
+	/** shows the pose at once; fields left out stay */
+	jump(pose: Partial<Pose>): void {
+		this.#land(false);
+		this.#target = this.#current = this.#clamp({ ...this.#current, ...pose });
+		this.#changed();
+	}
+
+	/** flies to the pose, fields left out staying; false when input, another move, the signal or destroy cuts it short */
+	flyTo(pose: Partial<Pose>, options: { signal?: AbortSignal } = {}): Promise<boolean> {
+		const { signal } = options;
+		if (signal?.aborted || this.#abort.signal.aborted) return Promise.resolve(false);
+		this.#land(false);
+		const from = this.#current;
+		this.#target = from;
+		const abort = () => this.#land(false);
+		return new Promise((resolve) => {
+			this.#trip = {
+				path: flight(from, this.#clamp({ ...from, ...pose })),
+				start: null,
+				land: (arrived) => {
+					signal?.removeEventListener('abort', abort);
+					resolve(arrived);
+				}
+			};
+			signal?.addEventListener('abort', abort);
+			this.#wake();
+		});
 	}
 
 	destroy(): void {
+		this.#land(false);
 		this.#abort.abort();
 		this.#offFrame();
 		this.#listeners.clear();
 	}
 
 	#down = (e: PointerEvent) => {
+		if (!this.#heeds(e)) return;
 		this.#canvas.setPointerCapture(e.pointerId);
 		this.#pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 	};
 
 	#move = (e: PointerEvent) => {
+		if (!this.#heeds(e)) return;
 		const p = this.#pointers.get(e.pointerId);
 		// a hovering pointer often presses next
 		if (!p) return this.#engine.warm();
@@ -163,12 +205,14 @@ export class Controls {
 	};
 
 	#wheel = (e: WheelEvent) => {
+		if (!this.#heeds(e)) return;
 		e.preventDefault();
 		this.#zoom += e.deltaY * WHEEL;
 		this.#wake();
 	};
 
 	#keydown = (e: KeyboardEvent) => {
+		if (!this.#heeds(e)) return;
 		if (e.code === 'KeyF' && !e.repeat) this.#flying = !this.#flying;
 		this.#keys.add(e.code);
 		if (this.#flying) this.#wake();
@@ -179,16 +223,18 @@ export class Controls {
 	};
 
 	#pick = async (e: MouseEvent) => {
+		if (!this.#heeds(e)) return;
 		const hit = await this.#engine.pick(e.offsetX, e.offsetY);
 		if (!hit || this.#abort.signal.aborted) return;
-		const [he, hn, hh] = hit;
-		this.#target = clampPose(
-			lookAt(cameraOf(this.#current), { e: he, n: hn, h: hh }),
-			undefined,
-			this.#limits
-		);
-		this.#wake();
+		const [he, hn, hh] = hit.point;
+		const view = lookAt(cameraOf(this.#current), { e: he, n: hn, h: hh });
+		this.#steer(clampPose(view, undefined, this.#limits));
 	};
+
+	/** a host consumes an event by calling preventDefault in a capture listener */
+	#heeds(e: Event): boolean {
+		return this.enabled && !e.defaultPrevented;
+	}
 
 	/** midpoint and spread of the first two pointers, or null with fewer */
 	#pair() {
@@ -227,22 +273,48 @@ export class Controls {
 		this.#zoom = 0;
 
 		const [x, z, y] = flyAxes(this.#keys);
-		const flying = this.#flying && (x !== 0 || y !== 0 || z !== 0);
+		const flying = this.enabled && this.#flying && (x !== 0 || y !== 0 || z !== 0);
 		if (flying) {
 			const v = FLY * height(t) * dt;
 			t = fly(t, x * v, z * v, y * v);
 		}
 
 		const was = this.#current;
-		if (was !== t) {
+		// input moved the target off the trip's path
+		if (t !== this.#target) this.#land(false);
+		const trip = this.#trip;
+		if (trip) {
+			trip.start ??= time;
+			const k = Math.min(1, (time - trip.start) / trip.path.ms);
+			this.#target = this.#current = this.#clamp(trip.path.at(k));
+			if (k === 1) this.#land(true);
+		} else if (was !== t) {
 			this.#target = t = this.#clamp(t);
 			this.#current = smooth(was, t, dt, this.#ground, this.#limits);
-			this.#place();
-			for (const fn of this.#listeners) fn();
 		}
-		if (flying || this.#current !== this.#target) this.#wake();
+		if (this.#current !== was) this.#changed();
+		if (flying || this.#trip || this.#current !== this.#target) this.#wake();
 		else this.#last = null;
 	};
+
+	/** current chases pose; a flight ends */
+	#steer(pose: Pose) {
+		this.#land(false);
+		this.#target = pose;
+		this.#wake();
+	}
+
+	#land(arrived: boolean) {
+		const trip = this.#trip;
+		this.#trip = null;
+		trip?.land(arrived);
+	}
+
+	#changed() {
+		this.#place();
+		const pose = this.pose;
+		for (const fn of this.#listeners) fn(pose);
+	}
 
 	#clamp(pose: Pose): Pose {
 		return clampPose(pose, this.#ground, this.#limits);

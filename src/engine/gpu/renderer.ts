@@ -12,7 +12,9 @@ import type { Pool } from './pool.ts';
 import type { Fullscreen } from './fullscreen.ts';
 import { present } from './present.ts';
 import { Project } from './project.ts';
-import { COLOUR_FORMAT, DEPTH_FORMAT, depthAt, Raster } from './raster.ts';
+import { Overlay, type Capsule } from './overlay.ts';
+import { Pick, type Found } from './pick.ts';
+import { COLOUR_FORMAT, DEPTH_FORMAT, Raster } from './raster.ts';
 import { Sort } from './sort.ts';
 import { Timing } from './timing.ts';
 
@@ -43,13 +45,6 @@ const U = {
 
 type TargetName = 'colour' | 'depth' | 'ping' | 'pong';
 
-/** view depth in metres of the nearest splat under target pixel (x, y from the top-left), null where none drew */
-export interface DepthPick {
-	x: number;
-	y: number;
-	resolve: (depth: number | null) => void;
-}
-
 /** Heights over cells x cells from corner (x, y), floating-origin frame */
 export interface HeightsRequest {
 	x: number;
@@ -70,6 +65,8 @@ export class Renderer {
 	#raster: Raster;
 	#present: Fullscreen | undefined;
 	#heights: Heights;
+	#pick: Pick;
+	#overlay: Overlay;
 	#timing: Timing;
 	#uniforms = new Float32Array(FRAME_UNIFORM_BYTES / 4);
 	#uniformWords = new Uint32Array(this.#uniforms.buffer);
@@ -103,6 +100,8 @@ export class Renderer {
 		this.#sort = new Sort(device, this.#buffers);
 		this.#raster = new Raster(device, this.#buffers, this.#sort);
 		this.#heights = new Heights(device, pool);
+		this.#pick = new Pick(device, pool, this.#buffers);
+		this.#overlay = new Overlay(device, gpu.format, this.#buffers.uniforms);
 		this.#timing = new Timing(device, gpu.timestamps, PASSES);
 		this.#count = device.createBuffer({
 			label: 'counts readback',
@@ -150,19 +149,29 @@ export class Renderer {
 		this.#dropTargets();
 	}
 
-	/** encodes and submits a frame that answers picks and heights; resolves when the gpu has finished it */
+	/** the surface under target pixel (x, y from the top-left) as frame, the last rendered, drew it */
+	pick(x: number, y: number, frame: Frame): Promise<Found | null> {
+		return this.#pick.run(x, y, frame);
+	}
+
+	/** host graphics the frames draw last, world coordinates moved to the floating origin */
+	overlay(capsules: readonly Capsule[], origin: readonly [number, number, number]): void {
+		this.#overlay.set(capsules, origin);
+	}
+
+	/** encodes and submits a frame that answers heights; resolves when the gpu has finished it */
 	render(
 		frame: Frame,
 		planes: Float32Array,
 		sky: readonly [number, number, number],
-		picks: DepthPick[],
 		heights: HeightsRequest[]
 	): Promise<void> {
 		const device = this.#device;
 		const timing = this.#timing;
 		const posts = this.#posts;
 		const colour = this.#view(this.#target('colour', COLOUR_FORMAT));
-		const wantDepth = picks.length > 0 || posts.some(({ post }) => post.depth);
+		const overlay = this.#overlay.count > 0;
+		const wantDepth = overlay || posts.some(({ post }) => post.depth);
 		const depthTexture = this.#optional('depth', DEPTH_FORMAT, wantDepth);
 		const depth = depthTexture ? this.#view(depthTexture) : null;
 		const ping = [
@@ -177,12 +186,6 @@ export class Renderer {
 		this.#project.encode(encoder, this.#visible, timing.writes('project'));
 		this.#sort.encode(encoder, this.#pool.listed * CLUSTER, this.#drawn, timing.writes('sort'));
 		this.#raster.encode(encoder, colour, depth, sky, timing.writes('raster'));
-		const reads = depthTexture
-			? picks.map(({ x, y, resolve }) => ({
-					resolve,
-					read: depthAt(device, encoder, depthTexture, x, y, frame.near, frame.far)
-				}))
-			: [];
 		const tops = heights.map(({ x, y, cells, resolve }, k) => ({
 			resolve,
 			read: this.#heights.encode(encoder, x, y, cells, k ? undefined : timing.writes('heights'))
@@ -206,6 +209,7 @@ export class Renderer {
 				input = target;
 			});
 		}
+		if (overlay) this.#overlay.encode(encoder, canvas, depth!);
 		if (bracket) {
 			const { querySet, endOfPassWriteIndex } = bracket;
 			encoder.beginComputePass({ timestampWrites: { querySet, endOfPassWriteIndex } }).end();
@@ -219,7 +223,6 @@ export class Renderer {
 		device.queue.submit([encoder.finish()]);
 		timing.read();
 		if (count) this.#readCount();
-		for (const { resolve, read } of reads) void read().then(resolve);
 		for (const { resolve, read } of tops) void read().then(resolve);
 		return device.queue.onSubmittedWorkDone();
 	}
@@ -245,6 +248,8 @@ export class Renderer {
 		this.#buffers.destroy();
 		this.#sort.destroy();
 		this.#raster.destroy();
+		this.#pick.destroy();
+		this.#overlay.destroy();
 		this.#timing.destroy();
 		this.#count.destroy();
 	}
@@ -256,6 +261,7 @@ export class Renderer {
 			next += entry.shade.uniforms;
 		}
 		this.#project.hooks(this.#shades);
+		this.#pick.hooks(this.#shades);
 	}
 
 	#upload(frame: Frame, planes: Float32Array): void {

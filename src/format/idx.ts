@@ -1,6 +1,16 @@
 import type { Idx, PageRow, UnitKey } from './types.ts';
 import { unwrap } from './inflate.ts';
-import { CHILD_BYTES, DESCENDANT_BYTES, IDX_HEADER, IDX_MAGIC, LEAF, ROW_BYTES } from './spec.ts';
+import {
+	CHILD_BYTES,
+	DESCENDANT_BYTES,
+	IDX_HEADER,
+	IDX_MAGIC,
+	LEAF,
+	PACK_MAGIC,
+	PACK_TRAILER,
+	ROW_BYTES,
+	VERSION
+} from './spec.ts';
 
 function hashAt(view: DataView, offset: number): string {
 	let hex = '';
@@ -29,6 +39,29 @@ export function rowAt(view: DataView, offset: number): PageRow {
 		offset: view.getUint32(offset + 44, true),
 		length: view.getUint32(offset + 48, true)
 	};
+}
+
+/** the rows of a pack's page table, through read(start, end) of a pack of size bytes; throws naming the fault */
+export async function packRows(
+	read: (start: number, end: number) => Promise<Uint8Array>,
+	size: number
+): Promise<PageRow[]> {
+	if (size < PACK_TRAILER) throw new Error('is shorter than a pack trailer');
+	const trailer = await read(size - PACK_TRAILER, size);
+	const view = new DataView(trailer.buffer, trailer.byteOffset, trailer.byteLength);
+	if (String.fromCharCode(...trailer.subarray(8, 12)) !== PACK_MAGIC) {
+		throw new Error('does not end in a pack trailer');
+	}
+	const version = view.getUint16(12, true);
+	if (version !== VERSION) throw new Error(`is version ${version}; narcissus reads ${VERSION}`);
+	const offset = view.getUint32(0, true);
+	const rows = view.getUint32(4, true);
+	if (offset + rows * ROW_BYTES !== size - PACK_TRAILER) {
+		throw new Error('has a page table that does not end at its trailer');
+	}
+	const bytes = await read(offset, size - PACK_TRAILER);
+	const table = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+	return Array.from({ length: rows }, (_, r) => rowAt(table, r * ROW_BYTES));
 }
 
 /** throws an Error naming the fault when the bytes are not a v1 .idx */

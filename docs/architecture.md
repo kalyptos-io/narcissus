@@ -41,6 +41,8 @@ The built-in `http` source runs inside the engine's workers. A `Fetch` from the 
 
 **`Plugin`** changes what the engine draws. A plugin gets a `Host` and installs a `Shade`, a WGSL function that runs for each splat, or a `Post`, a full-screen pass after the splats. `engine/plugins/fog.ts` is the shortest example of the first and `grade.ts` of the second. `engine.use(plugin)` installs one and returns the function that removes it.
 
+A page that embeds the viewer has more hooks: layers, masks, picking, lines and markers, and the camera. [embedding.md](embedding.md) describes them.
+
 ## The engine
 
 `engine/engine.ts` is the composition root: it makes the device, the loader, the tree and the renderer, and runs the frame loop. The rest has one job each:

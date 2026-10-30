@@ -1,11 +1,16 @@
 // the engine: world, planner, stream, pool and renderer behind one small api
 
 import { CLUSTER, GEOMETRY_WORDS, directory, parseWorld, type World } from '../format/index.ts';
-import { PROJECTED_WORDS } from './gpu/layout.ts';
+import { PROJECTED_WORDS, slots } from './gpu/layout.ts';
 import { requestGpu, type Gpu } from './gpu/device.ts';
 import { Pool } from './gpu/pool.ts';
-import { Renderer, type DepthPick, type HeightsRequest } from './gpu/renderer.ts';
-import { planes } from './math/frustum.ts';
+import type { Capsule } from './gpu/overlay.ts';
+import type { Found } from './gpu/pick.ts';
+import { Renderer, type HeightsRequest } from './gpu/renderer.ts';
+import { boxOf, layerPages, type Layer } from './layer.ts';
+import type { Mask, MaskOptions } from './mask.ts';
+import type { Line, LineStyle, Marker, MarkerStyle } from './overlay.ts';
+import { boxVisible, planes } from './math/frustum.ts';
 import {
 	invert,
 	multiply,
@@ -22,7 +27,7 @@ import { percentile, pixelRatio, Quality } from './quality.ts';
 import { Feed } from './stream/feed.ts';
 import { http } from '../adapters/http.ts';
 import { Loader } from './stream/loader.ts';
-import type { Camera, Drawn, Settings, Stats } from './types.ts';
+import type { Camera, Drawn, Progress, Settings, Stats } from './types.ts';
 import { Tree } from './world/tree.ts';
 
 export interface EngineOptions {
@@ -39,6 +44,15 @@ export interface EngineOptions {
 	manual?: boolean;
 }
 
+export interface Hit {
+	/** where the pixel's ray meets the splat's depth, world coordinates */
+	point: [number, number, number];
+	/** unit; the splat's thinnest axis, toward the camera */
+	normal: [number, number, number];
+	/** null for the world */
+	layer: Layer | null;
+}
+
 export interface StepReport {
 	/** main-thread ms of the frame */
 	cpuMs: number;
@@ -49,12 +63,29 @@ export interface StepReport {
 
 export interface Engine {
 	open(worldUrl: string): Promise<World>;
+	/**
+	 * a layer from a pack, its bytes or its url read through the engine's source; origin is the
+	 * south-west corner its positions count from, as encodeLayer gives it. it stays through open()
+	 */
+	addLayer(
+		source: { url: string } | { bytes: Uint8Array },
+		origin: readonly [number, number]
+	): Promise<Layer>;
+	addMask(mask: MaskOptions): Mask;
+	/** a polyline in world coordinates over the splats; one point draws a dot */
+	addLine(points: readonly Point[], style?: LineStyle): Line;
+	addMarker(point: Point, style?: MarkerStyle): Marker;
+	/** canvas css pixel of a world point under the camera set last, null behind it */
+	toScreen(point: Point): [number, number] | null;
 	setCamera(camera: Camera): void;
 	configure(settings: Partial<Settings>): void;
 	/** canvas size in css pixels and the device pixel ratio to render at */
 	resize(width: number, height: number, ratio: number): void;
-	/** world point under canvas css pixel (x, y), or null over nothing */
-	pick(x: number, y: number): Promise<[number, number, number] | null>;
+	/**
+	 * the surface under canvas css pixel (x, y), or null over nothing: the nearest splat that draws
+	 * it at 0.5 opacity or more, as the last frame showed it; it renders no frame of its own
+	 */
+	pick(x: number, y: number): Promise<Hit | null>;
 	ground(e: number, n: number): number | undefined;
 	/** ground(e, n) once every .idx over (e, n) is read */
 	groundAt(e: number, n: number): Promise<number | undefined>;
@@ -69,6 +100,8 @@ export interface Engine {
 	use(plugin: Plugin): () => void;
 	/** device loss, with its reason; the engine is then dead */
 	onLost(fn: (reason: string) => void): () => void;
+	/** fn(progress) each time the planned or missing splats, or whether pages load, change */
+	onProgress(fn: (progress: Progress) => void): () => void;
 	/** fn(now) starts each frame the loop draws, so a camera it sets shows in that frame */
 	onFrame(fn: (now: number) => void): () => void;
 	/** the camera may soon move: after a rest, frames run a moment so the gpu is up to speed by then */
@@ -144,6 +177,8 @@ const REOPEN_MS = 5000;
 const SAMPLES = 60;
 const DEG = Math.PI / 180;
 const DESTROYED = 'The viewer was closed.';
+const NO_ROOM = 'The layers hold more splats than this device can.';
+const WHITE = [1, 1, 1, 1] as const;
 const SUPERSEDED = 'Another world was opened.';
 
 type Point = readonly [number, number, number];
@@ -192,6 +227,14 @@ export function unproject(
 	return [e + origin[0], n + origin[1], h + origin[2]];
 }
 
+/** points as given; throws on none, or on one that is not three finite numbers */
+function finite(points: readonly Point[]): readonly Point[] {
+	if (!points.length || !points.every((p) => p.length === 3 && p.every(Number.isFinite))) {
+		throw new Error('Give at least one point, each three finite numbers.');
+	}
+	return points;
+}
+
 function relative(c: Camera, origin: Point): Point {
 	return [c.e - origin[0], c.n - origin[1], c.h - origin[2]];
 }
@@ -201,16 +244,26 @@ function push(samples: number[], value: number): void {
 	if (samples.length > SAMPLES) samples.shift();
 }
 
+interface Shown {
+	layer: Layer;
+	pages: { id: number; count: number; box: Float64Array }[];
+}
+
+/** Drawn factors of a layer's pages, every quadrant at its opacity; 0 while it draws nothing */
+function factors({ visible, opacity }: Layer): number {
+	return visible ? (Math.round(opacity * 255) * 0x01010101) >>> 0 : 0;
+}
+
 interface Installed<T> {
 	hook: T;
 	off: () => void;
 }
 
 interface Picking {
-	/** target pixels */
+	/** canvas css pixels */
 	x: number;
 	y: number;
-	resolve: (point: [number, number, number] | null) => void;
+	resolve: (hit: Hit | null) => void;
 }
 
 interface Measuring {
@@ -242,6 +295,20 @@ class GpuEngine implements Engine {
 	#feed: Feed | null = null;
 	#opening = 0;
 	#reopening = false;
+
+	#layers = new Map<number, Shown>();
+	#layerCount = 0;
+	/** layer page ids count down from -1, apart from the tree's */
+	#layerPage = 0;
+	/** pool splats the layers' pages pin */
+	#pinned = 0;
+	#layerNumbers = new WeakMap<Layer, number>();
+	/** the pool draws anew though the cut stays: layers or masks changed */
+	#redraw = false;
+	/** lines and markers by id, radius in css pixels */
+	#graphics = new Map<number, Capsule[]>();
+	#graphicCount = 0;
+	#reshaped = false;
 
 	#camera: Camera = { e: 0, n: 0, h: 0, yaw: 0, pitch: 0, fov: 45 };
 	#cameraAt = -Infinity;
@@ -280,10 +347,14 @@ class GpuEngine implements Engine {
 	#shades: Installed<Shade>[] = [];
 	#posts: Installed<Post>[] = [];
 	#picks: Picking[] = [];
+	/** the last frame submitted; null while the gpu holds none to pick in */
+	#rendered: Frame | null = null;
 	#measures: Measuring[] = [];
 	#idlers: (() => void)[] = [];
 	#lostListeners = new Set<(reason: string) => void>();
 	#frameListeners = new Set<(now: number) => void>();
+	#progressListeners = new Set<(progress: Progress) => void>();
+	#progress: Progress = { planned: 0, missing: 0, loading: false };
 	/** frame listeners run; a camera they set needs no frame of its own */
 	#starting = false;
 	#destroyed = false;
@@ -363,6 +434,157 @@ class GpuEngine implements Engine {
 		return world;
 	}
 
+	async addLayer(
+		source: { url: string } | { bytes: Uint8Array },
+		origin: readonly [number, number]
+	): Promise<Layer> {
+		if (this.#destroyed) throw new Error(DESTROYED);
+		const bytes = 'bytes' in source ? source.bytes : await this.#fetch(source.url, null);
+		const pages = await layerPages(bytes, origin);
+		if (this.#destroyed) throw new Error(DESTROYED);
+		const pinned = pages.reduce((sum, { page }) => sum + slots(page.count), 0);
+		const limits = this.#gpu.device.limits;
+		const room = capacities(this.#budget, limits).pool + this.#pinned + pinned;
+		if (room > capacities(Infinity, limits).pool) throw new Error(NO_ROOM);
+		this.#pinned += pinned;
+		this.#rebudget();
+
+		const number = ++this.#layerCount;
+		const keep = (id: number) => this.#feed?.protects(id) ?? false;
+		const changed = () => this.#changeLayers();
+		let visible = true;
+		let opacity = 1;
+		const remove = () => {
+			if (this.#destroyed || !this.#layers.delete(number)) return;
+			for (const { id } of shown.pages) this.#pool.remove(id);
+			this.#pinned -= pinned;
+			changed();
+		};
+		const layer: Layer = {
+			splats: pages.reduce((sum, { page }) => sum + page.count, 0),
+			box: boxOf(pages.map(({ box }) => box)),
+			get visible() {
+				return visible;
+			},
+			set visible(on: boolean) {
+				visible = on;
+				changed();
+			},
+			get opacity() {
+				return opacity;
+			},
+			set opacity(value: number) {
+				opacity = Math.min(1, Math.max(0, value));
+				changed();
+			},
+			remove
+		};
+		const shown: Shown = { layer, pages: [] };
+		this.#layers.set(number, shown);
+		for (const { page, box } of pages) {
+			const id = --this.#layerPage;
+			if (!this.#pool.add(id, page, origin, keep, number)) {
+				remove();
+				throw new Error(NO_ROOM);
+			}
+			shown.pages.push({ id, count: page.count, box });
+		}
+		changed();
+		this.#layerNumbers.set(layer, number);
+		return layer;
+	}
+
+	addMask({ polygon, z = [-Infinity, Infinity], targets }: MaskOptions): Mask {
+		if (this.#destroyed) throw new Error(DESTROYED);
+		if (polygon.length < 3 || !polygon.flat().every(Number.isFinite)) {
+			throw new Error('A mask needs three or more corners, each two finite numbers.');
+		}
+		const layers = new Set(
+			targets.map((t) => (t === 'world' ? 0 : (this.#layerNumbers.get(t) ?? -1)))
+		);
+		const pool = this.#pool;
+		const prism = { polygon: Float64Array.from(polygon.flat()), z: [z[0], z[1]] as const };
+		const id = pool.addMask(prism, layers);
+		let enabled = true;
+		let removed = false;
+		const remask = () => {
+			if (this.#destroyed) return;
+			this.#redraw = true;
+			this.requestFrame();
+		};
+		remask();
+		return {
+			get enabled() {
+				return enabled;
+			},
+			set enabled(on: boolean) {
+				if (removed || on === enabled) return;
+				enabled = on;
+				pool.enableMask(id, on);
+				remask();
+			},
+			remove() {
+				if (removed) return;
+				removed = true;
+				pool.deleteMask(id);
+				remask();
+			}
+		};
+	}
+
+	addLine(points: readonly Point[], style: LineStyle = {}): Line {
+		const { colour = WHITE, width = 2, closed = false, occlude = true } = style;
+		const capsules = (points: readonly Point[]) => {
+			finite(points);
+			const ends = closed && points.length > 2 ? [...points, points[0]] : points;
+			const pairs =
+				ends.length > 1 ? ends.slice(1).map((b, k) => [ends[k], b]) : [[ends[0], ends[0]]];
+			return pairs.map(([a, b]) => ({ a, b, radius: width / 2, colour, occlude }));
+		};
+		const id = ++this.#graphicCount;
+		const reshape = () => {
+			this.#reshaped = true;
+			this.requestFrame();
+		};
+		this.#graphics.set(id, capsules(points));
+		reshape();
+		return {
+			set: (points) => {
+				const next = capsules(points);
+				if (!this.#graphics.has(id)) return;
+				this.#graphics.set(id, next);
+				reshape();
+			},
+			remove: () => {
+				if (this.#graphics.delete(id)) reshape();
+			}
+		};
+	}
+
+	addMarker(point: Point, style: MarkerStyle = {}): Marker {
+		const { size = 12, ...rest } = style;
+		const line = this.addLine([point], { ...rest, width: size });
+		return { set: (point) => line.set([point]), remove: line.remove };
+	}
+
+	toScreen([e, n, h]: Point): [number, number] | null {
+		const c = this.#camera;
+		const [width, height] = this.#css;
+		const o = this.#origin;
+		const view = viewMatrix(new Float64Array(16), relative(c, o), c.yaw * DEG, c.pitch * DEG);
+		const proj = perspective(
+			new Float64Array(16),
+			c.fov * DEG,
+			width / Math.max(1, height),
+			NEAR,
+			this.#settings.viewDistance
+		);
+		const m = multiply(new Float64Array(16), proj, view);
+		const [x, y, , w] = transform(m, [e - o[0], n - o[1], h - o[2]]);
+		if (w <= 0) return null;
+		return [((x / w) * 0.5 + 0.5) * width, (0.5 - (y / w) * 0.5) * height];
+	}
+
 	setCamera(camera: Camera): void {
 		if (this.#destroyed) return;
 		const now = performance.now();
@@ -402,15 +624,12 @@ class GpuEngine implements Engine {
 		this.#fit();
 	}
 
-	pick(x: number, y: number): Promise<[number, number, number] | null> {
+	pick(x: number, y: number): Promise<Hit | null> {
 		if (this.#destroyed || this.#lost) return Promise.resolve(null);
-		const [width, height] = this.#target;
-		const [cssWidth, cssHeight] = this.#css;
-		const tx = (x * width) / Math.max(1, cssWidth);
-		const ty = (y * height) / Math.max(1, cssHeight);
 		return new Promise((resolve) => {
-			this.#picks.push({ x: tx, y: ty, resolve });
-			this.requestFrame();
+			this.#picks.push({ x, y, resolve });
+			if (this.#rendered) this.#answer();
+			else this.requestFrame();
 		});
 	}
 
@@ -446,8 +665,7 @@ class GpuEngine implements Engine {
 			gpuMs: gpu.gpuMs,
 			passes: gpu.passes,
 			drawn: gpu.drawn,
-			planned: this.#plan?.planned ?? 0,
-			missing: this.#plan?.missing ?? 0,
+			...this.#progressNow(),
 			pages: {
 				resident: Array.from(pool.ids()).length,
 				drawn: this.#drawn.length,
@@ -457,8 +675,7 @@ class GpuEngine implements Engine {
 			memory: { pool: pool.bytes, buffers: gpu.bytes },
 			capacity: pool.capacity,
 			budget: this.#budget,
-			scale: this.#quality.scale,
-			loading: feed !== null && !feed.idle
+			scale: this.#quality.scale
 		};
 	}
 
@@ -494,6 +711,11 @@ class GpuEngine implements Engine {
 		return () => this.#frameListeners.delete(fn);
 	}
 
+	onProgress(fn: (progress: Progress) => void): () => void {
+		this.#progressListeners.add(fn);
+		return () => this.#progressListeners.delete(fn);
+	}
+
 	onLost(fn: (reason: string) => void): () => void {
 		this.#lostListeners.add(fn);
 		return () => this.#lostListeners.delete(fn);
@@ -520,6 +742,7 @@ class GpuEngine implements Engine {
 		this.#loader?.destroy();
 		this.#renderer.destroy();
 		this.#pool.destroy();
+		this.#layers.clear();
 		for (const { resolve } of this.#picks.splice(0)) resolve(null);
 		for (const { resolve } of this.#measures.splice(0)) resolve(null);
 		for (const resolve of this.#idlers.splice(0)) resolve();
@@ -541,7 +764,8 @@ class GpuEngine implements Engine {
 	/** buffers that hold the budget, and a plan for it */
 	#rebudget(): void {
 		const { pool, frame } = capacities(this.#budget, this.#gpu.device.limits);
-		if (pool > this.#pool.capacity || frame > this.#frameCapacity) this.#grow(pool, frame);
+		const room = pool + this.#pinned;
+		if (room > this.#pool.capacity || frame > this.#frameCapacity) this.#grow(room, frame);
 		this.#dirty = true;
 		this.requestFrame();
 	}
@@ -556,6 +780,8 @@ class GpuEngine implements Engine {
 		for (const entry of this.#posts) entry.off = renderer.post(entry.hook);
 		this.#renderer = renderer;
 		this.#frameCapacity = frame;
+		this.#rendered = null;
+		this.#reshaped = true;
 	}
 
 	#feedFor(tree: Tree, loader: Loader): Feed {
@@ -578,6 +804,42 @@ class GpuEngine implements Engine {
 		};
 		void this.open(url).then(() => (this.#reopening = false), retry);
 	};
+
+	/** the layers' pages draw anew, and the plan's budget changes with them */
+	#changeLayers(): void {
+		this.#redraw = true;
+		this.#dirty = true;
+		this.requestFrame();
+	}
+
+	/** splats of the visible layers' pages in view, which the plan leaves room for */
+	#layerSplats(): number {
+		const o = this.#origin;
+		const min = [0, 0, 0];
+		const max = [0, 0, 0];
+		let sum = 0;
+		for (const { layer, pages } of this.#layers.values()) {
+			if (!factors(layer)) continue;
+			for (const { count, box } of pages) {
+				for (let a = 0; a < 3; a++) {
+					min[a] = box[a] - o[a];
+					max[a] = box[a + 3] - o[a];
+				}
+				if (boxVisible(this.#planes, min, max)) sum += count;
+			}
+		}
+		return sum;
+	}
+
+	/** the pages of the layers that draw */
+	#drawLayers(): Drawn[] {
+		const drawn: Drawn[] = [];
+		for (const { layer, pages } of this.#layers.values()) {
+			const f = factors(layer);
+			if (f) for (const { id } of pages) drawn.push({ id, factors: f });
+		}
+		return drawn;
+	}
 
 	#install<T>(list: Installed<T>[], hook: T, off: () => void): () => void {
 		const entry = { hook, off };
@@ -604,6 +866,7 @@ class GpuEngine implements Engine {
 		this.#canvas.height = height;
 		this.#renderer.resize(width, height);
 		this.#dirty = true;
+		this.#reshaped = true;
 		this.requestFrame();
 	}
 
@@ -641,6 +904,7 @@ class GpuEngine implements Engine {
 		if (origin !== this.#origin) {
 			this.#origin = origin;
 			pool.setOrigin(origin);
+			this.#reshaped = true;
 		}
 		const eye = relative(camera, origin);
 		viewMatrix(this.#view, eye, camera.yaw * DEG, camera.pitch * DEG);
@@ -689,12 +953,24 @@ class GpuEngine implements Engine {
 			feed.update(plan, new Set(drawn.map((d) => d.id)), now);
 		}
 		if (pool.upload(UPLOAD_BYTES) > 0) this.#arrived = true;
-		if (drawn !== this.#drawn || this.#arrived) pool.draw(drawn);
+		if (drawn !== this.#drawn || this.#arrived || this.#redraw) {
+			this.#redraw = false;
+			const layers = this.#drawLayers();
+			pool.draw(layers.length ? drawn.concat(layers) : drawn);
+		}
 		this.#fading = fading;
 		this.#drawn = drawn;
-		const picks = this.#picks.splice(0).map((picking) => this.#pick(picking, frame));
+		if (this.#reshaped) {
+			this.#reshaped = false;
+			const ratio = width / Math.max(1, this.#css[0]);
+			const capsules = [...this.#graphics.values()].flat();
+			const scaled = capsules.map((c) => ({ ...c, radius: c.radius * ratio }));
+			this.#renderer.overlay(scaled, origin);
+		}
 		const heights = this.#measures.splice(0).map((measuring) => this.#measure(measuring, origin));
-		const done = this.#renderer.render(frame, this.#planes, this.#options.sky, picks, heights);
+		const done = this.#renderer.render(frame, this.#planes, this.#options.sky, heights);
+		this.#rendered = frame;
+		if (this.#picks.length) this.#answer();
 		const cpuMs = performance.now() - now;
 
 		// what comes next
@@ -710,6 +986,7 @@ class GpuEngine implements Engine {
 			void done.then(() => idlers.forEach((resolve) => resolve()));
 		}
 		if (animated) this.#sample(now, cpuMs, moved);
+		this.#report();
 		// the feed calls onArrive for whatever it changes, so loads in flight need no frames
 		const warming = now < this.#warmUntil;
 		const pending = pool.queued > 0 || this.#arrived || this.#heading;
@@ -737,9 +1014,9 @@ class GpuEngine implements Engine {
 		};
 		const view: View = { ...at, view: this.#view };
 		const options = {
-			budget,
+			budget: Math.max(0, budget - this.#layerSplats()),
 			// pages the fader holds take up to FADE_CAP of the budget beside the plan's
-			capacity: pool.capacity - Math.ceil(FADE_CAP * budget),
+			capacity: pool.capacity - Math.ceil(FADE_CAP * budget) - this.#pinned,
 			now,
 			predicted: moved ? this.#predict(at) : undefined
 		};
@@ -765,13 +1042,48 @@ class GpuEngine implements Engine {
 		return { ...at, view: viewMatrix(this.#ahead, eye, c.yaw * DEG, c.pitch * DEG) };
 	}
 
-	/** a pick answered with this frame's matrices, which its depth belongs to */
-	#pick({ x, y, resolve }: Picking, frame: Frame): DepthPick {
+	/** the waiting picks against the last frame, whose uniforms and cull the gpu still holds */
+	#answer(): void {
+		const frame = this.#rendered!;
+		// the next frame rewrites the view before the gpu answers
 		const view = this.#view.slice();
-		const origin = this.#origin;
+		const [cssWidth, cssHeight] = this.#css;
 		const size = [frame.width, frame.height] as const;
-		const point = (depth: number) => unproject([x, y], size, depth, frame.proj, view, origin);
-		return { x, y, resolve: (depth) => resolve(depth === null ? null : point(depth)) };
+		for (const { x, y, resolve } of this.#picks.splice(0)) {
+			const pixel = [
+				(x * size[0]) / Math.max(1, cssWidth),
+				(y * size[1]) / Math.max(1, cssHeight)
+			] as const;
+			const hit = (found: Found | null): Hit | null =>
+				found && {
+					point: unproject(pixel, size, found.depth, frame.proj, view, frame.origin),
+					normal: found.normal,
+					layer: this.#layers.get(found.layer)?.layer ?? null
+				};
+			void this.#renderer.pick(pixel[0], pixel[1], frame).then((found) => resolve(hit(found)));
+		}
+	}
+
+	#progressNow(): Progress {
+		const feed = this.#feed;
+		return {
+			planned: this.#plan?.planned ?? 0,
+			missing: this.#plan?.missing ?? 0,
+			loading: feed !== null && !feed.idle
+		};
+	}
+
+	/** progress to its listeners when it changed */
+	#report(): void {
+		const progress = this.#progressNow();
+		const last = this.#progress;
+		const same =
+			progress.planned === last.planned &&
+			progress.missing === last.missing &&
+			progress.loading === last.loading;
+		if (same) return;
+		this.#progress = progress;
+		for (const fn of this.#progressListeners) fn(progress);
 	}
 
 	/** a heights request in this frame's floating origin */

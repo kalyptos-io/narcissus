@@ -1,5 +1,6 @@
 import { bufferGroup, bufferLayout } from './buffers.ts';
 import common from './common.wgsl?raw';
+import masks from './masks.wgsl?raw';
 import source from './heights.wgsl?raw';
 import { groups } from './layout.ts';
 import type { Pool } from './pool.ts';
@@ -38,10 +39,11 @@ export class Heights {
 			'read-only-storage',
 			'storage'
 		]);
-		const module = device.createShaderModule({ label: 'heights', code: `${common}\n${source}` });
+		const code = `${common}\n${masks}\n${source}`;
+		const module = device.createShaderModule({ label: 'heights', code });
 		this.#pipeline = device.createComputePipeline({
 			label: 'heights',
-			layout: device.createPipelineLayout({ bindGroupLayouts: [this.#layout] }),
+			layout: device.createPipelineLayout({ bindGroupLayouts: [this.#layout, pool.masks.layout] }),
 			compute: { module, entryPoint: 'heights' }
 		});
 	}
@@ -86,6 +88,7 @@ export class Heights {
 		const pass = encoder.beginComputePass({ label: 'heights', timestampWrites: timestamps });
 		pass.setPipeline(this.#pipeline);
 		pass.setBindGroup(0, group);
+		pass.setBindGroup(1, pool.masks.group);
 		if (listed > 0) pass.dispatchWorkgroups(...groups(listed));
 		pass.end();
 		encoder.copyBufferToBuffer(tops, 0, readback, 0, bytes);

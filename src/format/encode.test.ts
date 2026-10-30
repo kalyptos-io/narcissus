@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { contentName, encodePack, encodePage, type Splats } from './encode.ts';
-import { rowAt } from './idx.ts';
+import { contentName, encodeLayer, encodePack, encodePage, type Splats } from './encode.ts';
+import { packRows, rowAt } from './idx.ts';
 import { deflate, inflate } from './inflate.ts';
-import { pageHeader } from './page.ts';
+import { decodePage, pageHeader, readSplat } from './page.ts';
 import { PAGE_SIDE, ROW_BYTES } from './spec.ts';
 
 /** n splats spread over page (g, i, j) */
@@ -49,6 +49,34 @@ describe('encodePack', () => {
 			const payload = await inflate(stored);
 			expect(pageHeader(payload)).toEqual({ count: row.count, quadrants: row.quadrants });
 		}
+	});
+});
+
+describe('encodeLayer', () => {
+	it('writes world splats as one page counted from the floored south-west corner', async () => {
+		const world = splats(200, { g: 1, i: 0, j: 0 });
+		for (let t = 0; t < world.count; t++) {
+			world.position[t * 3] += 723_100.4;
+			world.position[t * 3 + 1] += 6_177_050.7;
+		}
+		const { pack, origin } = await encodeLayer(world);
+		expect(origin).toEqual([723_100, 6_177_050]);
+		const rows = await packRows(async (start, end) => pack.subarray(start, end), pack.length);
+		expect(rows.map(({ g, i, j, count }) => ({ g, i, j, count }))).toEqual([
+			{ g: 2, i: 0, j: 0, count: 200 }
+		]);
+		const page = decodePage(
+			await inflate(pack.subarray(rows[0].offset, rows[0].offset + rows[0].length)),
+			null
+		);
+		const xs = Array.from({ length: page.count }, (_, t) => readSplat(page, t).position[0]);
+		const want = Array.from({ length: world.count }, (_, t) => world.position[t * 3] - origin[0]);
+		expect(Math.min(...xs)).toBeCloseTo(Math.min(...want), 2);
+		expect(Math.max(...xs)).toBeCloseTo(Math.max(...want), 2);
+	});
+
+	it('refuses an empty layer', async () => {
+		await expect(encodeLayer(splats(0, { g: 0, i: 0, j: 0 }))).rejects.toThrow('at least one');
 	});
 });
 

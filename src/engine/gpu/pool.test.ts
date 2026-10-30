@@ -186,6 +186,30 @@ describe('Pool', () => {
 		expect(slice(pages.f, w + 20, 3)).toEqual(slice(p.params, PARAMS.dcMax, 3));
 		expect(slice(pages.f, w + 24, 9)).toEqual(slice(p.params, PARAMS.shScale, 9));
 		expect(pages.u[w + 19]).toBe(0x01020304);
+		expect(pages.u[w + 23]).toBe(0);
+		pool.destroy();
+	});
+
+	it('pins layer pages through eviction and clear, and writes their layer', async () => {
+		const device = await testDevice();
+		const pool = new Pool(device, 3 * CLUSTER);
+		pool.add(-1, page(CLUSTER), [0, 0], none, 2);
+		pool.add(1, page(CLUSTER), [0, 0], none);
+		pool.upload(Infinity);
+		pool.draw([{ id: 1, factors: 1 }]);
+		// the layer page is the least recently drawn, yet only page 1 may go
+		expect(pool.add(2, page(2 * CLUSTER), [0, 0], none)).toBe(true);
+		expect(pool.holds(-1)).toBe(true);
+		expect(pool.holds(1)).toBe(false);
+		expect(pool.add(3, page(2 * CLUSTER), [0, 0], () => true)).toBe(false);
+		pool.upload(Infinity);
+		pool.clear();
+		expect([...pool.ids()]).toEqual([-1]);
+
+		pool.draw([{ id: -1, factors: 0xffffffff }]);
+		const list = (await read(device, pool.list)).u;
+		const table = (await read(device, pool.clusters)).u[list[0] * CLUSTER_WORDS];
+		expect((await read(device, pool.pages)).u[table * PAGE_WORDS + 23]).toBe(2);
 		pool.destroy();
 	});
 
