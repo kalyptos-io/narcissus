@@ -460,6 +460,37 @@ describe('Project', () => {
 		context.buffers.destroy();
 	});
 
+	it('hides by the masks as they stand at a draw, however many changed since the last', async () => {
+		const context = await setup();
+		const { pool } = context;
+		const box = new Float32Array([50, 0, 0, 110, 110, 20]);
+		pool.remove(1);
+		pool.add(1, { ...page(), clusters: box }, [0, 0], () => false);
+		pool.upload(Infinity);
+		pool.draw([{ id: 1, factors: FACTORS }]);
+		const all = [-Infinity, Infinity] as [number, number];
+		// one mask a splat, at y 10, 25, 50 and 80
+		const ids = [10, 25, 50, 80].map((y) =>
+			pool.addMask(
+				{ polygon: Float64Array.from([-5, y - 1, 5, y - 1, 5, y + 1, -5, y + 1]), z: all },
+				new Set([0])
+			)
+		);
+		pool.enableMask(ids[0], false);
+		pool.deleteMask(ids[1]);
+		pool.draw([{ id: 1, factors: FACTORS }]);
+		expect((await run(context)).count).toBe(2);
+		for (const id of [ids[0], ids[2], ids[3]]) pool.enableMask(id, false);
+		pool.enableMask(ids[3], true);
+		pool.draw([{ id: 1, factors: FACTORS }]);
+		expect((await run(context)).count).toBe(3);
+		for (const id of [ids[0], ids[2], ids[3]]) pool.deleteMask(id);
+		pool.draw([{ id: 1, factors: FACTORS }]);
+		expect((await run(context)).count).toBe(4);
+		pool.destroy();
+		context.buffers.destroy();
+	});
+
 	it('uses the current visible count after an empty frame', async () => {
 		const context = await setup();
 		expect((await run(context)).count).toBe(4);

@@ -109,6 +109,8 @@ export class Pool {
 	#hidden: Uint8Array;
 	#masked: (readonly number[])[];
 	#maskedChanged = false;
+	/** world min e, n, max e, n over the masks changed since the last draw */
+	#remasked: [number, number, number, number] | null = null;
 
 	constructor(device: GPUDevice, capacity: number) {
 		this.capacity = capacity;
@@ -231,6 +233,11 @@ export class Pool {
 
 	/** the pages to draw with their quadrant factors; rewrites the factors and the cluster list */
 	draw(drawn: Drawn[]): void {
+		// a burst of mask changes relates its clusters once
+		if (this.#remasked) {
+			this.#remask(this.#remasked);
+			this.#remasked = null;
+		}
 		let listed = 0;
 		let count = 0;
 		let changed = false;
@@ -269,19 +276,27 @@ export class Pool {
 	/** a new mask over targets, layer numbers with 0 for the world; it hides from the next draw */
 	addMask(prism: Prism, targets: ReadonlySet<number>): number {
 		const id = this.masks.add(prism, targets);
-		this.#remask(this.masks.area(id)!);
+		this.#stale(this.masks.area(id)!);
 		return id;
 	}
 
 	enableMask(id: number, enabled: boolean): void {
 		this.masks.enable(id, enabled);
-		this.#remask(this.masks.area(id)!);
+		this.#stale(this.masks.area(id)!);
 	}
 
 	deleteMask(id: number): void {
 		const area = this.masks.area(id)!;
 		this.masks.delete(id);
-		this.#remask(area);
+		this.#stale(area);
+	}
+
+	#stale(area: readonly [number, number, number, number]): void {
+		const r = (this.#remasked ??= [Infinity, Infinity, -Infinity, -Infinity]);
+		r[0] = Math.min(r[0], area[0]);
+		r[1] = Math.min(r[1], area[1]);
+		r[2] = Math.max(r[2], area[2]);
+		r[3] = Math.max(r[3], area[3]);
 	}
 
 	/** room for capacity splats, the pages held staying in place; new buffers, so new bind groups */
