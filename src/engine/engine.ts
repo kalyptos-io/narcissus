@@ -4,10 +4,12 @@ import { CLUSTER, GEOMETRY_WORDS, directory, parseWorld, type World } from '../f
 import { PROJECTED_WORDS, slots } from './gpu/layout.ts';
 import { requestGpu, type Gpu } from './gpu/device.ts';
 import { Pool } from './gpu/pool.ts';
+import type { Capsule } from './gpu/overlay.ts';
 import type { Found } from './gpu/pick.ts';
 import { Renderer, type HeightsRequest } from './gpu/renderer.ts';
 import { boxOf, layerPages, type Layer } from './layer.ts';
 import type { Mask, MaskOptions } from './mask.ts';
+import type { Line, LineStyle, Marker, MarkerStyle } from './overlay.ts';
 import { boxVisible, planes } from './math/frustum.ts';
 import {
 	invert,
@@ -70,6 +72,11 @@ export interface Engine {
 		origin: readonly [number, number]
 	): Promise<Layer>;
 	addMask(mask: MaskOptions): Mask;
+	/** a polyline in world coordinates over the splats; one point draws a dot */
+	addLine(points: readonly Point[], style?: LineStyle): Line;
+	addMarker(point: Point, style?: MarkerStyle): Marker;
+	/** canvas css pixel of a world point under the camera set last, null behind it */
+	toScreen(point: Point): [number, number] | null;
 	setCamera(camera: Camera): void;
 	configure(settings: Partial<Settings>): void;
 	/** canvas size in css pixels and the device pixel ratio to render at */
@@ -169,6 +176,7 @@ const SAMPLES = 60;
 const DEG = Math.PI / 180;
 const DESTROYED = 'The viewer was closed.';
 const NO_ROOM = 'The layers hold more splats than this device can.';
+const WHITE = [1, 1, 1, 1] as const;
 const SUPERSEDED = 'Another world was opened.';
 
 type Point = readonly [number, number, number];
@@ -215,6 +223,14 @@ export function unproject(
 	const inView: Point = [(depth * x) / proj[0], (depth * y) / proj[5], -depth];
 	const [e, n, h] = transform(invert(new Float64Array(16), view)!, inView);
 	return [e + origin[0], n + origin[1], h + origin[2]];
+}
+
+/** points as given; throws on none, or on one that is not three finite numbers */
+function finite(points: readonly Point[]): readonly Point[] {
+	if (!points.length || !points.every((p) => p.length === 3 && p.every(Number.isFinite))) {
+		throw new Error('Give at least one point, each three finite numbers.');
+	}
+	return points;
 }
 
 function relative(c: Camera, origin: Point): Point {
@@ -285,6 +301,10 @@ class GpuEngine implements Engine {
 	#layerDrawn: Drawn[] = [];
 	/** the pool draws anew though the cut stays: layers or masks changed */
 	#redraw = false;
+	/** lines and markers by id, radius in css pixels */
+	#graphics = new Map<number, Capsule[]>();
+	#graphicCount = 0;
+	#reshaped = false;
 
 	#camera: Camera = { e: 0, n: 0, h: 0, yaw: 0, pitch: 0, fov: 45 };
 	#cameraAt = -Infinity;
@@ -508,6 +528,46 @@ class GpuEngine implements Engine {
 		};
 	}
 
+	addLine(points: readonly Point[], style: LineStyle = {}): Line {
+		const { colour = WHITE, width = 2, closed = false, occlude = true } = style;
+		const capsules = (points: readonly Point[]) => {
+			const ends = closed && points.length > 2 ? [...points, points[0]] : points;
+			const pairs =
+				ends.length > 1 ? ends.slice(1).map((b, k) => [ends[k], b]) : [[ends[0], ends[0]]];
+			return pairs.map(([a, b]) => ({ a, b, radius: width / 2, colour, occlude }));
+		};
+		const { set, remove } = this.#graphic(capsules(finite(points)));
+		return { set: (points) => set(capsules(finite(points))), remove };
+	}
+
+	addMarker(point: Point, style: MarkerStyle = {}): Marker {
+		const { colour = WHITE, size = 12, occlude = true } = style;
+		const capsules = (point: Point) => {
+			const [a] = finite([point]);
+			return [{ a, b: a, radius: size / 2, colour, occlude }];
+		};
+		const { set, remove } = this.#graphic(capsules(point));
+		return { set: (point) => set(capsules(point)), remove };
+	}
+
+	toScreen([e, n, h]: Point): [number, number] | null {
+		const c = this.#camera;
+		const [width, height] = this.#css;
+		const o = this.#origin;
+		const view = viewMatrix(new Float64Array(16), relative(c, o), c.yaw * DEG, c.pitch * DEG);
+		const proj = perspective(
+			new Float64Array(16),
+			c.fov * DEG,
+			width / Math.max(1, height),
+			NEAR,
+			this.#settings.viewDistance
+		);
+		const m = multiply(new Float64Array(16), proj, view);
+		const [x, y, , w] = transform(m, [e - o[0], n - o[1], h - o[2]]);
+		if (w <= 0) return null;
+		return [((x / w) * 0.5 + 0.5) * width, (0.5 - (y / w) * 0.5) * height];
+	}
+
 	setCamera(camera: Camera): void {
 		if (this.#destroyed) return;
 		const now = performance.now();
@@ -701,6 +761,7 @@ class GpuEngine implements Engine {
 		this.#renderer = renderer;
 		this.#frameCapacity = frame;
 		this.#rendered = null;
+		this.#reshaped = true;
 	}
 
 	#feedFor(tree: Tree, loader: Loader): Feed {
@@ -723,6 +784,27 @@ class GpuEngine implements Engine {
 		};
 		void this.open(url).then(() => (this.#reopening = false), retry);
 	};
+
+	/** a graphic of capsules, radius in css pixels: set replaces them, remove frees it */
+	#graphic(capsules: Capsule[]): { set: (capsules: Capsule[]) => void; remove: () => void } {
+		const id = ++this.#graphicCount;
+		const reshape = () => {
+			this.#reshaped = true;
+			this.requestFrame();
+		};
+		this.#graphics.set(id, capsules);
+		reshape();
+		return {
+			set: (capsules) => {
+				if (!this.#graphics.has(id)) return;
+				this.#graphics.set(id, capsules);
+				reshape();
+			},
+			remove: () => {
+				if (this.#graphics.delete(id)) reshape();
+			}
+		};
+	}
 
 	/** the layers' pages draw anew, and the plan's budget changes with them */
 	#changeLayers(): void {
@@ -786,6 +868,7 @@ class GpuEngine implements Engine {
 		this.#canvas.height = height;
 		this.#renderer.resize(width, height);
 		this.#dirty = true;
+		this.#reshaped = true;
 		this.requestFrame();
 	}
 
@@ -823,6 +906,7 @@ class GpuEngine implements Engine {
 		if (origin !== this.#origin) {
 			this.#origin = origin;
 			pool.setOrigin(origin);
+			this.#reshaped = true;
 		}
 		const eye = relative(camera, origin);
 		viewMatrix(this.#view, eye, camera.yaw * DEG, camera.pitch * DEG);
@@ -881,6 +965,13 @@ class GpuEngine implements Engine {
 		}
 		this.#fading = fading;
 		this.#drawn = drawn;
+		if (this.#reshaped) {
+			this.#reshaped = false;
+			const ratio = width / Math.max(1, this.#css[0]);
+			const capsules = [...this.#graphics.values()].flat();
+			const scaled = capsules.map((c) => ({ ...c, radius: c.radius * ratio }));
+			this.#renderer.overlay(scaled, origin);
+		}
 		const heights = this.#measures.splice(0).map((measuring) => this.#measure(measuring, origin));
 		const done = this.#renderer.render(frame, this.#planes, this.#options.sky, heights);
 		this.#rendered = { frame, view: this.#view.slice() };

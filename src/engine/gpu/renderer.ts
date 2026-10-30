@@ -12,6 +12,7 @@ import type { Pool } from './pool.ts';
 import type { Fullscreen } from './fullscreen.ts';
 import { present } from './present.ts';
 import { Project } from './project.ts';
+import { Overlay, type Capsule } from './overlay.ts';
 import { Pick, type Found } from './pick.ts';
 import { COLOUR_FORMAT, DEPTH_FORMAT, Raster } from './raster.ts';
 import { Sort } from './sort.ts';
@@ -65,6 +66,7 @@ export class Renderer {
 	#present: Fullscreen | undefined;
 	#heights: Heights;
 	#pick: Pick;
+	#overlay: Overlay;
 	#timing: Timing;
 	#uniforms = new Float32Array(FRAME_UNIFORM_BYTES / 4);
 	#uniformWords = new Uint32Array(this.#uniforms.buffer);
@@ -99,6 +101,7 @@ export class Renderer {
 		this.#raster = new Raster(device, this.#buffers, this.#sort);
 		this.#heights = new Heights(device, pool);
 		this.#pick = new Pick(device, pool, this.#buffers);
+		this.#overlay = new Overlay(device, gpu.format, this.#buffers.uniforms);
 		this.#timing = new Timing(device, gpu.timestamps, PASSES);
 		this.#count = device.createBuffer({
 			label: 'counts readback',
@@ -151,6 +154,11 @@ export class Renderer {
 		return this.#pick.run(x, y, frame);
 	}
 
+	/** host graphics the frames draw last, world coordinates moved to the floating origin */
+	overlay(capsules: readonly Capsule[], origin: readonly [number, number, number]): void {
+		this.#overlay.set(capsules, origin);
+	}
+
 	/** encodes and submits a frame that answers heights; resolves when the gpu has finished it */
 	render(
 		frame: Frame,
@@ -162,11 +170,9 @@ export class Renderer {
 		const timing = this.#timing;
 		const posts = this.#posts;
 		const colour = this.#view(this.#target('colour', COLOUR_FORMAT));
-		const depthTexture = this.#optional(
-			'depth',
-			DEPTH_FORMAT,
-			posts.some(({ post }) => post.depth)
-		);
+		const overlay = this.#overlay.count > 0;
+		const wantDepth = overlay || posts.some(({ post }) => post.depth);
+		const depthTexture = this.#optional('depth', DEPTH_FORMAT, wantDepth);
 		const depth = depthTexture ? this.#view(depthTexture) : null;
 		const ping = [
 			this.#optional('ping', this.#format, posts.length > 1),
@@ -203,6 +209,7 @@ export class Renderer {
 				input = target;
 			});
 		}
+		if (overlay) this.#overlay.encode(encoder, canvas, depth!);
 		if (bracket) {
 			const { querySet, endOfPassWriteIndex } = bracket;
 			encoder.beginComputePass({ timestampWrites: { querySet, endOfPassWriteIndex } }).end();
@@ -241,6 +248,7 @@ export class Renderer {
 		this.#buffers.destroy();
 		this.#sort.destroy();
 		this.#raster.destroy();
+		this.#overlay.destroy();
 		this.#timing.destroy();
 		this.#count.destroy();
 	}
