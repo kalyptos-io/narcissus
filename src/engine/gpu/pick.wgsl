@@ -45,6 +45,10 @@ struct Hits {
 @group(0) @binding(7) var<storage, read> probes: Probes;
 @group(0) @binding(8) var<storage, read_write> hits: Hits;
 
+// invocation k tests probe k on the cluster in hand; a loop over all crashes mesa 25.2's lavapipe
+var<workgroup> near: atomic<u32>;
+var<workgroup> seen: u32;
+
 // false only when the box lies wholly outside one side of probe k's pixel
 fn under(lo: vec3f, hi: vec3f, k: u32) -> bool {
 	for (var p = 0u; p < 4u; p++) {
@@ -55,20 +59,6 @@ fn under(lo: vec3f, hi: vec3f, k: u32) -> bool {
 		}
 	}
 	return true;
-}
-
-// the cluster of visible index under any probed pixel, or none
-fn candidate(index: u32, cluster: ptr<function, Cluster>) -> bool {
-	*cluster = clusters[work[WORK_LIST + index]];
-	let page = pages[(*cluster).page];
-	let lo = page.origin + (*cluster).boxMin;
-	let hi = page.origin + (*cluster).boxMax;
-	for (var k = 0u; k < probes.count; k++) {
-		if (under(lo, hi, k)) {
-			return true;
-		}
-	}
-	return false;
 }
 
 // the alpha a drawn splat gives the pixel as raster.wgsl blends it: its quad stops at reach
@@ -106,32 +96,47 @@ fn meets(s: Splat, d: Drawn, normal: vec3f, pixel: vec2f) -> f32 {
 	return clamp(dot(n, centre) / across, d.depth - spread, d.depth + spread);
 }
 
+// an entry for each probed pixel splat t of the cluster covers
+fn give(cluster: Cluster, t: u32) {
+	var s: Splat;
+	var g: vec4u;
+	if (!decode(cluster, t, &s, &g)) {
+		return;
+	}
+	shade(&s);
+	var d: Drawn;
+	if (!drawn(s, g, &d)) {
+		return;
+	}
+	let normal = face(s, g);
+	let layer = pages[cluster.page].layer;
+	for (var k = 0u; k < probes.count; k++) {
+		let pixel = probes.items[k].pixel;
+		let a = coverage(s, d, pixel);
+		if (a == 0.0) {
+			continue;
+		}
+		let slot = atomicAdd(&hits.count, 1u);
+		if (slot < arrayLength(&hits.entries)) {
+			hits.entries[slot] = Entry(normal, d.depth, meets(s, d, normal, pixel), a, layer, k);
+		}
+	}
+}
+
 @compute @workgroup_size(256)
 fn gather(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) t: u32) {
 	for (var index = wid.x; index < work[WORK_VISIBLE]; index += PICK_GROUPS) {
-		var cluster: Cluster;
-		var s: Splat;
-		var g: vec4u;
-		if (!candidate(index, &cluster) || t >= cluster.count || !decode(cluster, t, &s, &g)) {
-			continue;
+		let cluster = clusters[work[WORK_LIST + index]];
+		let page = pages[cluster.page];
+		if (t < probes.count && under(page.origin + cluster.boxMin, page.origin + cluster.boxMax, t)) {
+			atomicStore(&near, 1u);
 		}
-		shade(&s);
-		var d: Drawn;
-		if (!drawn(s, g, &d)) {
-			continue;
+		workgroupBarrier();
+		if (t == 0u) {
+			seen = atomicExchange(&near, 0u);
 		}
-		let normal = face(s, g);
-		let layer = pages[cluster.page].layer;
-		for (var k = 0u; k < probes.count; k++) {
-			let pixel = probes.items[k].pixel;
-			let a = coverage(s, d, pixel);
-			if (a == 0.0) {
-				continue;
-			}
-			let slot = atomicAdd(&hits.count, 1u);
-			if (slot < arrayLength(&hits.entries)) {
-				hits.entries[slot] = Entry(normal, d.depth, meets(s, d, normal, pixel), a, layer, k);
-			}
+		if (workgroupUniformLoad(&seen) != 0u && t < cluster.count) {
+			give(cluster, t);
 		}
 	}
 }

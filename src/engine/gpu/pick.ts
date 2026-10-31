@@ -14,7 +14,7 @@ import splat from './splat.wgsl?raw';
 
 /** workgroups of a pick, pick.wgsl's PICK_GROUPS */
 const GROUPS = 256;
-/** pixels one dispatch probes; a longer batch runs in several */
+/** pixels one dispatch probes, at most pick.wgsl's workgroup size; a longer batch runs in several */
 export const PROBES = 64;
 /** bytes of pick.wgsl's Probes before its items, and of each Probe */
 const PROBES_HEAD_BYTES = 16;
