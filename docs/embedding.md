@@ -46,6 +46,8 @@ It holds at every level of detail, through the fades between levels, and while p
 
 The hit is where the splats that the last frame drew over the pixel, blended front to back, first cover half of it, after masks and plugins. Faint splats that blend into a surface therefore give a hit too. When more splats lie over the pixel than the pick holds, it resolves `null` once and holds more on the next pick. A pick renders no frame. It is one small compute pass over the clusters under the pixel, so it is fast enough for every pointer move. It answers about a frame later, so a page should not start a new pick while one is pending.
 
+`engine.pickMany(points)` picks many canvas pixels against the same frame and resolves with a `Hit` or `null` for each, in order. One compute pass serves up to 64 pixels, so the pixels a pointer crossed in a frame, or a few around it, cost about as much as one pick. Picks asked for before the next frame are answered together in the same way.
+
 ## Lines and markers
 
 `engine.addLine(points, style)` draws a polyline through world points, and `engine.addMarker(point, style)` draws a dot. Both draw over the finished frame, after the plugins. `set()` moves them and `remove()` ends them.

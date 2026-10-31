@@ -6,7 +6,7 @@ import { multiply, perspective, view } from '../math/mat4.ts';
 import type { Frame } from '../plugin.ts';
 import { frameBuffers } from './buffers.ts';
 import { FRAME_UNIFORM_BYTES, LOW_PASS, WORK } from './layout.ts';
-import { Pick } from './pick.ts';
+import { Pick, PROBES } from './pick.ts';
 import { Pool } from './pool.ts';
 import { testDevice } from './test-device.ts';
 
@@ -90,14 +90,17 @@ async function setup(slots = 4096) {
 		encoder.copyBufferToBuffer(pool.list, 0, buffers.work, WORK.list * 4, pool.listed * 4);
 		device.queue.submit([encoder.finish()]);
 	};
+	const one = (x: number, y: number) => pick.run([[x, y]], at).then(([found]) => found);
 	return {
 		pool,
 		buffers,
 		draw,
-		centre: () => pick.run(SIZE / 2, SIZE / 2, at),
-		corner: () => pick.run(2, 2, at),
+		centre: () => one(SIZE / 2, SIZE / 2),
+		corner: () => one(2, 2),
 		/** the pixel whose ray climbs `slope` metres a metre north */
-		above: (slope: number) => pick.run(SIZE / 2, SIZE / 2 - (slope * at.proj[5] * SIZE) / 2, at)
+		above: (slope: number) => one(SIZE / 2, SIZE / 2 - (slope * at.proj[5] * SIZE) / 2),
+		many: (pixels: [number, number][]) => pick.run(pixels, at),
+		one
 	};
 }
 
@@ -166,6 +169,35 @@ describe('Pick', () => {
 		draw([1]);
 		expect(await centre()).toBeNull();
 		expect((await centre())!.depth).toBeCloseTo(10 + (k - 1) / 100, 2);
+		pool.destroy();
+		buffers.destroy();
+	});
+
+	it('answers many pixels in one pass as it answers each alone, past one dispatch', async () => {
+		const { pool, buffers, draw, many, one } = await setup();
+		// near discs west of the axis, far ones east: a row of pixels crosses both and the sky
+		pool.add(
+			1,
+			page([
+				{ at: [7.5, 10, 1.5], size: 0.6 },
+				{ at: [8.5, 20, 1.5], size: 1.2 }
+			]),
+			[0, 0],
+			() => false
+		);
+		draw([1]);
+		const row = Array.from({ length: PROBES + 6 }, (_, k): [number, number] => [
+			2 + (k * (SIZE - 4)) / (PROBES + 5),
+			SIZE / 2
+		]);
+		const together = await many(row);
+		expect(together).toHaveLength(row.length);
+		const alone = [];
+		for (const [x, y] of row) alone.push(await one(x, y));
+		expect(together).toEqual(alone);
+		const depths = new Set(together.map((f) => (f ? Math.round(f.depth) : null)));
+		expect(depths).toEqual(new Set([null, 10, 20]));
+		expect(await many([])).toEqual([]);
 		pool.destroy();
 		buffers.destroy();
 	});
