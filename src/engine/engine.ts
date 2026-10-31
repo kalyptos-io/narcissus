@@ -87,6 +87,8 @@ export interface Engine {
 	 * plane; it renders no frame of its own
 	 */
 	pick(x: number, y: number): Promise<Hit | null>;
+	/** pick() of each canvas css pixel, answered together against one frame in one pass */
+	pickMany(points: readonly (readonly [number, number])[]): Promise<(Hit | null)[]>;
 	ground(e: number, n: number): number | undefined;
 	/** ground(e, n) once every .idx over (e, n) is read */
 	groundAt(e: number, n: number): Promise<number | undefined>;
@@ -262,9 +264,8 @@ interface Installed<T> {
 
 interface Picking {
 	/** canvas css pixels */
-	x: number;
-	y: number;
-	resolve: (hit: Hit | null) => void;
+	points: readonly (readonly [number, number])[];
+	resolve: (hits: (Hit | null)[]) => void;
 }
 
 interface Measuring {
@@ -626,9 +627,14 @@ class GpuEngine implements Engine {
 	}
 
 	pick(x: number, y: number): Promise<Hit | null> {
-		if (this.#destroyed || this.#lost) return Promise.resolve(null);
+		return this.pickMany([[x, y]]).then(([hit]) => hit);
+	}
+
+	pickMany(points: readonly (readonly [number, number])[]): Promise<(Hit | null)[]> {
+		if (this.#destroyed || this.#lost || !points.length)
+			return Promise.resolve(points.map(() => null));
 		return new Promise((resolve) => {
-			this.#picks.push({ x, y, resolve });
+			this.#picks.push({ points, resolve });
 			if (this.#rendered) this.#answer();
 			else this.requestFrame();
 		});
@@ -744,7 +750,7 @@ class GpuEngine implements Engine {
 		this.#renderer.destroy();
 		this.#pool.destroy();
 		this.#layers.clear();
-		for (const { resolve } of this.#picks.splice(0)) resolve(null);
+		for (const { points, resolve } of this.#picks.splice(0)) resolve(points.map(() => null));
 		for (const { resolve } of this.#measures.splice(0)) resolve(null);
 		for (const resolve of this.#idlers.splice(0)) resolve();
 		this.#gpu.device.destroy();
@@ -1050,19 +1056,26 @@ class GpuEngine implements Engine {
 		const view = this.#view.slice();
 		const [cssWidth, cssHeight] = this.#css;
 		const size = [frame.width, frame.height] as const;
-		for (const { x, y, resolve } of this.#picks.splice(0)) {
-			const pixel = [
-				(x * size[0]) / Math.max(1, cssWidth),
-				(y * size[1]) / Math.max(1, cssHeight)
-			] as const;
-			const hit = (found: Found | null): Hit | null =>
-				found && {
-					point: unproject(pixel, size, found.depth, frame.proj, view, frame.origin),
-					normal: found.normal,
-					layer: this.#layers.get(found.layer)?.layer ?? null
-				};
-			void this.#renderer.pick(pixel[0], pixel[1], frame).then((found) => resolve(hit(found)));
-		}
+		const picks = this.#picks.splice(0);
+		const pixels = picks.flatMap(({ points }) =>
+			points.map(
+				([x, y]) =>
+					[(x * size[0]) / Math.max(1, cssWidth), (y * size[1]) / Math.max(1, cssHeight)] as const
+			)
+		);
+		const hit = (found: Found | null, pixel: readonly [number, number]): Hit | null =>
+			found && {
+				point: unproject(pixel, size, found.depth, frame.proj, view, frame.origin),
+				normal: found.normal,
+				layer: this.#layers.get(found.layer)?.layer ?? null
+			};
+		void this.#renderer.pick(pixels, frame).then((found) => {
+			let at = 0;
+			for (const { points, resolve } of picks) {
+				resolve(points.map((_, k) => hit(found[at + k], pixels[at + k])));
+				at += points.length;
+			}
+		});
 	}
 
 	#progressNow(): Progress {

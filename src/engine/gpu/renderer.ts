@@ -149,9 +149,9 @@ export class Renderer {
 		this.#dropTargets();
 	}
 
-	/** the surface under target pixel (x, y from the top-left) as frame, the last rendered, drew it */
-	pick(x: number, y: number, frame: Frame): Promise<Found | null> {
-		return this.#pick.run(x, y, frame);
+	/** the surface under target pixels (x, y from the top-left) as frame, the last rendered, drew it */
+	pick(pixels: readonly (readonly [number, number])[], frame: Frame): Promise<(Found | null)[]> {
+		return this.#pick.run(pixels, frame);
 	}
 
 	/** host graphics the frames draw last, world coordinates moved to the floating origin */
