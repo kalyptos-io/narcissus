@@ -11,15 +11,15 @@ import { probe, validate } from './validate.ts';
 const TREE = fileURLToPath(new URL('../../fixtures/tree', import.meta.url));
 const LEAF = 'u/0/723000/6177000';
 const PACK = `${LEAF}.656598a8e97f00d8.pack`;
-const COL = `${LEAF}.89b517b3bc33d6bb.col`;
+const COL = `${LEAF}.5b67c3353357531e.col`;
 const FILES = [
-	`${LEAF}.2e01b7ffcdd8552f.idx`,
+	`${LEAF}.ea0aedd7d41a4d2a.idx`,
 	PACK,
 	COL,
 	'u/0/723250/6177000.22bd82e562f085dd.idx',
 	'u/0/723250/6177000.cdfa006742dda297.pack',
 	'u/1/723000/6177000.b1634a664db0fb6f.pack',
-	'u/1/723000/6177000.c434e29875e6dc79.idx'
+	'u/1/723000/6177000.f78f463663c0841c.idx'
 ];
 
 const scratch = mkdtempSync(join(tmpdir(), 'narcissus-'));
