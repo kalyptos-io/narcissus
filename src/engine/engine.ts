@@ -286,6 +286,10 @@ class GpuEngine implements Engine {
 	#reopening = false;
 
 	#layers: Layers;
+	/** a layer changed since the last frame */
+	#layered = false;
+	/** the layers' splats in view and pinned as the last plan took them from its budget and pool */
+	#planLayers = { inView: 0, pinned: 0 };
 	/** the pool draws anew though the cut stays: layers or masks changed */
 	#redraw = false;
 	#graphics = new Graphics(() => this.requestFrame());
@@ -703,10 +707,10 @@ class GpuEngine implements Engine {
 		void this.open(url).then(() => (this.#reopening = false), retry);
 	};
 
-	/** the layers' pages draw anew, and the plan's budget changes with them */
+	/** the layers' pages draw anew; the plan follows if what they take from it changed */
 	#changeLayers(): void {
 		this.#redraw = true;
-		this.#dirty = true;
+		this.#layered = true;
 		this.requestFrame();
 	}
 
@@ -792,6 +796,14 @@ class GpuEngine implements Engine {
 		planes(this.#planes, multiply(this.#viewProj, frame.proj, frame.view));
 
 		// plan
+		if (this.#layered) {
+			this.#layered = false;
+			const layers = this.#layers;
+			const { inView, pinned } = this.#planLayers;
+			if (layers.pinned !== pinned || layers.inView(this.#planes, this.#origin) !== inView) {
+				this.#dirty = true;
+			}
+		}
 		const tree = this.#tree;
 		const feed = this.#feed;
 		const redraw = this.#arrived || this.#dirty || this.#fading;
@@ -882,10 +894,14 @@ class GpuEngine implements Engine {
 			far: this.#settings.viewDistance
 		};
 		const view: View = { ...at, view: this.#view };
+		const layers = (this.#planLayers = {
+			inView: this.#layers.inView(this.#planes, this.#origin),
+			pinned: this.#layers.pinned
+		});
 		const options = {
-			budget: Math.max(0, budget - this.#layers.inView(this.#planes, this.#origin)),
+			budget: Math.max(0, budget - layers.inView),
 			// pages the fader holds take up to FADE_CAP of the budget beside the plan's
-			capacity: pool.capacity - Math.ceil(FADE_CAP * budget) - this.#layers.pinned,
+			capacity: pool.capacity - Math.ceil(FADE_CAP * budget) - layers.pinned,
 			now,
 			predicted: moved ? this.#predict(at) : undefined
 		};
