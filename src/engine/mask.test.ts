@@ -25,7 +25,7 @@ async function layerIn(layers: Layers): Promise<Layer> {
 		dc: new Float32Array(3),
 		sh: null
 	});
-	return layers.add(await layerPages(pack, origin), origin)!;
+	return layers.add(await layerPages(pack, origin), { bytes: pack, origin })!;
 }
 
 describe('createMask', () => {

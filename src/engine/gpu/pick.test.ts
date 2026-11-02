@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodePage } from '../../format/index.ts';
+import { decodePage, PARAMS } from '../../format/index.ts';
 import { encodePage } from '../../format/encode.ts';
 import { planes } from '../math/frustum.ts';
 import { multiply, perspective, view } from '../math/mat4.ts';
@@ -199,6 +199,28 @@ describe('Pick', () => {
 		const depths = new Set(together.map((f) => (f ? Math.round(f.depth) : null)));
 		expect(depths).toEqual(new Set([null, 10, 20]));
 		expect(await many([])).toEqual([]);
+		pool.destroy();
+		buffers.destroy();
+	});
+
+	it('turns the face with its page, and passes by a page pick may not find', async () => {
+		const { pool, buffers, draw, centre } = await setup();
+		pool.add(1, page([20]), [0, 0], () => false);
+		const disc = page([10]);
+		pool.add(-1, disc, [0, 0], () => false, 3);
+		// turned 45 degrees about a page origin placed so the disc stays at (8, 10, 1.5)
+		const [c, s] = [Math.SQRT1_2, Math.SQRT1_2];
+		const [x, y, z] = [0, 1, 2].map((k) => [8, 10, 1.5][k] - disc.params[PARAMS.origin + k]);
+		const base = [8 - (c * x + s * y), 10 - (c * y - s * x), 1.5 - z] as const;
+		pool.place(-1, base, [c, s], new Float32Array([-20, -20, -20, 20, 20, 20]));
+		draw([1, -1]);
+		const hit = (await centre())!;
+		expect(hit).toMatchObject({ depth: expect.closeTo(10, 1), layer: 3 });
+		// facing south, turned clockwise: south-west
+		hit.normal.forEach((v, k) => expect(v).toBeCloseTo([-c, -s, 0][k], 1));
+		pool.setPickable(-1, false);
+		draw([1, -1]);
+		expect(await centre()).toMatchObject({ depth: expect.closeTo(20, 2), layer: 0 });
 		pool.destroy();
 		buffers.destroy();
 	});

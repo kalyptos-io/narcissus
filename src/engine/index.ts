@@ -4,7 +4,7 @@ export { createEngine, NoWebGpu } from './engine.ts';
 export type { Engine, EngineOptions, Hit, StepReport } from './engine.ts';
 export type { Cache, Fetch } from '../ports.ts';
 export type { Frame, Host, Plugin, Post, PostPass, Shade } from './plugin.ts';
-export type { Layer } from './layer.ts';
+export type { Layer, LayerOptions } from './layer.ts';
 export type { Mask, MaskOptions } from './mask.ts';
 export type { Line, LineStyle, Marker, MarkerStyle } from './overlay.ts';
 export type { World } from '../format/index.ts';

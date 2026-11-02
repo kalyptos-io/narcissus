@@ -6,7 +6,7 @@ import { requestGpu, type Gpu } from './gpu/device.ts';
 import { Pool } from './gpu/pool.ts';
 import type { Found } from './gpu/pick.ts';
 import { Renderer, type HeightsRequest } from './gpu/renderer.ts';
-import { layerPages, Layers, pins, type Layer } from './layer.ts';
+import { Layers, pins, readLayer, type Layer, type LayerOptions } from './layer.ts';
 import { createMask, type Mask, type MaskOptions } from './mask.ts';
 import { Graphics, type Line, type LineStyle, type Marker, type MarkerStyle } from './overlay.ts';
 import { planes } from './math/frustum.ts';
@@ -63,13 +63,10 @@ export interface StepReport {
 export interface Engine {
 	open(worldUrl: string): Promise<World>;
 	/**
-	 * a layer from a pack, its bytes or its url read through the engine's source; origin is the
-	 * south-west corner its positions count from, as encodeLayer gives it. it stays through open()
+	 * a layer from a pack, its bytes or its url read through the engine's source, placed as options
+	 * say; it stays through open(). a field out of range throws a RangeError naming it
 	 */
-	addLayer(
-		source: { url: string } | { bytes: Uint8Array },
-		origin: readonly [number, number]
-	): Promise<Layer>;
+	addLayer(options: LayerOptions): Promise<Layer>;
 	addMask(mask: MaskOptions): Mask;
 	/** a polyline in world coordinates over the splats; one point draws a dot */
 	addLine(points: readonly Point[], style?: LineStyle): Line;
@@ -426,20 +423,16 @@ class GpuEngine implements Engine {
 		return world;
 	}
 
-	async addLayer(
-		source: { url: string } | { bytes: Uint8Array },
-		origin: readonly [number, number]
-	): Promise<Layer> {
+	async addLayer(options: LayerOptions): Promise<Layer> {
 		if (this.#destroyed) throw new Error(DESTROYED);
-		const bytes = 'bytes' in source ? source.bytes : await this.#fetch(source.url, null);
-		const pages = await layerPages(bytes, origin);
+		const pages = await readLayer(options, this.#fetch);
 		if (this.#destroyed) throw new Error(DESTROYED);
 		const pinned = pins(pages);
 		const limits = this.#gpu.device.limits;
 		const room = capacities(this.#budget, limits).pool + this.#layers.pinned + pinned;
 		if (room > capacities(Infinity, limits).pool) throw new Error(NO_ROOM);
 		this.#rebudget(pinned);
-		const layer = this.#layers.add(pages, origin);
+		const layer = this.#layers.add(pages, options);
 		if (!layer) throw new Error(NO_ROOM);
 		return layer;
 	}

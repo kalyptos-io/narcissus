@@ -8,6 +8,7 @@ import {
 	type DecodedPage
 } from '../../format/index.ts';
 import { CLUSTER_WORDS, PAGE_WORDS } from './layout.ts';
+import { edges } from '../math/prism.ts';
 import { Pool } from './pool.ts';
 import { readBuffer, testDevice } from './test-device.ts';
 
@@ -37,7 +38,7 @@ describe('Pool', () => {
 	it('sizes its buffers from the capacity', async () => {
 		const pool = new Pool(await testDevice(), 4 * CLUSTER);
 		expect(pool.slots).toBe(4);
-		expect(pool.bytes).toBe(4 * CLUSTER * 28 + 4 * (48 + 144 + 4));
+		expect(pool.bytes).toBe(4 * CLUSTER * 28 + 4 * (48 + 160 + 4));
 		pool.destroy();
 	});
 
@@ -57,7 +58,7 @@ describe('Pool', () => {
 		const pool = new Pool(await testDevice(), 4 * CLUSTER);
 		pool.add(1, page(300), [0, 0], none);
 		pool.add(2, page(10), [0, 0], none);
-		expect(pool.upload(1)).toBe(300 * 28 + 2 * 48 + 144);
+		expect(pool.upload(1)).toBe(300 * 28 + 2 * 48 + 160);
 		expect(pool.has(1)).toBe(true);
 		expect(pool.has(2)).toBe(false);
 		expect(pool.holds(2)).toBe(true);
@@ -213,6 +214,72 @@ describe('Pool', () => {
 		pool.destroy();
 	});
 
+	it('places a page and its clusters, turned, and marks one pick passes by', async () => {
+		const device = await testDevice();
+		const pool = new Pool(device, 4 * CLUSTER);
+		const p = page(300, 3);
+		const boxes = Float32Array.from({ length: 12 }, (_, k) => -k);
+		pool.setOrigin([1000, 2000, 10]);
+		pool.add(-1, p, [0, 0], none, 2);
+		// before the upload and after it
+		pool.place(-1, [1100, 2200, 30], [0.6, 0.8], boxes);
+		pool.setPickable(-1, false);
+		pool.upload(Infinity);
+		pool.draw([{ id: -1, factors: 0xffffffff }]);
+		const check = async (base: number[], turn: number[], pickable: boolean) => {
+			const list = (await read(device, pool.list)).u;
+			const clusters = await read(device, pool.clusters);
+			const table = clusters.u[list[0] * CLUSTER_WORDS];
+			for (let c = 0; c < 2; c++) {
+				const w = list[c] * CLUSTER_WORDS;
+				expect(slice(clusters.f, w + 4, 3)).toEqual(slice(boxes, c * 6, 3));
+				expect(slice(clusters.f, w + 8, 3)).toEqual(slice(boxes, c * 6 + 3, 3));
+			}
+			const pages = await read(device, pool.pages);
+			const w = table * PAGE_WORDS;
+			expect(slice(pages.f, w, 3)).toEqual(base);
+			expect(slice(pages.f, w + 36, 2)).toEqual(turn.map(Math.fround));
+			expect(pages.u[w + 23]).toBe(pickable ? 2 : (2 | 0x80000000) >>> 0);
+		};
+		await check([100, 200, 20], [0.6, 0.8], false);
+		boxes.reverse();
+		pool.place(-1, [990, 1990, 0], [1, 0], boxes);
+		pool.setPickable(-1, true);
+		pool.draw([{ id: -1, factors: 0xffffffff }]);
+		await check([-10, -10, -10], [1, 0], true);
+		pool.destroy();
+	});
+
+	it('relates a moved page to the masks where it now stands', async () => {
+		const pool = new Pool(await testDevice(), 4 * CLUSTER);
+		const box = new Float32Array([0, 0, 0, 1, 1, 1]);
+		pool.add(-1, page(CLUSTER), [0, 0], none, 2);
+		pool.upload(Infinity);
+		const square: [number, number][] = [
+			[100, 100],
+			[110, 100],
+			[110, 110],
+			[100, 110]
+		];
+		pool.addMask({
+			prism: { edges: edges([square]), z: [-Infinity, Infinity], outside: false },
+			targets: new Set([2]),
+			opacity: 0,
+			tint: [0, 0, 0, 0]
+		});
+		const listed = () => {
+			pool.draw([{ id: -1, factors: 0xffffffff }]);
+			return pool.listed;
+		};
+		pool.place(-1, [0, 0, 0], [1, 0], box);
+		expect(listed()).toBe(1);
+		pool.place(-1, [104, 104, 0], [1, 0], box);
+		expect(listed()).toBe(0);
+		pool.place(-1, [104, 112, 0], [1, 0], box);
+		expect(listed()).toBe(1);
+		pool.destroy();
+	});
+
 	it('grows with its pages in place and room for more', async () => {
 		const device = await testDevice();
 		const pool = new Pool(device, 2 * CLUSTER);
@@ -225,7 +292,7 @@ describe('Pool', () => {
 
 		// the writes above are still queued, so the copy must come after them
 		pool.grow(4 * CLUSTER);
-		expect(pool.bytes).toBe(4 * CLUSTER * 28 + 4 * (48 + 144 + 4));
+		expect(pool.bytes).toBe(4 * CLUSTER * 28 + 4 * (48 + 160 + 4));
 		expect(pool.has(1)).toBe(true);
 		expect(pool.add(2, second, [0, 0], none)).toBe(true);
 		pool.upload(Infinity);

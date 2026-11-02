@@ -11,9 +11,12 @@ import { CLUSTER_WORDS, PAGE_WORDS, slots } from './layout.ts';
 import { Masks, type Spec } from './masks.ts';
 import type { Drawn } from '../types.ts';
 
-/** u32 words of Page.factors and Page.layer */
+/** u32 words of Page.factors, Page.layer and Page.turn */
 const FACTORS = 19;
 const LAYER = 23;
+const TURN = 36;
+/** Page.layer's bit of a page pick passes by */
+const PICKLESS = 0x80000000;
 /** u32 words of Cluster.maskList and Cluster.maskCount */
 const MASK_LIST = 7;
 const MASK_COUNT = 11;
@@ -35,9 +38,12 @@ interface Entry {
 	table: number;
 	/** page origin in world metres */
 	base: [number, number, number];
+	/** cos and sin of the heading its splats turn by about base */
+	turn: [number, number];
 	factors: number;
 	/** 0 for the world's pages; a layer's are pinned: never evicted, kept through clear */
 	layer: number;
+	pickable: boolean;
 }
 
 /** word ranges of a cpu mirror changed since the last flush */
@@ -181,8 +187,10 @@ export class Pool {
 			mask: 0,
 			table: this.#tables.pop()!,
 			base: [page.params[o] + unit[0], page.params[o + 1] + unit[1], page.params[o + 2]],
+			turn: [1, 0],
 			factors: 0,
-			layer
+			layer,
+			pickable: true
 		};
 		this.#entries.set(id, entry);
 		this.#touch(entry);
@@ -207,6 +215,45 @@ export class Pool {
 		this.#tables.push(entry.table);
 		// the gpu list may name its clusters until the next draw
 		if (entry.page === null && entry.factors !== 0) this.#setFactors(entry, 0);
+	}
+
+	/**
+	 * moves page id to the world origin base, its splats turned about it by (cos, sin) of a heading;
+	 * boxes, as DecodedPage.clusters, hold its clusters' extents turned so, relative to base
+	 */
+	place(
+		id: number,
+		base: readonly [number, number, number],
+		turn: readonly [number, number],
+		boxes: Float32Array<ArrayBuffer>
+	): void {
+		const entry = this.#entries.get(id);
+		if (!entry) return;
+		entry.base = [base[0], base[1], base[2]];
+		entry.turn = [turn[0], turn[1]];
+		if (entry.page) {
+			entry.page = { ...entry.page, clusters: boxes };
+			return;
+		}
+		const floats = this.#clusterFloats;
+		entry.slots.forEach((slot, c) => {
+			const w = slot * CLUSTER_WORDS;
+			floats.set(boxes.subarray(c * 6, c * 6 + 3), w + 4);
+			floats.set(boxes.subarray(c * 6 + 3, c * 6 + 6), w + 8);
+			this.#clusterDirty.mark(w, w + CLUSTER_WORDS);
+		});
+		this.#place(entry);
+		const w = entry.table * PAGE_WORDS;
+		this.#tableDirty.mark(w, w + PAGE_WORDS);
+		if (this.masks.size) this.#relate(entry);
+	}
+
+	/** whether pick finds the splats of page id */
+	setPickable(id: number, pickable: boolean): void {
+		const entry = this.#entries.get(id);
+		if (!entry) return;
+		entry.pickable = pickable;
+		if (entry.page === null) this.#setLayer(entry);
 	}
 
 	/** removes every page but the pinned */
@@ -462,8 +509,8 @@ export class Pool {
 		table[w + 15] = q3;
 		f.set(p.subarray(PARAMS.dcMin, PARAMS.dcMin + 3), w + 16);
 		f.set(p.subarray(PARAMS.dcMax, PARAMS.dcMax + 3), w + 20);
-		table[w + LAYER] = entry.layer;
 		f.set(p.subarray(PARAMS.shScale, PARAMS.shScale + 9), w + 24);
+		this.#setLayer(entry);
 		this.#tableDirty.mark(w, w + PAGE_WORDS);
 
 		entry.page = null;
@@ -472,10 +519,19 @@ export class Pool {
 		return records + n * CLUSTER_WORDS * 4 + PAGE_WORDS * 4;
 	}
 
-	/** origin in the floating frame, summed in float64 before the f32 store */
+	/** origin in the floating frame, summed in float64 before the f32 store, and turn */
 	#place(entry: Entry): void {
 		const w = entry.table * PAGE_WORDS;
-		for (let k = 0; k < 3; k++) this.#tableFloats[w + k] = entry.base[k] - this.#origin[k];
+		const f = this.#tableFloats;
+		for (let k = 0; k < 3; k++) f[w + k] = entry.base[k] - this.#origin[k];
+		f[w + TURN] = entry.turn[0];
+		f[w + TURN + 1] = entry.turn[1];
+	}
+
+	#setLayer(entry: Entry): void {
+		const word = entry.table * PAGE_WORDS + LAYER;
+		this.#table[word] = (entry.layer | (entry.pickable ? 0 : PICKLESS)) >>> 0;
+		this.#tableDirty.mark(word, word + 1);
 	}
 
 	#setFactors(entry: Entry, factors: number): void {

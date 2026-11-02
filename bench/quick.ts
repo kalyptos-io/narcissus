@@ -124,7 +124,7 @@ async function layers(p: Pose, count: number) {
 			dc: Float32Array.from({ length: n * 3 }, (_, i) => r(i + 3) - 0.5),
 			sh: null
 		});
-		await engine.addLayer({ bytes: pack }, origin);
+		await engine.addLayer({ bytes: pack, origin });
 		const [e, north] = centre;
 		const half = LAYER_SIDE / 2 + LAYER_BAND;
 		const polygon = [

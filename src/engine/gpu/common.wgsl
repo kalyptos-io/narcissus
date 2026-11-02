@@ -43,14 +43,24 @@ struct Page {
 	// quadrant k opacity 0-255 at bits 8k
 	factors: u32,
 	dcMax: vec3f,
-	// 0 for the world, else the layer that holds the page
+	// 0 for the world, else the layer that holds the page; PICKLESS set when pick passes it by
 	layer: u32,
 	shScale: array<vec4f, 3>,
+	// cos and sin of the layer's heading, (1, 0) for the world
+	turn: vec2f,
+}
+
+const PICKLESS: u32 = 0x80000000u;
+
+// v turned clockwise seen from above by the angle of cos and sin by
+fn turn(v: vec3f, by: vec2f) -> vec3f {
+	return vec3f(by.x * v.x + by.y * v.y, by.x * v.y - by.y * v.x, v.z);
 }
 
 // a splat's centre in the floating-origin frame from its geometry record
 fn position(page: Page, g: vec4u) -> vec3f {
-	return page.origin + vec3f(f32(g.x & 0xffffu), f32(g.x >> 16u), f32(g.y & 0xffffu)) * page.step;
+	let q = vec3f(f32(g.x & 0xffffu), f32(g.x >> 16u), f32(g.y & 0xffffu));
+	return page.origin + turn(q * page.step, page.turn);
 }
 
 // up to CLUSTER consecutive splats of one page in one pool slot

@@ -73,12 +73,13 @@ fn coverage(s: Splat, d: Drawn, pixel: vec2f) -> f32 {
 	return select(0.0, a, a >= 1.0 / 255.0);
 }
 
-// the splat's thinnest axis, toward the camera
-fn face(s: Splat, g: vec4u) -> vec3f {
+// the thinnest axis of a splat of a page turned by, toward the camera
+fn face(s: Splat, g: vec4u, by: vec2f) -> vec3f {
 	let r = rotate(rotation(g));
 	let k = select(select(2u, 1u, s.scale.y <= s.scale.z), 0u,
 		s.scale.x <= s.scale.y && s.scale.x <= s.scale.z);
-	return r[k] * sign(dot(r[k], uniforms.camera - s.position) + 1e-20);
+	let axis = turn(r[k], by);
+	return axis * sign(dot(axis, uniforms.camera - s.position) + 1e-20);
 }
 
 // the view depth where the pixel's ray meets the plane of the splat's face, kept within its
@@ -104,12 +105,13 @@ fn give(cluster: Cluster, t: u32) {
 		return;
 	}
 	shade(&s);
+	let page = pages[cluster.page];
 	var d: Drawn;
-	if (!drawn(s, g, &d)) {
+	if (!drawn(s, g, page.turn, &d)) {
 		return;
 	}
-	let normal = face(s, g);
-	let layer = pages[cluster.page].layer;
+	let normal = face(s, g, page.turn);
+	let layer = page.layer & ~PICKLESS;
 	for (var k = 0u; k < probes.count; k++) {
 		let pixel = probes.items[k].pixel;
 		let a = coverage(s, d, pixel);
@@ -128,7 +130,9 @@ fn gather(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) t:
 	for (var index = wid.x; index < work[WORK_VISIBLE]; index += PICK_GROUPS) {
 		let cluster = clusters[work[WORK_LIST + index]];
 		let page = pages[cluster.page];
-		if (t < probes.count && under(page.origin + cluster.boxMin, page.origin + cluster.boxMax, t)) {
+		let pickable = (page.layer & PICKLESS) == 0u;
+		if (pickable && t < probes.count &&
+			under(page.origin + cluster.boxMin, page.origin + cluster.boxMax, t)) {
 			atomicStore(&near, 1u);
 		}
 		workgroupBarrier();

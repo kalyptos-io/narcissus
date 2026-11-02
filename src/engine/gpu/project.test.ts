@@ -189,13 +189,26 @@ function mat(f: (i: number, j: number) => number): number[][] {
 	return [0, 1, 2].map((i) => [0, 1, 2].map((j) => f(i, j)));
 }
 
-/** splat t on the cpu in float64, null where it cannot show */
-function expected(t: number, u: Float32Array): Expected | null {
+/** a page's origin and the cos and sin of the heading it turns by, as Pool.place takes them */
+interface Placed {
+	base: [number, number, number];
+	turn: [number, number];
+}
+
+/** splat t on the cpu in float64, null where it cannot show; its page as placed or as decoded */
+function expected(t: number, u: Float32Array, placed?: Placed): Expected | null {
 	const s = SPLATS[t];
 	const at = (k: number, n: number) => [...PAGE.subarray(k, k + n)];
-	const [origin, step] = [at(PARAMS.origin, 3), at(PARAMS.step, 3)];
-	const coordinate = (k: number) => origin[k] + s.q[k] * step[k];
-	const position: [number, number, number] = [coordinate(0), coordinate(1), coordinate(2)];
+	const step = at(PARAMS.step, 3);
+	const { base = at(PARAMS.origin, 3), turn: [hc, hs] = [1, 0] } = placed ?? {};
+	// clockwise seen from above
+	const turn = ([x, y, z]: number[]) => [hc * x + hs * y, hc * y - hs * x, z];
+	const offset = turn([0, 1, 2].map((k) => s.q[k] * step[k]));
+	const position: [number, number, number] = [0, 1, 2].map((k) => base[k] + offset[k]) as [
+		number,
+		number,
+		number
+	];
 	const v = u.subarray(0, 16);
 	const [x, y, z] = transform(v, position);
 	const depth = -z;
@@ -212,11 +225,14 @@ function expected(t: number, u: Float32Array): Expected | null {
 	quaternion.splice(index, 0, big);
 	const length = Math.hypot(...quaternion);
 	const [w, qx, qy, qz] = quaternion.map((c) => c / length);
-	const r = [
+	const local = [
 		[1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - w * qz), 2 * (qx * qz + w * qy)],
 		[2 * (qx * qy + w * qz), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - w * qx)],
 		[2 * (qx * qz - w * qy), 2 * (qy * qz + w * qx), 1 - 2 * (qx * qx + qy * qy)]
 	];
+	// each axis, a column, turned with the page
+	const columns = [0, 1, 2].map((k) => turn(local.map((row) => row[k])));
+	const r = mat((i, k) => columns[k][i]);
 	const [scaleMin, scaleMax] = [at(PARAMS.scaleMin, 3), at(PARAMS.scaleMax, 3)];
 	const scale = s.scale.map((b, k) => Math.exp(decode(scaleMin[k], scaleMax[k], b)));
 	const sigma = mat((i, j) => sum3((k) => r[i][k] * scale[k] * scale[k] * r[j][k]));
@@ -246,8 +262,10 @@ function expected(t: number, u: Float32Array): Expected | null {
 	const dcMin = at(PARAMS.dcMin, 3);
 	const dcMax = at(PARAMS.dcMax, 3);
 	const shScale = at(PARAMS.shScale, 9);
+	// sh in the page's frame, so the view direction turns back
 	const toward = position.map((p, k) => p - EYE[k]);
-	const d = toward.map((p) => p / Math.hypot(...toward));
+	const [dx, dy, dz] = toward.map((p) => p / Math.hypot(...toward));
+	const d = [hc * dx - hs * dy, hs * dx + hc * dy, dz];
 	const sh = (k: number) => (s.sh[k] / 127) * shScale[k];
 	const colour = [0, 1, 2].map((k) => {
 		const dc = decode(dcMin[k], dcMax[k], s.dc[k]);
@@ -333,6 +351,36 @@ async function run(
 	return { count: work[WORK.projected], projected, sort };
 }
 
+/** the splat of want each projected one matches, after checking it agrees with it */
+function match(count: number, projected: ArrayBuffer, sort: Uint32Array, want: Expected[]) {
+	const floats = new Float32Array(projected);
+	const words = new Uint32Array(projected);
+	const matched: Expected[] = [];
+	for (let i = 0; i < count; i++) {
+		const w = i * PROJECTED_WORDS;
+		const centre = [floats[w], floats[w + 1]];
+		const e = want.find((x) => gap(x.centre, centre) < 1);
+		if (!e) throw new Error(`no splat projects to ${centre}`);
+		matched.push(e);
+		expectClose(centre, e.centre, 1e-4);
+		// an axis is a direction up to sign
+		const axes = [unpack(words[w + 2]), unpack(words[w + 3])];
+		[e.major, e.minor].forEach((axis, k) => {
+			const sign = axes[k][0] * axis[0] + axes[k][1] * axis[1] < 0 ? -1 : 1;
+			expectClose(
+				axes[k].map((g) => g * sign),
+				axis,
+				2e-3
+			);
+		});
+		const colour = [...unpack(words[w + 4]), ...unpack(words[w + 5])];
+		expectClose(colour, [...e.colour, e.opacity], 2e-3);
+		expect(Math.abs(sort[i] - e.key)).toBeLessThanOrEqual(64);
+		expect(sort[CAPACITY + i]).toBe(i);
+	}
+	return matched;
+}
+
 describe('Project', () => {
 	it('reuses workgroups across clusters without retaining compacted counts', async () => {
 		const copies = 769;
@@ -390,31 +438,7 @@ describe('Project', () => {
 		expect(want).toHaveLength(4);
 		expect(count).toBe(4);
 
-		const floats = new Float32Array(projected);
-		const words = new Uint32Array(projected);
-		const matched: Expected[] = [];
-		for (let i = 0; i < count; i++) {
-			const w = i * PROJECTED_WORDS;
-			const centre = [floats[w], floats[w + 1]];
-			const e = want.find((x) => gap(x.centre, centre) < 1);
-			if (!e) throw new Error(`no splat projects to ${centre}`);
-			matched.push(e);
-			expectClose(centre, e.centre, 1e-4);
-			// an axis is a direction up to sign
-			const axes = [unpack(words[w + 2]), unpack(words[w + 3])];
-			[e.major, e.minor].forEach((axis, k) => {
-				const sign = axes[k][0] * axis[0] + axes[k][1] * axis[1] < 0 ? -1 : 1;
-				expectClose(
-					axes[k].map((g) => g * sign),
-					axis,
-					2e-3
-				);
-			});
-			const colour = [...unpack(words[w + 4]), ...unpack(words[w + 5])];
-			expectClose(colour, [...e.colour, e.opacity], 2e-3);
-			expect(Math.abs(sort[i] - e.key)).toBeLessThanOrEqual(64);
-			expect(sort[CAPACITY + i]).toBe(i);
-		}
+		const matched = match(count, projected, sort, want);
 		expect(new Set(matched).size).toBe(4);
 
 		const ascending = matched.map((_, i) => i).sort((a, b) => sort[a] - sort[b]);
@@ -422,6 +446,25 @@ describe('Project', () => {
 		expect(depths).toEqual([...depths].sort((a, b) => b - a));
 
 		context.pool.destroy();
+		context.buffers.destroy();
+	});
+
+	it('projects the splats of a moved and turned page where the cpu places them', async () => {
+		const context = await setup();
+		const { pool } = context;
+		// splat 0 sits 60 m east and 30 m north of the page origin, so at 90 30 m east and 60 m south
+		const placed: Placed = { base: [-30, 70, -5], turn: [Math.cos(Math.PI / 2), 1] };
+		pool.place(1, placed.base, placed.turn, new Float32Array([-200, -200, -10, 200, 200, 20]));
+		pool.draw([{ id: 1, factors: FACTORS }]);
+		const { count, projected, sort } = await run(context);
+		const want = SPLATS.map((_, t) => expected(t, context.uniforms, placed)).filter((e) => e);
+		expect(want).toHaveLength(1);
+		expect(count).toBe(1);
+		expect(match(count, projected, sort, want as Expected[])).toEqual(want);
+		// straight ahead of the camera, at (0, 10, 1)
+		expect(want[0]!.centre[0]).toBeCloseTo(WIDTH / 2, 2);
+		expect(want[0]!.depth).toBeCloseTo(10, 2);
+		pool.destroy();
 		context.buffers.destroy();
 	});
 

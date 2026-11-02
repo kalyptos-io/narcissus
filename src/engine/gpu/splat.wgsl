@@ -68,7 +68,8 @@ fn decode(cluster: Cluster, t: u32, s: ptr<function, Splat>, g: ptr<function, ve
 	let m0 = vec3f(code(w0, 24u), code(w1, 16u), code(w2, 8u)) * vec3f(k[0].x, k[0].w, k[1].z);
 	let m1 = vec3f(code(w1, 0u), code(w1, 24u), code(w2, 16u)) * vec3f(k[0].y, k[1].x, k[1].w);
 	let m2 = vec3f(code(w1, 8u), code(w2, 0u), code(w2, 24u)) * vec3f(k[0].z, k[1].y, k[2].x);
-	let toward = normalize(d.position - uniforms.camera);
+	// sh in the layer's frame, so the view direction turns back
+	let toward = turn(normalize(d.position - uniforms.camera), page.turn * vec2f(1.0, -1.0));
 	d.colour = max(0.5 + C0 * dc + C1 * (-toward.y * m0 + toward.z * m1 - toward.x * m2), vec3f(0.0));
 	d.colour = d.colour * (1.0 - effect.tint.a) + effect.tint.rgb;
 	d.depth = -(uniforms.view * vec4f(d.position, 1.0)).z;
@@ -76,11 +77,11 @@ fn decode(cluster: Cluster, t: u32, s: ptr<function, Splat>, g: ptr<function, ve
 	return true;
 }
 
-// ewa: view-space covariance wm wm^T through the jacobian of the pixel projection, as a b c in px²
-fn covariance(g: vec4u, scale: vec3f, viewPos: vec3f) -> vec3f {
+// ewa: view-space covariance wm wm^T of the axes turned by, through the pixel jacobian, a b c in px²
+fn covariance(g: vec4u, by: vec2f, scale: vec3f, viewPos: vec3f) -> vec3f {
 	let depth = -viewPos.z;
 	let r = rotate(rotation(g));
-	let m = mat3x3f(r[0] * scale.x, r[1] * scale.y, r[2] * scale.z);
+	let m = mat3x3f(turn(r[0], by) * scale.x, turn(r[1], by) * scale.y, turn(r[2], by) * scale.z);
 	let w = mat3x3f(uniforms.view[0].xyz, uniforms.view[1].xyz, uniforms.view[2].xyz);
 	let wm = w * m;
 	let focal = uniforms.focal;
@@ -101,9 +102,9 @@ struct Drawn {
 	minor: f32,
 }
 
-// false where the frame draws none of the shaded splat: too faint, out of range, centred past the
-// guard band, under half a pixel, or off the screen
-fn drawn(s: Splat, g: vec4u, d: ptr<function, Drawn>) -> bool {
+// false where the frame draws none of the shaded splat of a page turned by: too faint, out of range,
+// centred past the guard band, under half a pixel, or off the screen
+fn drawn(s: Splat, g: vec4u, by: vec2f, d: ptr<function, Drawn>) -> bool {
 	if (s.opacity < 1.0 / 255.0) {
 		return false;
 	}
@@ -118,7 +119,7 @@ fn drawn(s: Splat, g: vec4u, d: ptr<function, Drawn>) -> bool {
 		return false;
 	}
 
-	let cov = covariance(g, s.scale, viewPos);
+	let cov = covariance(g, by, s.scale, viewPos);
 	let mid = 0.5 * (cov.x + cov.z);
 	let rad = length(vec2f(0.5 * (cov.x - cov.z), cov.y));
 	let major = sqrt(mid + rad);

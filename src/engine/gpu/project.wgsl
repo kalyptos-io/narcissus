@@ -24,7 +24,7 @@ fn shown(cluster: Cluster, t: u32, dest: ptr<function, Projected>, key: ptr<func
 	}
 	shade(&s);
 	var d: Drawn;
-	if (!drawn(s, g, &d)) {
+	if (!drawn(s, g, pages[cluster.page].turn, &d)) {
 		return false;
 	}
 	*dest = Projected(

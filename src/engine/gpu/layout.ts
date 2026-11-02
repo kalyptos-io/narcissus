@@ -6,7 +6,7 @@ import { CLUSTER } from '../../format/index.ts';
 export const slots = (count: number) => Math.max(1, Math.ceil(count / CLUSTER)) * CLUSTER;
 
 /** u32 words of common.wgsl's Page and Cluster */
-export const PAGE_WORDS = 36;
+export const PAGE_WORDS = 40;
 export const CLUSTER_WORDS = 12;
 /** bytes of common.wgsl's FrameUniforms */
 export const FRAME_UNIFORM_BYTES = 336;

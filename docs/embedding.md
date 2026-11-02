@@ -10,7 +10,7 @@ To replace a part of the world, combine a mask on the world with a layer:
 import { encodeLayer } from '@kalyptos/narcissus';
 
 const { pack, origin } = await encodeLayer(splats); // or a pack from a server, and its origin
-const layer = await engine.addLayer({ bytes: pack }, origin);
+const layer = await engine.addLayer({ bytes: pack, origin });
 const mask = engine.addMask({ polygon, targets: ['world'] });
 
 // show the original again, exactly
@@ -19,12 +19,30 @@ layer.visible = mask.enabled = false;
 
 ## Layers
 
-`engine.addLayer(source, origin)` adds a set of splats beside the world's tree. `source` is `{ bytes }` or `{ url }`. A URL is read through the engine's `source`, the same `Fetch` as the world, so the page's tokens or signed URLs apply. It resolves with a `Layer` once the layer is decoded, and rejects when the pack does not load or the layers hold more splats than the device can.
+`engine.addLayer(options)` adds a set of splats beside the world's tree. It resolves with a `Layer` once the layer is decoded. It rejects when the pack does not load or the layers hold more splats than the device can.
+
+```ts
+const layer = await engine.addLayer({
+	url: 'house.pack', // or bytes: pack
+	origin, // the pack's south-west corner, as encodeLayer gives it
+	position: [e, n, h], // where the anchor goes; where it was encoded when left out
+	heading: 30, // degrees clockwise seen from above, 0 when left out
+	pickable: false, // pick() passes through it to what lies behind
+	signal // aborts the read
+});
+```
 
 - The input is a pack, as [format.md](format.md) gives it, whose positions count from `origin`, a south-west corner in whole metres. `encodeLayer(splats)` writes one from splats in world coordinates. It is in `@kalyptos/narcissus` and `@kalyptos/narcissus/format`, and runs in the browser and in Node.
+- `{ url }` is read through the engine's `source`, the same `Fetch` as the world, so the page's tokens or signed URLs apply. `signal` goes to that read and is checked again once the pack is decoded. An abort rejects with `signal.reason` and keeps nothing.
+- The anchor is the bottom centre of the layer's box as it was encoded. `position` is where the anchor sits, and `heading` turns the layer about the vertical through it, clockwise as a pose's yaw: at 90, what was north of the anchor is east of it. A splat encoded at `p` shows at `position + R(heading)(p - anchor)`. With neither, the layer shows where it was encoded.
+- `box` is the world extent of the layer where it stands now. A turned layer's box is a little larger than its splats.
+- `position`, `heading`, `visible`, `opacity` (0 to 1) and `pickable` can be set on the layer. A change shows at the next frame, and all the changes made between two frames cost one update. Masks act on a moved or turned layer where it now stands.
+- A value out of range throws a `RangeError` that names it: an `origin` or `position` that is not finite numbers, a `heading` that is not finite, an `opacity` outside 0 to 1.
+- After `remove()`, the setters do nothing and the getters keep their last values.
 - Layer splats go through the same passes as the world's, and one sort orders them all by depth. A layer never shows through the world's splats, or the world through a layer's.
 - A layer has no levels of detail. It draws the finest level of its pack at every distance. Off screen its clusters are culled, and far away its sub-pixel splats are dropped before the sort.
-- `visible` and `opacity` (0 to 1) change it on the next frame. A hidden layer costs no frame time. Its splats stay on the GPU, at 28 bytes each, until `remove()`, so it shows again at once.
+- A hidden layer costs no frame time. Its splats stay on the GPU, at 28 bytes each, until `remove()`, so it shows again at once.
+- A layer that is not pickable still draws, casts its heights into `engine.heights()` and hides behind masks. Only `pick()` and `pickMany()` pass through it.
 - The splats of visible layers in view count in the budget: the world draws that many fewer.
 - Layers stay when the engine opens another world.
 
