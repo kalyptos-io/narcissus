@@ -57,7 +57,7 @@ const layer = await engine.addLayer({
 - `z`: `[from, to]` in world heights, the full height when left out.
 - `targets`: what the mask acts on: `'world'` for the world's own splats, and layers.
 - `outside`: when `true`, the mask acts on what lies outside the prism.
-- `opacity`: what the splats it covers keep, 0 to 1. The default 0 hides them.
+- `opacity`: what the splats it covers keep, 0 to 1. The default is 1 for a mask with a `tint` and 0, which hides them, for one without.
 - `tint`: `[r, g, b, a]`, each 0 to 1. A covered splat mixes its colour toward `rgb` by `a`. The default `[0, 0, 0, 0]` keeps the colour.
 
 The rule: a splat of a target is covered while its centre lies inside the polygon and within `z`, or, with `outside`, while it does not. The opacity of a covered splat is multiplied by `opacity`, and the splat takes the tint. Where several masks cover a splat, their opacities multiply and their tints apply in the order the masks were added.

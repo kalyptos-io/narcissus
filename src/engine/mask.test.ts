@@ -146,4 +146,14 @@ describe('createMask', () => {
 		expect(changes.count).toBe(10);
 		pool.destroy();
 	});
+
+	it('keeps the splats of a mask with a tint unless told otherwise', async () => {
+		const { pool, mask, relation } = await setup();
+		const tinted = mask({ polygon: square, targets: ['world'], tint: [1, 0, 0, 0.5] });
+		expect([tinted.opacity, relation(2, 2)]).toEqual([1, 1]);
+		tinted.remove();
+		const hiding = mask({ polygon: square, targets: ['world'], tint: [1, 0, 0, 0.5], opacity: 0 });
+		expect([hiding.opacity, relation(2, 2)]).toEqual([0, 'hidden']);
+		pool.destroy();
+	});
 });

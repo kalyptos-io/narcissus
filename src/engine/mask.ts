@@ -20,7 +20,7 @@ export interface MaskOptions {
 	targets: readonly (Layer | 'world')[];
 	/** acts on what lies outside the prism instead */
 	outside?: boolean;
-	/** what covered splats keep, 0 to 1; 0, the default, hides them */
+	/** what covered splats keep, 0 to 1; by default 1 with a tint, else 0, which hides them */
 	opacity?: number;
 	/** mixes their colour toward rgb by a; none by default */
 	tint?: Colour;
@@ -50,7 +50,7 @@ export function createMask(
 	changed: () => void
 ): Mask {
 	const { polygon, targets, z = [-Infinity, Infinity], outside = false } = options;
-	const { opacity = 0, tint = [0, 0, 0, 0] } = options;
+	const { opacity = options.tint ? 1 : 0, tint = [0, 0, 0, 0] } = options;
 	const held = { polygon, targets, z, outside, opacity, tint };
 	const spec: Spec = {
 		prism: { edges: edgesOf(polygon), z: ordered(z), outside },
