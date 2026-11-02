@@ -50,13 +50,13 @@ The hit is where the splats that the last frame drew over the pixel, blended fro
 
 ## Lines and markers
 
-`engine.addLine(points, style)` draws a polyline through world points, and `engine.addMarker(point, style)` draws a dot. Both draw over the finished frame, after the plugins. `set()` moves them and `remove()` ends them.
+`engine.addLine(points, style)` draws a polyline through world points, and `engine.addMarker(point, style)` draws a dot. Both draw over the finished frame, after the plugins. Each returns a handle whose fields set it: `points` (or `point`), `style` and `visible`. `style` reads back with the defaults filled in, so `line.style = { ...line.style, colour }` changes one of them. A hidden graphic is not drawn. Changes apply at the next frame. `remove()` ends a graphic; after it, its setters do nothing. A bad point or style throws a `RangeError`.
 
 - `width` and `size` are CSS pixels. `colour` is RGBA from 0 to 1. `closed` joins a line's last point to its first.
 - With `occlude`, the default, a part behind splats is hidden. A line drawn on picked ground points still shows: a part may lie up to 2 % of its distance behind the splats.
 - The depth tested against is that of the nearest splat fragment with any opacity, so a faint floater can hide a short piece of a line.
 
-`engine.toScreen(point)` gives the CSS pixel of a world point under the camera set last, for HTML a page puts over the canvas, such as a label or a spinner. A page that draws on the GPU itself does so in a `Post` plugin, which gets the frame's matrices and its depth (see [architecture.md](architecture.md)).
+`engine.toScreen(point)` gives the CSS pixel of a world point under the camera set last, for HTML a page puts over the canvas, such as a label or a spinner. Update that HTML in `engine.onFrame(fn)`, which runs after the controls set the camera, so it moves with the frame. A page that draws on the GPU itself does so in a `Post` plugin, which gets the frame's matrices and its depth (see [architecture.md](architecture.md)).
 
 ## Camera and input
 
