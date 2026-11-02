@@ -3,6 +3,7 @@
 import { IN, OUT, relate, type Prism } from '../math/prism.ts';
 import type { Colour } from '../types.ts';
 import { bufferGroup, bufferLayout } from './buffers.ts';
+import { pack4x8unorm } from './layout.ts';
 
 /** u32 words of a record in masks.wgsl */
 const MASK_WORDS = 11;
@@ -222,9 +223,4 @@ function cells(x0: number, y0: number, x1: number, y1: number, cell: number) {
 		Math.floor(x1 / cell),
 		Math.floor(y1 / cell)
 	] as const;
-}
-
-/** rgba 0 to 1 as wgsl's unpack4x8unorm reads it */
-function pack4x8unorm(rgba: readonly number[]): number {
-	return rgba.reduce((word, v, k) => word | (Math.round(v * 255) << (8 * k)), 0) >>> 0;
 }

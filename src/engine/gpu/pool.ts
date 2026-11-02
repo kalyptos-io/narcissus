@@ -7,7 +7,7 @@ import {
 	PARAMS,
 	type DecodedPage
 } from '../../format/index.ts';
-import { CLUSTER_WORDS, PAGE_WORDS, slots } from './layout.ts';
+import { baseOf, CLUSTER_WORDS, PAGE_WORDS, slots } from './layout.ts';
 import { Masks, type Spec } from './masks.ts';
 import type { Drawn } from '../types.ts';
 
@@ -176,7 +176,6 @@ export class Pool {
 		// at least one slot, so page-table slots never run out before cluster slots
 		const need = slots(page.count) / CLUSTER;
 		if (!this.#fit(need, keep)) return false;
-		const o = PARAMS.origin;
 		const entry: Entry = {
 			id,
 			previous: null,
@@ -186,7 +185,7 @@ export class Pool {
 			active: [],
 			mask: 0,
 			table: this.#tables.pop()!,
-			base: [page.params[o] + unit[0], page.params[o + 1] + unit[1], page.params[o + 2]],
+			base: baseOf(page, unit),
 			turn: [1, 0],
 			factors: 0,
 			layer,
@@ -219,29 +218,32 @@ export class Pool {
 
 	/**
 	 * moves page id to the world origin base, its splats turned about it by (cos, sin) of a heading;
-	 * boxes, as DecodedPage.clusters, hold its clusters' extents turned so, relative to base
+	 * boxes, as DecodedPage.clusters, hold its clusters' extents turned so, relative to base; left out
+	 * while the turn stays, they stay
 	 */
 	place(
 		id: number,
 		base: readonly [number, number, number],
 		turn: readonly [number, number],
-		boxes: Float32Array<ArrayBuffer>
+		boxes?: Float32Array<ArrayBuffer>
 	): void {
 		const entry = this.#entries.get(id);
 		if (!entry) return;
 		entry.base = [base[0], base[1], base[2]];
 		entry.turn = [turn[0], turn[1]];
 		if (entry.page) {
-			entry.page = { ...entry.page, clusters: boxes };
+			if (boxes) entry.page = { ...entry.page, clusters: boxes };
 			return;
 		}
 		const floats = this.#clusterFloats;
-		entry.slots.forEach((slot, c) => {
-			const w = slot * CLUSTER_WORDS;
-			floats.set(boxes.subarray(c * 6, c * 6 + 3), w + 4);
-			floats.set(boxes.subarray(c * 6 + 3, c * 6 + 6), w + 8);
-			this.#clusterDirty.mark(w, w + CLUSTER_WORDS);
-		});
+		if (boxes) {
+			entry.slots.forEach((slot, c) => {
+				const w = slot * CLUSTER_WORDS;
+				floats.set(boxes.subarray(c * 6, c * 6 + 3), w + 4);
+				floats.set(boxes.subarray(c * 6 + 3, c * 6 + 6), w + 8);
+				this.#clusterDirty.mark(w, w + CLUSTER_WORDS);
+			});
+		}
 		this.#place(entry);
 		const w = entry.table * PAGE_WORDS;
 		this.#tableDirty.mark(w, w + PAGE_WORDS);
@@ -609,7 +611,9 @@ export class Pool {
 			const was = this.#masked[slot];
 			if (hidden !== this.#hidden[slot]) entry.mask = -1;
 			this.#hidden[slot] = hidden;
-			if (was.length || listed.length) this.#maskedChanged = true;
+			if (was.length !== listed.length || listed.some((m, k) => m !== was[k])) {
+				this.#maskedChanged = true;
+			}
 			this.#masked[slot] = listed.length ? listed : NONE;
 		}
 	}

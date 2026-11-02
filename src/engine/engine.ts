@@ -97,7 +97,7 @@ export interface Engine {
 	 */
 	heights(west: number, south: number, cells: number): Promise<Float32Array | null>;
 	/** the next frame as an image, as canvas.toBlob gives it for type and quality */
-	capture(options?: { type?: string; quality?: number }): Promise<Blob>;
+	capture(options?: ImageEncodeOptions): Promise<Blob>;
 	stats(): Stats;
 	/** resolves once nothing loads and the cut is drawn without fades */
 	idle(): Promise<void>;
@@ -249,9 +249,7 @@ interface Picking {
 	resolve: (hits: (Hit | null)[]) => void;
 }
 
-interface Capturing {
-	type?: string;
-	quality?: number;
+interface Capturing extends ImageEncodeOptions {
 	resolve: (blob: Blob) => void;
 	reject: (reason: Error) => void;
 }
@@ -548,7 +546,7 @@ class GpuEngine implements Engine {
 		});
 	}
 
-	capture({ type, quality }: { type?: string; quality?: number } = {}): Promise<Blob> {
+	capture({ type, quality }: ImageEncodeOptions = {}): Promise<Blob> {
 		if (this.#destroyed || this.#lost) return Promise.reject(new Error(DESTROYED));
 		return new Promise((resolve, reject) => {
 			this.#captures.push({ type, quality, resolve, reject });

@@ -1,5 +1,6 @@
 // masks: vertical prisms that hide, fade or tint the splats of the world or of layers
 
+import { checkColour, checkUnit } from './check.ts';
 import type { Pool } from './gpu/pool.ts';
 import type { Spec } from './gpu/masks.ts';
 import type { Layer, Layers } from './layer.ts';
@@ -49,75 +50,67 @@ export function createMask(
 	shown: Layers,
 	changed: () => void
 ): Mask {
-	const { polygon, targets, z = [-Infinity, Infinity], outside = false } = options;
+	const { z = [-Infinity, Infinity], outside = false } = options;
 	const { opacity = options.tint ? 1 : 0, tint = [0, 0, 0, 0] } = options;
-	const held = { polygon, targets, z, outside, opacity, tint };
+	let { polygon, targets } = options;
 	const spec: Spec = {
 		prism: { edges: edgesOf(polygon), z: ordered(z), outside },
 		targets: layers(targets, shown),
-		opacity: fraction(opacity),
-		tint: colour(tint)
+		opacity: checkUnit(opacity, 'A mask opacity'),
+		tint: checkColour(tint, 'A mask tint')
 	};
 	const id = pool.addMask(spec);
 	let enabled = true;
 	let removed = false;
 	changed();
-	const update = () => {
+	const edit = (apply: () => void) => {
+		if (removed) return;
+		apply();
 		pool.setMask(id, spec);
 		changed();
 	};
 	return {
 		get polygon() {
-			return held.polygon;
+			return polygon;
 		},
-		set polygon(polygon) {
-			if (removed) return;
-			spec.prism = { ...spec.prism, edges: edgesOf(polygon) };
-			held.polygon = polygon;
-			update();
+		set polygon(value) {
+			edit(() => {
+				spec.prism = { ...spec.prism, edges: edgesOf(value) };
+				polygon = value;
+			});
 		},
 		get z() {
-			return held.z;
+			return spec.prism.z;
 		},
 		set z(z) {
-			if (removed) return;
-			spec.prism = { ...spec.prism, z: ordered(z) };
-			held.z = z;
-			update();
+			edit(() => (spec.prism = { ...spec.prism, z: ordered(z) }));
 		},
 		get targets() {
-			return held.targets;
+			return targets;
 		},
-		set targets(targets) {
-			if (removed) return;
-			spec.targets = layers(targets, shown);
-			held.targets = targets;
-			update();
+		set targets(value) {
+			edit(() => {
+				spec.targets = layers(value, shown);
+				targets = value;
+			});
 		},
 		get outside() {
-			return held.outside;
+			return spec.prism.outside;
 		},
 		set outside(outside) {
-			if (removed) return;
-			spec.prism = { ...spec.prism, outside };
-			held.outside = outside;
-			update();
+			edit(() => (spec.prism = { ...spec.prism, outside }));
 		},
 		get opacity() {
-			return held.opacity;
+			return spec.opacity;
 		},
 		set opacity(opacity) {
-			if (removed) return;
-			held.opacity = spec.opacity = fraction(opacity);
-			update();
+			edit(() => (spec.opacity = checkUnit(opacity, 'A mask opacity')));
 		},
 		get tint() {
-			return held.tint;
+			return spec.tint;
 		},
 		set tint(tint) {
-			if (removed) return;
-			held.tint = spec.tint = colour(tint);
-			update();
+			edit(() => (spec.tint = checkColour(tint, 'A mask tint')));
 		},
 		get enabled() {
 			return enabled;
@@ -155,28 +148,13 @@ function ordered(z: readonly [number, number]): readonly [number, number] {
 	return z;
 }
 
-function fraction(opacity: number): number {
-	if (!(opacity >= 0 && opacity <= 1)) {
-		throw new RangeError('A mask opacity must be a number from 0 to 1.');
-	}
-	return opacity;
-}
-
-function colour(tint: Colour): Colour {
-	if (!(tint.length === 4 && tint.every((v) => v >= 0 && v <= 1))) {
-		throw new RangeError('A mask tint must be four numbers from 0 to 1.');
-	}
-	return tint;
-}
-
 /** pool layer numbers of targets, 0 for the world */
 function layers(targets: readonly (Layer | 'world')[], shown: Layers): Set<number> {
 	return new Set(
 		targets.map((t) => {
 			if (t === 'world') return 0;
 			const number = shown.numberOf(t);
-			// a removed layer keeps its number
-			if (number === undefined || shown.layerOf(number) !== t) {
+			if (number === undefined) {
 				throw new RangeError("A mask's targets must be 'world' or live layers of this engine.");
 			}
 			return number;

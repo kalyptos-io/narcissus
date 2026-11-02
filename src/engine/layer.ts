@@ -9,7 +9,8 @@ import {
 	type DecodedPage
 } from '../format/index.ts';
 import type { Fetch } from '../ports.ts';
-import { slots } from './gpu/layout.ts';
+import { checkPoint, checkUnit } from './check.ts';
+import { baseOf, slots } from './gpu/layout.ts';
 import type { Pool } from './gpu/pool.ts';
 import { boxVisible } from './math/frustum.ts';
 import type { Box, Drawn, Point } from './types.ts';
@@ -129,6 +130,8 @@ interface Kept {
 	base: readonly [number, number, number];
 	/** DecodedPage.clusters as encoded */
 	clusters: Float32Array;
+	/** min e, n, h then max e, n, h of its clusters' boxes as turned, relative to its base */
+	extent: Float64Array;
 	/** world min e, n, h then max e, n, h of its splats' extents as placed */
 	box: Float64Array;
 }
@@ -147,16 +150,9 @@ function checkLayer({ origin, position, heading, opacity }: LayerOptions): void 
 	if (origin.length !== 2 || !origin.every(Number.isFinite)) {
 		throw new RangeError("A layer's origin must be two finite numbers.");
 	}
-	if (position !== undefined) checkPosition(position);
+	if (position !== undefined) checkPoint(position, "A layer's position");
 	if (heading !== undefined) checkHeading(heading);
-	if (opacity !== undefined) checkOpacity(opacity);
-}
-
-function checkPosition(position: Point): Point {
-	if (position.length !== 3 || !position.every(Number.isFinite)) {
-		throw new RangeError("A layer's position must be three finite numbers.");
-	}
-	return [position[0], position[1], position[2]];
+	if (opacity !== undefined) checkUnit(opacity, "A layer's opacity");
 }
 
 function checkHeading(heading: number): number {
@@ -164,23 +160,16 @@ function checkHeading(heading: number): number {
 	return heading;
 }
 
-function checkOpacity(opacity: number): number {
-	if (!(opacity >= 0 && opacity <= 1)) {
-		throw new RangeError("A layer's opacity must be a number from 0 to 1.");
-	}
-	return opacity;
-}
-
 /**
- * page placed with its layer's anchor at position, turned by (cos, sin) about it: its origin and
- * its clusters' boxes from there, as Pool.place takes them; its world box into page.box
+ * page's origin with its layer's anchor at position, turned by (cos, sin) about it, as Pool.place
+ * takes it; its world box from there into page.box
  */
-function place(
+function placeBase(
 	page: Kept,
 	anchor: Point,
 	position: Point,
 	[c, s]: readonly [number, number]
-): { base: [number, number, number]; boxes: Float32Array<ArrayBuffer> } {
+): [number, number, number] {
 	const x = page.base[0] - anchor[0];
 	const y = page.base[1] - anchor[1];
 	const base: [number, number, number] = [
@@ -188,9 +177,15 @@ function place(
 		position[1] + c * y - s * x,
 		position[2] + page.base[2] - anchor[2]
 	];
-	const { clusters, box } = page;
+	for (let a = 0; a < 6; a++) page.box[a] = base[a % 3] + page.extent[a];
+	return base;
+}
+
+/** page's clusters' boxes turned by (cos, sin), as Pool.place takes them; their extent into page.extent */
+function turnBoxes(page: Kept, [c, s]: readonly [number, number]): Float32Array<ArrayBuffer> {
+	const { clusters, extent } = page;
 	const boxes = new Float32Array(clusters.length);
-	box.set([Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity]);
+	extent.set([Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity]);
 	for (let k = 0; k < clusters.length; k += 6) {
 		// the turned box's centre, and its half sides grown to hold the turned corners
 		const mx = (clusters[k] + clusters[k + 3]) / 2;
@@ -204,11 +199,11 @@ function place(
 			const hi = a < 2 ? centre[a] + half[a] : clusters[k + 5];
 			boxes[k + a] = lo;
 			boxes[k + 3 + a] = hi;
-			box[a] = Math.min(box[a], base[a] + lo);
-			box[a + 3] = Math.max(box[a + 3], base[a] + hi);
+			extent[a] = Math.min(extent[a], lo);
+			extent[a + 3] = Math.max(extent[a + 3], hi);
 		}
 	}
-	return { base, boxes };
+	return boxes;
 }
 
 /** Drawn factors of a layer's pages, every quadrant at its opacity; 0 while it draws nothing */
@@ -253,9 +248,11 @@ export class Layers {
 			(encoded.n[0] + encoded.n[1]) / 2,
 			lowest(pages)
 		];
-		let position = options.position ? checkPosition(options.position) : anchor;
+		let position = options.position ? checkPoint(options.position, "A layer's position") : anchor;
 		let { heading = 0, visible = true, opacity = 1, pickable = true } = options;
 		let moved = true;
+		let turned = true;
+		let box: Box;
 		const kept: Kept[] = [];
 		const live = () => this.#shown.has(number);
 		const move = () => {
@@ -267,9 +264,11 @@ export class Layers {
 			moved = false;
 			const turn = [Math.cos(heading * DEG), Math.sin(heading * DEG)] as const;
 			for (const page of kept) {
-				const { base, boxes } = place(page, anchor, position, turn);
-				pool.place(page.id, base, turn, boxes);
+				const boxes = turned ? turnBoxes(page, turn) : undefined;
+				pool.place(page.id, placeBase(page, anchor, position, turn), turn, boxes);
 			}
+			turned = false;
+			box = boxOf(kept.map((page) => page.box));
 		};
 		const remove = () => {
 			if (!this.#shown.delete(number)) return;
@@ -282,14 +281,14 @@ export class Layers {
 			splats: pages.reduce((sum, { page }) => sum + page.count, 0),
 			get box() {
 				settle();
-				return boxOf(kept.map(({ box }) => box));
+				return box;
 			},
 			get position() {
 				return position;
 			},
 			set position(value: Point) {
 				if (!live()) return;
-				position = checkPosition(value);
+				position = checkPoint(value, "A layer's position");
 				move();
 			},
 			get heading() {
@@ -298,6 +297,7 @@ export class Layers {
 			set heading(value: number) {
 				if (!live()) return;
 				heading = checkHeading(value);
+				turned = true;
 				move();
 			},
 			get visible() {
@@ -313,7 +313,7 @@ export class Layers {
 			},
 			set opacity(value: number) {
 				if (!live()) return;
-				opacity = checkOpacity(value);
+				opacity = checkUnit(value, "A layer's opacity");
 				changed();
 			},
 			get pickable() {
@@ -328,7 +328,6 @@ export class Layers {
 			remove
 		};
 		this.#shown.set(number, { layer, pages: kept, settle });
-		const o = PARAMS.origin;
 		const { origin } = options;
 		for (const { page } of pages) {
 			const id = --this.#page;
@@ -337,12 +336,14 @@ export class Layers {
 				return null;
 			}
 			if (!pickable) pool.setPickable(id, false);
-			const base = [
-				page.params[o] + origin[0],
-				page.params[o + 1] + origin[1],
-				page.params[o + 2]
-			] as const;
-			kept.push({ id, count: page.count, base, clusters: page.clusters, box: new Float64Array(6) });
+			kept.push({
+				id,
+				count: page.count,
+				base: baseOf(page, origin),
+				clusters: page.clusters,
+				extent: new Float64Array(6),
+				box: new Float64Array(6)
+			});
 		}
 		settle();
 		changed();

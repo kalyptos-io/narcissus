@@ -1,6 +1,7 @@
 // host graphics drawn over the finished frame, tested against the splats' depth
 
 import common from './common.wgsl?raw';
+import { pack4x8unorm } from './layout.ts';
 import code from './overlay.wgsl?raw';
 
 /** a capsule from a to b, world coordinates; a marker where a is b */
@@ -68,7 +69,6 @@ export class Overlay {
 		const bytes = new ArrayBuffer(capsules.length * STRIDE);
 		const floats = new Float32Array(bytes);
 		const words = new Uint32Array(bytes);
-		const colours = new Uint8Array(bytes);
 		capsules.forEach(({ a, b, radius, colour, occlude }, k) => {
 			const w = (k * STRIDE) / 4;
 			for (let i = 0; i < 3; i++) {
@@ -76,9 +76,7 @@ export class Overlay {
 				floats[w + 3 + i] = b[i] - origin[i];
 			}
 			floats[w + 6] = radius;
-			colour.forEach(
-				(c, i) => (colours[(w + 7) * 4 + i] = Math.round(Math.min(1, Math.max(0, c)) * 255))
-			);
+			words[w + 7] = pack4x8unorm(colour);
 			words[w + 8] = occlude ? 1 : 0;
 		});
 		if (!this.#instances || this.#instances.size < bytes.byteLength) {

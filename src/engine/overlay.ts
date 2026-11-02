@@ -1,6 +1,7 @@
 // host graphics: lines and markers in world coordinates, drawn over the splats
 
 import type { Capsule } from './gpu/overlay.ts';
+import { checkColour, checkPoint } from './check.ts';
 import type { Colour, Point } from './types.ts';
 
 export interface LineStyle {
@@ -51,24 +52,9 @@ interface Shape extends Required<LineStyle> {
 	visible: boolean;
 }
 
-function finitePoint(p: Point, name: string): Point {
-	if (p.length !== 3 || !p.every(Number.isFinite)) {
-		throw new RangeError(`${name} must be three finite numbers.`);
-	}
-	return p;
-}
-
 function finitePoints(points: readonly Point[]): readonly Point[] {
 	if (!points.length) throw new RangeError('points must hold at least one point.');
-	points.forEach((p, k) => finitePoint(p, `points[${k}]`));
-	return points.slice();
-}
-
-function unitColour(c: Colour): Colour {
-	if (c.length !== 4 || !c.every((v) => Number.isFinite(v) && v >= 0 && v <= 1)) {
-		throw new RangeError('colour must be four finite numbers from 0 to 1.');
-	}
-	return c;
+	return points.map((p, k) => checkPoint(p, `points[${k}]`));
 }
 
 function positive(value: number, name: string): number {
@@ -80,12 +66,17 @@ function positive(value: number, name: string): number {
 
 function lineStyle(style: LineStyle): Required<LineStyle> {
 	const { colour = WHITE, width = 2, closed = false, occlude = true } = style;
-	return { colour: unitColour(colour), width: positive(width, 'width'), closed, occlude };
+	return {
+		colour: checkColour(colour, 'colour'),
+		width: positive(width, 'width'),
+		closed,
+		occlude
+	};
 }
 
 function markerStyle(style: MarkerStyle): Required<MarkerStyle> {
 	const { colour = WHITE, size = 12, occlude = true } = style;
-	return { colour: unitColour(colour), size: positive(size, 'size'), occlude };
+	return { colour: checkColour(colour, 'colour'), size: positive(size, 'size'), occlude };
 }
 
 /** a shape's capsules, radius in target pixels at ratio per css pixel */
@@ -138,7 +129,7 @@ export class Graphics {
 	marker(point: Point, style: MarkerStyle = {}): Marker {
 		const { size, ...rest } = markerStyle(style);
 		const shape: Shape = {
-			points: [finitePoint(point, 'point')],
+			points: [checkPoint(point, 'point')],
 			...rest,
 			width: size,
 			closed: false,
@@ -150,7 +141,7 @@ export class Graphics {
 				return shape.points[0];
 			},
 			set point(point) {
-				set({ points: [finitePoint(point, 'point')] });
+				set({ points: [checkPoint(point, 'point')] });
 			},
 			get style() {
 				const { colour, width, occlude } = shape;
