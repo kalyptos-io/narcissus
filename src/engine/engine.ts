@@ -203,6 +203,19 @@ export function capacities(
 	};
 }
 
+/** pool splats for budget, pinned and extra to pin, within one buffer; null when the extra cannot fit */
+export function poolRoom(
+	budget: number,
+	pinned: number,
+	extra: number,
+	limits: Pick<GPUSupportedLimits, 'maxStorageBufferBindingSize' | 'maxBufferSize'>
+): number | null {
+	const most = capacities(Infinity, limits).pool;
+	const room = capacities(budget, limits).pool + pinned + extra;
+	if (extra > 0 && room > most) return null;
+	return Math.min(room, most);
+}
+
 /** origin while position stays within REBASE of it, else the GRID point nearest position */
 export function rebase(origin: Point, position: Point): Point {
 	const [e, n, h] = position;
@@ -659,15 +672,12 @@ class GpuEngine implements Engine {
 		return new Quality(fit(budget), [fit(budgetRange[0]), fit(budgetRange[1])]);
 	}
 
-	/**
-	 * buffers that hold the budget and the pinned splats, extra of them yet to pin, and a plan; false,
-	 * changing nothing, when no pool holds the extra
-	 */
+	/** buffers for the budget, the pinned and extra to pin, and a plan; false when the extra cannot fit */
 	#rebudget(extra = 0): boolean {
 		const limits = this.#gpu.device.limits;
-		const { pool, frame } = capacities(this.#budget, limits);
-		const room = pool + this.#layers.pinned + extra;
-		if (extra > 0 && room > capacities(Infinity, limits).pool) return false;
+		const room = poolRoom(this.#budget, this.#layers.pinned, extra, limits);
+		if (room === null) return false;
+		const { frame } = capacities(this.#budget, limits);
 		if (room > this.#pool.capacity || frame > this.#frameCapacity) this.#grow(room, frame);
 		this.#dirty = true;
 		this.requestFrame();

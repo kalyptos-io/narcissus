@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { capacities, rebase, unproject } from './engine.ts';
+import { capacities, poolRoom, rebase, unproject } from './engine.ts';
 import { CLUSTER } from '../format/index.ts';
 import { forward, multiply, perspective, transform, view } from './math/mat4.ts';
 
@@ -24,6 +24,18 @@ describe('capacities', () => {
 	it('keeps every buffer within the buffer size when that is the smaller limit', () => {
 		const limits = { maxStorageBufferBindingSize: 1024 * MiB, maxBufferSize: 64 * MiB };
 		expect(capacities(16_000_000, limits)).toEqual({ pool: 4_194_304, frame: 2_796_032 });
+	});
+});
+
+describe('poolRoom', () => {
+	it('holds the budget beside the pinned within one buffer, and refuses pins past it', () => {
+		const limits = { maxStorageBufferBindingSize: 128 * MiB, maxBufferSize: 256 * MiB };
+		const most = capacities(Infinity, limits).pool;
+		const { pool } = capacities(1_000_000, limits);
+		expect(poolRoom(1_000_000, 4096, 0, limits)).toBe(pool + 4096);
+		expect(poolRoom(16_000_000, 4096, 0, limits)).toBe(most);
+		expect(poolRoom(1_000_000, 4096, most - pool - 4096, limits)).toBe(most);
+		expect(poolRoom(1_000_000, 4096, most - pool, limits)).toBeNull();
 	});
 });
 
