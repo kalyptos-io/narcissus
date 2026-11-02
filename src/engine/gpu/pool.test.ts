@@ -8,9 +8,9 @@ import {
 	type DecodedPage
 } from '../../format/index.ts';
 import { CLUSTER_WORDS, PAGE_WORDS } from './layout.ts';
-import { edges } from '../math/prism.ts';
 import { Pool } from './pool.ts';
 import { readBuffer, testDevice } from './test-device.ts';
+import { rect } from './test-mask.ts';
 
 const none = () => false;
 
@@ -255,18 +255,7 @@ describe('Pool', () => {
 		const box = new Float32Array([0, 0, 0, 1, 1, 1]);
 		pool.add(-1, page(CLUSTER), [0, 0], none, 2);
 		pool.upload(Infinity);
-		const square: [number, number][] = [
-			[100, 100],
-			[110, 100],
-			[110, 110],
-			[100, 110]
-		];
-		pool.addMask({
-			prism: { edges: edges([square]), z: [-Infinity, Infinity], outside: false },
-			targets: new Set([2]),
-			opacity: 0,
-			tint: [0, 0, 0, 0]
-		});
+		pool.addMask(rect(100, 100, 110, 110, { targets: new Set([2]) }));
 		const listed = () => {
 			pool.draw([{ id: -1, factors: 0xffffffff }]);
 			return pool.listed;

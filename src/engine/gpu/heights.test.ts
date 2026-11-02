@@ -7,10 +7,10 @@ import {
 	PARAMS,
 	type DecodedPage
 } from '../../format/index.ts';
-import { edges } from '../math/prism.ts';
 import { Heights } from './heights.ts';
 import { Pool } from './pool.ts';
 import { testDevice } from './test-device.ts';
+import { rect } from './test-mask.ts';
 
 const STEP = 0.01;
 const SCALES = [0.1, 3];
@@ -99,16 +99,8 @@ describe('Heights', () => {
 		pool.add(0, solid, [0, 0], () => true);
 		pool.upload(Infinity);
 		// over cell x of row 1, leaving splats opacity
-		const mask = (x: number, opacity: number) => {
-			const ring: [number, number][] = [
-				[100 + x, 201],
-				[101 + x, 201],
-				[101 + x, 202],
-				[100 + x, 202]
-			];
-			const prism = { edges: edges([ring]), z: [-Infinity, Infinity] as const, outside: false };
-			pool.addMask({ prism, targets: new Set([0]), opacity, tint: [0, 0, 0, 0] });
-		};
+		const mask = (x: number, opacity: number) =>
+			pool.addMask(rect(100 + x, 201, 101 + x, 202, { opacity }));
 		mask(1, 0.6);
 		mask(2, 0);
 		mask(3, 0.4);

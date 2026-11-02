@@ -19,14 +19,13 @@ import {
 } from './layout.ts';
 import { planes } from '../math/frustum.ts';
 import { multiply, perspective, transform, view } from '../math/mat4.ts';
-import { edges, type Prism } from '../math/prism.ts';
 import type { Shade } from '../plugin.ts';
 import type { Colour } from '../types.ts';
 import { frameBuffers } from './buffers.ts';
-import type { Spec } from './masks.ts';
 import { Pool } from './pool.ts';
 import { Project } from './project.ts';
 import { readBuffer, testDevice } from './test-device.ts';
+import { rect } from './test-mask.ts';
 
 const WIDTH = 1920;
 const HEIGHT = 1080;
@@ -301,25 +300,6 @@ function expectClose(got: number[], want: number[], tolerance: number): void {
 		const allowed = tolerance * Math.max(1, Math.abs(want[k]));
 		expect(Math.abs(value - want[k])).toBeLessThanOrEqual(allowed);
 	});
-}
-
-/** a mask over the rectangle from (x0, y0) to (x1, y1) that hides the world's splats unless fields say else */
-function rect(
-	x0: number,
-	y0: number,
-	x1: number,
-	y1: number,
-	fields: Partial<Spec & Prism> = {}
-): Spec {
-	const { z = [-Infinity, Infinity], outside = false, targets = new Set([0]) } = fields;
-	const { opacity = 0, tint = [0, 0, 0, 0] } = fields;
-	const ring: [number, number][] = [
-		[x0, y0],
-		[x1, y0],
-		[x1, y1],
-		[x0, y1]
-	];
-	return { prism: { edges: edges([ring]), z, outside }, targets, opacity, tint };
 }
 
 async function setup(copies = 1, capacity = CAPACITY) {
