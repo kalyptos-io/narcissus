@@ -38,28 +38,28 @@ describe('pose and scene', () => {
 		[359.9, -89.9, 5000]
 	])('round-trips yaw %d pitch %d dist %d', (yaw, pitch, dist) => {
 		const p = pose(yaw, pitch, dist);
-		expectPose(lookAt(cameraOf(p), p), p);
+		expectPose(lookAt(cameraOf(p), [p.e, p.n, p.h]), p);
 	});
 
 	it('puts the camera behind the focus', () => {
-		const c = cameraOf(pose(0, 0, 100));
+		const [e, n, h] = cameraOf(pose(0, 0, 100));
 		// looking north level, so the camera sits 100 m south
-		expect(c.e).toBeCloseTo(at.e, 9);
-		expect(c.n).toBeCloseTo(at.n - 100, 9);
-		expect(c.h).toBeCloseTo(at.h, 9);
+		expect(e).toBeCloseTo(at.e, 9);
+		expect(n).toBeCloseTo(at.n - 100, 9);
+		expect(h).toBeCloseTo(at.h, 9);
 	});
 
 	it('puts the camera straight above the focus at pitch -90', () => {
-		const c = cameraOf(pose(123, -90, 50));
-		expect(c.e).toBeCloseTo(at.e, 9);
-		expect(c.n).toBeCloseTo(at.n, 9);
-		expect(c.h).toBeCloseTo(at.h + 50, 9);
+		const [e, n, h] = cameraOf(pose(123, -90, 50));
+		expect(e).toBeCloseTo(at.e, 9);
+		expect(n).toBeCloseTo(at.n, 9);
+		expect(h).toBeCloseTo(at.h + 50, 9);
 	});
 
 	it('projects the focus to the centre and a 45 degree view half a viewport each way', () => {
 		const edge = 100 * Math.tan(22.5 * (Math.PI / 180));
 		const spot = (p: Pose, e: number, n: number, h: number) =>
-			project(p, 45, { e: at.e + e, n: at.n + n, h: at.h + h });
+			project(p, 45, [at.e + e, at.n + n, at.h + h]);
 		const expectSpot = (s: { x: number; y: number }, x: number, y: number) => {
 			expect(s.x).toBeCloseTo(x, 9);
 			expect(s.y).toBeCloseTo(y, 9);
@@ -130,9 +130,9 @@ describe('clampPose', () => {
 		const before = cameraOf(p);
 		const q = clampPose(p, () => at.h);
 		const after = cameraOf(q);
-		expect(after.h).toBeCloseTo(50, 9);
-		expect(after.e).toBeCloseTo(before.e, 9);
-		expect(after.n).toBeCloseTo(before.n, 9);
+		expect(after[2]).toBeCloseTo(50, 9);
+		expect(after[0]).toBeCloseTo(before[0], 9);
+		expect(after[1]).toBeCloseTo(before[1], 9);
 		expect(q).toMatchObject({ ...at, yaw: p.yaw });
 		expect(q.pitch).toBeLessThanOrEqual(-20);
 		expect(q.pitch).toBeGreaterThanOrEqual(-90);
@@ -145,7 +145,7 @@ describe('clampPose', () => {
 	it('samples the ground under the camera, not the focus', () => {
 		const p = pose(90, -20, 10);
 		const ground = (e: number) => (e < at.e - 5 ? 60 : 0);
-		expect(cameraOf(clampPose(p, ground)).h).toBeCloseTo(70, 9);
+		expect(cameraOf(clampPose(p, ground))[2]).toBeCloseTo(70, 9);
 	});
 
 	it('allows close views of raised surfaces when the camera is above ground', () => {
@@ -155,7 +155,7 @@ describe('clampPose', () => {
 
 	it('enforces clearance after flying downward', () => {
 		const p = fly(pose(90, -35, 30), 0, 0, -20);
-		expect(cameraOf(clampPose(p, () => at.h)).h).toBeCloseTo(50, 9);
+		expect(cameraOf(clampPose(p, () => at.h))[2]).toBeCloseTo(50, 9);
 	});
 
 	it('enforces clearance while smoothing across higher ground', () => {
@@ -165,7 +165,7 @@ describe('clampPose', () => {
 		expect(clampPose(a, ground)).toEqual(a);
 		expect(clampPose(b, ground)).toEqual(b);
 		const mid = clampPose(blend(a, b, 0.5), ground);
-		expect(cameraOf(mid).h).toBeCloseTo(ground(mid.e) + 10, 9);
+		expect(cameraOf(mid)[2]).toBeCloseTo(ground(mid.e) + 10, 9);
 	});
 });
 
@@ -177,9 +177,9 @@ describe('moves', () => {
 		expect(q.pitch).toBe(-50);
 		expect(q.dist).toBe(400);
 		const [a, b] = [cameraOf(p), cameraOf(q)];
-		expect(b.e).toBeCloseTo(a.e, 6);
-		expect(b.n).toBeCloseTo(a.n, 6);
-		expect(b.h).toBeCloseTo(a.h, 6);
+		expect(b[0]).toBeCloseTo(a[0], 6);
+		expect(b[1]).toBeCloseTo(a[1], 6);
+		expect(b[2]).toBeCloseTo(a[2], 6);
 	});
 
 	it('look stops twenty degrees below the horizon', () => {
@@ -257,17 +257,20 @@ describe('opening', () => {
 	];
 
 	it('opens on the middle of the nearest root when the centre falls between roots', () => {
-		const { e, n, h } = opening({ leaf: 250, roots, extent });
-		expect([e, n, h]).toEqual([(724000 + 724518.02) / 2, 6176500, -6.87]);
+		expect(opening({ leaf: 250, roots, extent })).toEqual([
+			(724000 + 724518.02) / 2,
+			6176500,
+			-6.87
+		]);
 	});
 
 	it('keeps the centre when a root covers it', () => {
 		const one = [{ level: 5, e: 720000, n: 6176000, idx: '' }];
-		expect(opening({ leaf: 250, roots: one, extent })).toEqual({
-			e: (716737.88 + 724518.02) / 2,
-			n: (6175983.75 + 6179013.84) / 2,
-			h: -6.87
-		});
+		expect(opening({ leaf: 250, roots: one, extent })).toEqual([
+			(716737.88 + 724518.02) / 2,
+			(6175983.75 + 6179013.84) / 2,
+			-6.87
+		]);
 	});
 });
 
@@ -289,7 +292,7 @@ describe('fit', () => {
 		for (const e of box.e)
 			for (const n of box.n)
 				for (const h of box.h) {
-					const s = project(p, FOV, { e, n, h });
+					const s = project(p, FOV, [e, n, h]);
 					edge = Math.max(edge, Math.abs(s.x), Math.abs(s.y));
 				}
 		expect(edge).toBeLessThan(0.5);

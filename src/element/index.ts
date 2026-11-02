@@ -126,7 +126,8 @@ export class NarcissusViewer extends HTMLElement {
 		const parts = (this.getAttribute('camera') ?? '').split(',');
 		const grounded = parts.length === 6 && parts[2].trim() === '';
 		const asked = parsePose((grounded ? parts.with(2, '0') : parts).join(','));
-		const pose = asked ?? { ...opening(world), ...defaultView };
+		const [e, n, h] = opening(world);
+		const pose = asked ?? { e, n, h, ...defaultView };
 		if (grounded || !asked) {
 			// just after open the ground is the roots' coarse pages', often far below the real one
 			const h = await engine.groundAt(pose.e, pose.n).catch(() => undefined);

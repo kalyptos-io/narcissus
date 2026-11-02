@@ -56,7 +56,8 @@ describe('smooth', () => {
 	it('keeps the camera above the ground while it moves', () => {
 		const high = (e: number) => (e > 20 && e < 80 ? 400 : -1000);
 		const mid = smooth(a, b, 0.05, high);
-		expect(cameraOf(mid).h).toBeGreaterThanOrEqual(high(cameraOf(mid).e) + 10 - 1e-9);
+		const [e, , h] = cameraOf(mid);
+		expect(h).toBeGreaterThanOrEqual(high(e) + 10 - 1e-9);
 	});
 });
 

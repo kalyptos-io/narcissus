@@ -45,7 +45,7 @@ export interface EngineOptions {
 
 export interface Hit {
 	/** where the pixel's ray meets the splat's depth, world coordinates */
-	point: [number, number, number];
+	point: Point;
 	/** unit; the splat's thinnest axis, toward the camera */
 	normal: [number, number, number];
 	/** null for the world */

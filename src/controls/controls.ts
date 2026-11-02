@@ -226,8 +226,7 @@ export class Controls {
 		if (!this.#heeds(e)) return;
 		const hit = await this.#engine.pick(e.offsetX, e.offsetY);
 		if (!hit || this.#abort.signal.aborted) return;
-		const [he, hn, hh] = hit.point;
-		const view = lookAt(cameraOf(this.#current), { e: he, n: hn, h: hh });
+		const view = lookAt(cameraOf(this.#current), hit.point);
 		this.#steer(clampPose(view, undefined, this.#limits));
 	};
 

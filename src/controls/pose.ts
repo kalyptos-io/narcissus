@@ -1,14 +1,10 @@
-import type { Box, Camera, World } from '../engine/index.ts';
+import type { Box, Camera, Point, World } from '../engine/index.ts';
 
-/** easting, northing and height in world coordinates, metres */
-export interface Point {
+/** a camera orbiting its focus e, n, h, in world coordinates */
+export interface Pose {
 	e: number;
 	n: number;
 	h: number;
-}
-
-/** a camera orbiting a focus point, in world coordinates */
-export interface Pose extends Point {
 	/** degrees clockwise from north, the direction the camera looks */
 	yaw: number;
 	/** degrees, negative looks down */
@@ -53,25 +49,19 @@ const turn = (a: number, b: number) => ((b - a + 540) % 360) - 180;
 
 /** the extent's centre when a root unit covers it, else the middle of the root unit nearest it, clipped to the extent */
 export function opening({ leaf, roots, extent }: Pick<World, 'leaf' | 'roots' | 'extent'>): Point {
-	const centre = {
-		e: (extent.e[0] + extent.e[1]) / 2,
-		n: (extent.n[0] + extent.n[1]) / 2,
-		h: extent.h[0]
-	};
+	const [e, n] = [(extent.e[0] + extent.e[1]) / 2, (extent.n[0] + extent.n[1]) / 2];
+	const centre: Point = [e, n, extent.h[0]];
 	let best = centre;
 	let nearest = Infinity;
 	for (const root of roots) {
 		const side = leaf * 2 ** root.level;
 		const [west, east] = [Math.max(root.e, extent.e[0]), Math.min(root.e + side, extent.e[1])];
 		const [south, north] = [Math.max(root.n, extent.n[0]), Math.min(root.n + side, extent.n[1])];
-		const gap = Math.hypot(
-			Math.max(west - centre.e, 0, centre.e - east),
-			Math.max(south - centre.n, 0, centre.n - north)
-		);
+		const gap = Math.hypot(Math.max(west - e, 0, e - east), Math.max(south - n, 0, n - north));
 		if (gap === 0) return centre;
 		if (gap < nearest) {
 			nearest = gap;
-			best = { e: (west + east) / 2, n: (south + north) / 2, h: extent.h[0] };
+			best = [(west + east) / 2, (south + north) / 2, extent.h[0]];
 		}
 	}
 	return best;
@@ -105,9 +95,9 @@ export function clampPose(
 		dist: clamp(p.dist, limits.dist)
 	};
 	if (ground) {
-		const c = cameraOf(q);
-		const floor = Math.max(limits.floor, ground(c.e, c.n) + limits.clearance);
-		if (c.h < floor) return { ...lookAt({ ...c, h: floor }, q), yaw: q.yaw };
+		const [e, n, h] = cameraOf(q);
+		const floor = Math.max(limits.floor, ground(e, n) + limits.clearance);
+		if (h < floor) return { ...lookAt([e, n, floor], [q.e, q.n, q.h]), yaw: q.yaw };
 	}
 	return q;
 }
@@ -115,17 +105,18 @@ export function clampPose(
 /** unit view direction as a world offset */
 function direction(yaw: number, pitch: number): Point {
 	const c = Math.cos(pitch * RAD);
-	return { e: Math.sin(yaw * RAD) * c, n: Math.cos(yaw * RAD) * c, h: Math.sin(pitch * RAD) };
+	return [Math.sin(yaw * RAD) * c, Math.cos(yaw * RAD) * c, Math.sin(pitch * RAD)];
 }
 
 export function cameraOf(p: Pose): Point {
-	const d = direction(p.yaw, p.pitch);
-	return { e: p.e - d.e * p.dist, n: p.n - d.n * p.dist, h: p.h - d.h * p.dist };
+	const [de, dn, dh] = direction(p.yaw, p.pitch);
+	return [p.e - de * p.dist, p.n - dn * p.dist, p.h - dh * p.dist];
 }
 
 /** the engine camera that shows a pose */
 export function viewOf(p: Pose): Camera {
-	return { ...cameraOf(p), yaw: p.yaw, pitch: p.pitch, fov: FOV };
+	const [e, n, h] = cameraOf(p);
+	return { e, n, h, yaw: p.yaw, pitch: p.pitch, fov: FOV };
 }
 
 /** a place on screen in viewport heights from the centre, x right and y down */
@@ -137,7 +128,7 @@ export interface Spot {
 /** where a world point shows in p's view; fov vertical in degrees */
 export function project(p: Pose, fov: number, at: Point): Spot {
 	const eye = cameraOf(p);
-	const [de, dn, dh] = [at.e - eye.e, at.n - eye.n, at.h - eye.h];
+	const [de, dn, dh] = [at[0] - eye[0], at[1] - eye[1], at[2] - eye[2]];
 	const [sy, cy] = [Math.sin(p.yaw * RAD), Math.cos(p.yaw * RAD)];
 	const [sp, cp] = [Math.sin(p.pitch * RAD), Math.cos(p.pitch * RAD)];
 	const along = de * sy + dn * cy;
@@ -147,12 +138,13 @@ export function project(p: Pose, fov: number, at: Point): Spot {
 
 /** the pose of a camera at from looking at to; yaw is 0 when looking straight down */
 export function lookAt(from: Point, to: Point): Pose {
-	const [de, dn, dh] = [to.e - from.e, to.n - from.n, to.h - from.h];
+	const [e, n, h] = to;
+	const [de, dn, dh] = [e - from[0], n - from[1], h - from[2]];
 	const dist = Math.hypot(de, dn, dh);
 	return {
-		e: to.e,
-		n: to.n,
-		h: to.h,
+		e,
+		n,
+		h,
 		yaw: wrap(Math.atan2(de, dn) / RAD),
 		pitch: Math.asin(dh / dist) / RAD,
 		dist
@@ -164,7 +156,7 @@ export function look(p: Pose, yaw: number, pitch: number, limits = LIMITS): Pose
 	const c = cameraOf(p);
 	const q = clampPose({ ...p, yaw, pitch }, undefined, limits);
 	const d = direction(q.yaw, q.pitch);
-	return { ...q, e: c.e + d.e * q.dist, n: c.n + d.n * q.dist, h: c.h + d.h * q.dist };
+	return { ...q, e: c[0] + d[0] * q.dist, n: c[1] + d[1] * q.dist, h: c[2] + d[2] * q.dist };
 }
 
 /** camera height above the focus, floored so a level view still has a scale */
