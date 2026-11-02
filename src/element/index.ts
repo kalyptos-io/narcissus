@@ -22,23 +22,33 @@ function mobile(): boolean {
 	return nav.userAgentData?.mobile ?? /Mobi|Android/i.test(nav.userAgent);
 }
 
+export interface NarcissusViewerEventMap extends Omit<HTMLElementEventMap, 'error'> {
+	start: Event;
+	ready: CustomEvent<World>;
+	error: CustomEvent<string>;
+}
+
 /**
  * attributes: src, the url of a world.json; budget, the splats a frame may draw, which otherwise
  * adapts to the frame rate; view-distance in metres; camera, the pose to open on as
  * E,N,H,yaw,pitch,dist, its focus on the ground there when H is left empty, as the opening view's;
  * sky as r,g,b from 0 to 1. camera and sky are read when a world opens and when the element starts.
- * events: ready, with the World as its detail, and error, with a message.
+ * aria-label names the canvas too, which takes focus for the camera's keys.
+ * events: start once the engine and the controls are made, ready with the World as its detail each
+ * time a world opens, and error with a message. the engine and the controls, and all a page adds to
+ * them, live from start until the element leaves the page, through every change of src.
  * after an error, such as a browser without webgpu, its own content shows in place of the canvas,
  * or the message when it has none.
  */
 export class NarcissusViewer extends HTMLElement {
-	static observedAttributes = ['src', 'budget', 'view-distance'];
+	static observedAttributes = ['src', 'budget', 'view-distance', 'aria-label'];
 
 	#canvas: HTMLCanvasElement;
 	#fallback: HTMLSlotElement;
 	#message: HTMLElement;
 	#engine: Engine | null = null;
 	#controls: Controls | null = null;
+	#world: World | null = null;
 	#resized = new ResizeObserver(() => this.#fit());
 	/** counts starts, stops and opens, so one that finishes late knows it is stale */
 	#turn = 0;
@@ -57,7 +67,7 @@ export class NarcissusViewer extends HTMLElement {
 		return this.#engine;
 	}
 
-	/** the camera controls while a world is open */
+	/** the camera controls while the engine runs */
 	get controls(): Controls | null {
 		return this.#controls;
 	}
@@ -70,7 +80,48 @@ export class NarcissusViewer extends HTMLElement {
 		this.#stop();
 	}
 
-	attributeChangedCallback(name: string): void {
+	addEventListener<K extends keyof NarcissusViewerEventMap>(
+		type: K,
+		listener: (this: NarcissusViewer, event: NarcissusViewerEventMap[K]) => unknown,
+		options?: boolean | AddEventListenerOptions
+	): void;
+	addEventListener(
+		type: string,
+		listener: EventListenerOrEventListenerObject,
+		options?: boolean | AddEventListenerOptions
+	): void;
+	addEventListener(
+		type: string,
+		listener: EventListenerOrEventListenerObject,
+		options?: boolean | AddEventListenerOptions
+	): void {
+		super.addEventListener(type, listener, options);
+	}
+
+	removeEventListener<K extends keyof NarcissusViewerEventMap>(
+		type: K,
+		listener: (this: NarcissusViewer, event: NarcissusViewerEventMap[K]) => unknown,
+		options?: boolean | EventListenerOptions
+	): void;
+	removeEventListener(
+		type: string,
+		listener: EventListenerOrEventListenerObject,
+		options?: boolean | EventListenerOptions
+	): void;
+	removeEventListener(
+		type: string,
+		listener: EventListenerOrEventListenerObject,
+		options?: boolean | EventListenerOptions
+	): void {
+		super.removeEventListener(type, listener, options);
+	}
+
+	attributeChangedCallback(name: string, _: string | null, value: string | null): void {
+		if (name === 'aria-label') {
+			if (value === null) this.#canvas.removeAttribute('aria-label');
+			else this.#canvas.setAttribute('aria-label', value);
+			return;
+		}
 		if (!this.#engine) return;
 		if (name === 'src') void this.#open(this.#engine);
 		else this.#engine.configure(this.#settings());
@@ -100,9 +151,17 @@ export class NarcissusViewer extends HTMLElement {
 			});
 			if (turn !== this.#turn) return engine.destroy();
 			this.#engine = engine;
+			this.#controls = new Controls(this.#canvas, engine, {
+				ground: (e, n) => engine.ground(e, n) ?? this.#world?.extent.h[0] ?? 0,
+				// until the first world opens
+				pose: { e: 0, n: 0, h: 0, ...defaultView }
+			});
 			engine.onLost((why) => this.#fail(`The graphics device stopped (${why}).`));
 			this.#resized.observe(this);
 			this.#fit();
+			this.dispatchEvent(new Event('start'));
+			// a start listener may have taken the element off the page
+			if (turn !== this.#turn) return;
 			await this.#open(engine);
 		} catch (error) {
 			if (turn === this.#turn) this.#fail(error instanceof Error ? error.message : String(error));
@@ -122,7 +181,7 @@ export class NarcissusViewer extends HTMLElement {
 			return this.#fail(`Could not load the world (${why}).`);
 		}
 		if (turn !== this.#turn) return;
-		const ground = (e: number, n: number) => engine.ground(e, n) ?? world.extent.h[0];
+		this.#world = world;
 		const parts = (this.getAttribute('camera') ?? '').split(',');
 		const grounded = parts.length === 6 && parts[2].trim() === '';
 		const asked = parsePose((grounded ? parts.with(2, '0') : parts).join(','));
@@ -134,8 +193,7 @@ export class NarcissusViewer extends HTMLElement {
 			if (turn !== this.#turn) return;
 			pose.h = h ?? world.extent.h[0];
 		}
-		this.#controls?.destroy();
-		this.#controls = new Controls(this.#canvas, engine, { ground, pose });
+		this.#controls!.jump(pose);
 		this.dispatchEvent(new CustomEvent('ready', { detail: world }));
 	}
 
@@ -150,6 +208,7 @@ export class NarcissusViewer extends HTMLElement {
 		this.#controls = null;
 		this.#engine?.destroy();
 		this.#engine = null;
+		this.#world = null;
 	}
 
 	#fail(message: string): void {

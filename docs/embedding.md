@@ -1,6 +1,6 @@
 # Embedding the viewer
 
-A page that embeds narcissus can add its own splats, hide parts of the world, find what is under the cursor, draw lines and markers in the scene, and steer the camera. These hooks know nothing of the page. They are on the engine and the controls, which `<narcissus-viewer>` gives as its `engine` and `controls` properties after its `ready` event.
+A page that embeds narcissus can add its own splats, hide parts of the world, find what is under the cursor, draw lines and markers in the scene, and steer the camera. These hooks know nothing of the page. They are on the engine and the controls, which `<narcissus-viewer>` gives as its `engine` and `controls` properties from its `start` event.
 
 All positions that go in or come out are world coordinates as `world.json` declares them, as JavaScript numbers (float64). Inside, the engine keeps them relative to a floating origin near the camera, so a projected northing keeps its millimetres.
 
@@ -64,15 +64,18 @@ The hit is where the splats that the last frame drew over the pixel, blended fro
 
 ## Camera and input
 
-The controls, `viewer.controls`, own the map camera:
+The controls, `viewer.controls`, own the map camera. On a page of its own, `new Controls(canvas, engine, { ground, pose, limits })` makes them: `ground(e, n)` gives the height the camera stays above, `pose` is the first pose, and `limits` how far a pose may go, `LIMITS` when left out.
 
 - `pose` gives the pose shown, and `onChange(fn)` calls `fn(pose)` each time it changes.
 - `jump(pose)` shows a pose at once. Fields left out keep their value.
 - `flyTo(pose, { signal })` animates there. It resolves `true` on arrival, and `false` when the user moves the camera, another `flyTo` or `jump` starts, or the signal aborts.
 - `fit(box, pose)` from `@kalyptos/narcissus` gives the pose that shows a box, keeping the heading and tilt of `pose`: `controls.flyTo(fit(layer.box, controls.pose))`.
+- `limits` gives the limits, and setting it moves the camera into the new ones at once.
 - `enabled = false` makes the camera ignore the user, and flights still run.
 
-To take a pointer event for itself, so that the camera does not also orbit or pan, a page listens on the element in the capture phase and calls `preventDefault()`:
+The keys (f to fly, then WASD, the arrows, Q and E) act only while the canvas has focus, so text fields and other viewers on the page keep theirs. The controls make the canvas focusable, and a click on it gives it focus. The element gives the canvas its own `aria-label`.
+
+To take a pointer event for itself, so that the camera does not also orbit or pan, a page listens on the element in the capture phase and calls `preventDefault()`. A double click after a taken `pointerdown` does not fly the camera either, so a tool that ends on a double click needs nothing more:
 
 ```ts
 viewer.addEventListener(
@@ -86,11 +89,11 @@ viewer.addEventListener(
 );
 ```
 
-Controls are made again when the element opens another world. Take `viewer.controls` again after each `ready` event.
-
 ## Events
 
-- `engine.open()` resolves, and the element sends `ready`, when a world is open.
+- The element sends `start` when it has made the engine and the controls, and `ready`, with the `World` as its detail, each time a world is open. `error` carries a message. `NarcissusViewerEventMap` types them for `addEventListener`.
+- The engine and the controls, and the layers, masks, lines, markers, listeners and settings a page adds to them, live from `start` until the element leaves the page. They stay when `src` changes. An element put back on the page makes new ones and sends `start` again.
+- `engine.open()` resolves when a world is open.
 - `addLayer` resolves when a layer is in and rejects when it fails.
 - `engine.onProgress(fn)` calls `fn({ planned, missing, loading })` when the view's loading changes. `missing` of `planned` splats are not loaded yet.
 - `engine.onLost(fn)` reports a lost device.
