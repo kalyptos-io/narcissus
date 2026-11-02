@@ -69,6 +69,7 @@ describe('Controls', () => {
 	let controls: Controls;
 	const warm = vi.fn();
 	const pick = vi.fn(() => Promise.resolve(null));
+	const setCamera = vi.fn();
 
 	beforeEach(() => {
 		vi.stubGlobal('window', new EventTarget());
@@ -80,13 +81,14 @@ describe('Controls', () => {
 		const engine = {
 			onFrame: (fn: (now: number) => void) => ((tick = fn), () => {}),
 			requestFrame() {},
-			setCamera() {},
+			setCamera,
 			warm,
 			pick
 		};
 		now = 0;
 		warm.mockClear();
 		pick.mockClear();
+		setCamera.mockClear();
 		controls = new Controls(canvas as unknown as HTMLCanvasElement, engine as unknown as Engine, {
 			ground: () => 0,
 			pose: start
@@ -258,5 +260,16 @@ describe('Controls', () => {
 	it('jumps at once', () => {
 		controls.jump({ e: 40, dist: 100 });
 		expect(controls.pose).toEqual({ ...start, e: 40, dist: 100 });
+	});
+
+	it('tells the engine a jump is a cut, and motion is not', () => {
+		setCamera.mockClear();
+		drag();
+		frames(5);
+		const cuts = setCamera.mock.calls.map(([, cut]) => cut);
+		expect(cuts.length).toBeGreaterThan(0);
+		expect(cuts).not.toContain(true);
+		controls.jump({ e: 40 });
+		expect(setCamera).toHaveBeenLastCalledWith(expect.anything(), true);
 	});
 });

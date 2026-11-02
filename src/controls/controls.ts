@@ -123,7 +123,7 @@ export class Controls {
 		canvas.addEventListener('keyup', this.#keyup, { signal });
 		// a key released after focus left never sends keyup here
 		canvas.addEventListener('blur', () => this.#keys.clear(), { signal });
-		this.#place();
+		this.#place(true);
 	}
 
 	/** the pose the camera shows now */
@@ -162,7 +162,7 @@ export class Controls {
 	jump(pose: Partial<Pose>): void {
 		this.#land(false);
 		this.#target = this.#current = this.#clamp({ ...this.#current, ...pose });
-		this.#changed();
+		this.#changed(true);
 	}
 
 	/** flies to the pose, fields left out staying; false when input, another move, the signal or destroy cuts it short */
@@ -331,8 +331,8 @@ export class Controls {
 		trip?.land(arrived);
 	}
 
-	#changed() {
-		this.#place();
+	#changed(cut = false) {
+		this.#place(cut);
 		const pose = this.pose;
 		for (const fn of this.#listeners) fn(pose);
 	}
@@ -341,8 +341,8 @@ export class Controls {
 		return clampPose(pose, this.#ground, this.#limits);
 	}
 
-	#place() {
-		this.#engine.setCamera(viewOf(this.#current));
+	#place(cut = false) {
+		this.#engine.setCamera(viewOf(this.#current), cut);
 	}
 }
 

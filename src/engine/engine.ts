@@ -73,7 +73,8 @@ export interface Engine {
 	addMarker(point: Point, style?: MarkerStyle): Marker;
 	/** canvas css pixel of a world point under the camera set last, null behind it */
 	toScreen(point: Point): [number, number] | null;
-	setCamera(camera: Camera): void;
+	/** cut: the camera jumped there, so it brings no motion to predict from */
+	setCamera(camera: Camera, cut?: boolean): void;
 	configure(settings: Partial<Settings>): void;
 	/** canvas size in css pixels and the device pixel ratio to render at */
 	resize(width: number, height: number, ratio: number): void;
@@ -412,9 +413,6 @@ class GpuEngine implements Engine {
 		this.#fader = new Fader();
 		// page ids restart with the tree, so the old world's pages must leave the pool
 		this.#pool.clear();
-		// the jump to the new world's pose is no motion to predict from
-		this.#velocity.fill(0);
-		this.#cameraAt = -Infinity;
 		this.#feed = this.#feedFor(tree, loader);
 		this.#dirty = true;
 		this.requestFrame();
@@ -471,13 +469,13 @@ class GpuEngine implements Engine {
 		return [((x / w) * 0.5 + 0.5) * width, (0.5 - (y / w) * 0.5) * height];
 	}
 
-	setCamera(camera: Camera): void {
+	setCamera(camera: Camera, cut = false): void {
 		if (this.#destroyed) return;
 		const now = performance.now();
 		const dt = now - this.#cameraAt;
 		const last = this.#camera;
 		const v = this.#velocity;
-		if (dt > GAP_MS) v.fill(0);
+		if (cut || dt > GAP_MS) v.fill(0);
 		else if (dt > 0) {
 			const a = 1 - Math.exp(-dt / VELOCITY_MS);
 			v[0] += a * ((camera.e - last.e) / dt - v[0]);
