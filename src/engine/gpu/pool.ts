@@ -114,6 +114,8 @@ export class Pool {
 	#hidden: Uint8Array;
 	#masked: (readonly number[])[];
 	#maskedChanged = false;
+	/** a mask's opacity or tint changed alone: its record to write at the next draw */
+	#effectsChanged = false;
 	/** world min e, n, max e, n over the masks changed since the last draw */
 	#remasked: [number, number, number, number] | null = null;
 
@@ -305,6 +307,8 @@ export class Pool {
 		this.#drawn.length = count;
 		this.listed = listed;
 		if (this.#maskedChanged) this.#flushMasks();
+		else if (this.#effectsChanged) this.masks.write();
+		this.#effectsChanged = false;
 		const queue = this.#device.queue;
 		this.#tableDirty.flush(queue, this.pages, this.#table);
 		this.#clusterDirty.flush(queue, this.clusters, this.#clusterWords);
@@ -330,8 +334,12 @@ export class Pool {
 
 	/** mask id as spec from the next draw */
 	setMask(id: number, spec: Spec): void {
-		this.#stale(this.masks.area(id)!);
-		this.masks.set(id, spec);
+		const area = this.masks.area(id)!;
+		if (!this.masks.set(id, spec)) {
+			this.#effectsChanged = true;
+			return;
+		}
+		this.#stale(area);
 		this.#stale(this.masks.area(id)!);
 	}
 

@@ -68,10 +68,19 @@ export class Masks {
 		return this.#next;
 	}
 
-	/** mask id as spec now, in its place in the list */
-	set(id: number, spec: Spec): void {
+	/** mask id as spec now, in its place in the list; whether what it covers may have changed */
+	set(id: number, spec: Spec): boolean {
 		const mask = this.#masks.get(id);
-		if (mask) this.#hold(id, spec, mask.enabled);
+		if (!mask) return false;
+		// the same prism and targets objects cover the same, and opacity only hides at 0
+		const same = mask.prism === spec.prism && mask.targets === spec.targets;
+		if (same && (mask.opacity === 0) === (spec.opacity === 0)) {
+			mask.opacity = spec.opacity;
+			mask.tint = spec.tint;
+			return false;
+		}
+		this.#hold(id, spec, mask.enabled);
+		return true;
 	}
 
 	enable(id: number, enabled: boolean): void {

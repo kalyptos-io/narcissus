@@ -564,11 +564,21 @@ describe('Project', () => {
 			}
 		};
 		const red: Colour = [1, 0, 0, 0.6];
-		const id = pool.addMask(rect(-10, 20, 10, 60, { opacity: 0.5, tint: red }));
+		const spec = rect(-10, 20, 10, 60, { opacity: 0.5, tint: red });
+		const id = pool.addMask(spec);
 		draw();
 		let got = await shown();
 		covered(got, [y25, y50], [red], 0.5);
 		covered(got, [y10, y80], [], 1);
+
+		// opacity and tint alone, over the same prism and targets
+		const green: Colour = [0, 1, 0, 0.3];
+		pool.setMask(id, { ...spec, opacity: 0.8, tint: green });
+		draw();
+		got = await shown();
+		covered(got, [y25, y50], [green], 0.8);
+		covered(got, [y10, y80], [], 1);
+		pool.setMask(id, spec);
 
 		const blue: Colour = [0, 0, 1, 0.2];
 		const second = pool.addMask(rect(-10, 0, 10, 30, { opacity: 0.5, tint: blue }));
