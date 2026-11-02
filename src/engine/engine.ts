@@ -74,8 +74,8 @@ export interface Engine {
 	addMarker(point: Point, style?: MarkerStyle): Marker;
 	/** canvas css pixel of a world point under the camera set last, null behind it */
 	toScreen(point: Point): [number, number] | null;
-	/** cut: the camera jumped there, so it brings no motion to predict from */
-	setCamera(camera: Camera, cut?: boolean): void;
+	/** jump: the camera got there at once, so it brings no motion to predict from */
+	setCamera(camera: Camera, options?: { jump?: boolean }): void;
 	configure(settings: Partial<Settings>): void;
 	/** canvas size in css pixels and the device pixel ratio to render at */
 	resize(width: number, height: number, ratio: number): void;
@@ -486,13 +486,13 @@ class GpuEngine implements Engine {
 		return [((x / w) * 0.5 + 0.5) * width, (0.5 - (y / w) * 0.5) * height];
 	}
 
-	setCamera(camera: Camera, cut = false): void {
+	setCamera(camera: Camera, { jump = false }: { jump?: boolean } = {}): void {
 		if (this.#destroyed) return;
 		const now = performance.now();
 		const dt = now - this.#cameraAt;
 		const last = this.#camera;
 		const v = this.#velocity;
-		if (cut || dt > GAP_MS) v.fill(0);
+		if (jump || dt > GAP_MS) v.fill(0);
 		else if (dt > 0) {
 			const a = 1 - Math.exp(-dt / VELOCITY_MS);
 			v[0] += a * ((camera.e - last.e) / dt - v[0]);

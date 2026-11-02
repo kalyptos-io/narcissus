@@ -89,6 +89,8 @@ To drag a layer over the area its own mask hides, disable that mask during the d
 
 `viewer.controls` owns the map camera. Without the element, use `new Controls(canvas, engine, { ground, pose, limits })`: `ground(e, n)` gives the height to stay above, `pose` the first pose, and `limits` defaults to `LIMITS`, `{ pitch: [-90, -20], dist: [1, 2485], clearance: 10, floor: 50 }`.
 
+To move the camera without the controls, call `engine.setCamera(camera)` with a `Camera`, `{ e, n, h, yaw, pitch, fov }`, angles in degrees. Add `{ jump: true }` when the camera did not travel there, so the engine does not load ahead along a false motion.
+
 A `Pose` is `{ e, n, h, yaw, pitch, dist }`: the focus, `yaw` clockwise from north and `pitch` (negative down) in degrees, and `dist` from camera to focus in metres.
 
 | member                    | what it does                                                                                            |

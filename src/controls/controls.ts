@@ -331,8 +331,8 @@ export class Controls {
 		trip?.land(arrived);
 	}
 
-	#changed(cut = false) {
-		this.#place(cut);
+	#changed(jump = false) {
+		this.#place(jump);
 		const pose = this.pose;
 		for (const fn of this.#listeners) fn(pose);
 	}
@@ -341,8 +341,8 @@ export class Controls {
 		return clampPose(pose, this.#ground, this.#limits);
 	}
 
-	#place(cut = false) {
-		this.#engine.setCamera(viewOf(this.#current), cut);
+	#place(jump = false) {
+		this.#engine.setCamera(viewOf(this.#current), { jump });
 	}
 }
 

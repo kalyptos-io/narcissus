@@ -262,14 +262,14 @@ describe('Controls', () => {
 		expect(controls.pose).toEqual({ ...start, e: 40, dist: 100 });
 	});
 
-	it('tells the engine a jump is a cut, and motion is not', () => {
+	it('tells the engine a jump is a jump, and motion is not', () => {
 		setCamera.mockClear();
 		drag();
 		frames(5);
-		const cuts = setCamera.mock.calls.map(([, cut]) => cut);
-		expect(cuts.length).toBeGreaterThan(0);
-		expect(cuts).not.toContain(true);
+		const jumps = setCamera.mock.calls.map(([, options]) => options?.jump);
+		expect(jumps.length).toBeGreaterThan(0);
+		expect(jumps).not.toContain(true);
 		controls.jump({ e: 40 });
-		expect(setCamera).toHaveBeenLastCalledWith(expect.anything(), true);
+		expect(setCamera).toHaveBeenLastCalledWith(expect.anything(), { jump: true });
 	});
 });
