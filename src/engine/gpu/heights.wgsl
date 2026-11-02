@@ -50,7 +50,7 @@ fn heights(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) t
 			continue;
 		}
 		let p = position(page, g);
-		if (masked(cluster, p)) {
+		if (opacity * masked(cluster, p).opacity < area.opacity) {
 			continue;
 		}
 		let cell = floor(p.xy - area.corner);

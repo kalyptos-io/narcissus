@@ -446,16 +446,12 @@ class GpuEngine implements Engine {
 
 	addMask(options: MaskOptions): Mask {
 		if (this.#destroyed) throw new Error(DESTROYED);
-		const { polygon } = options;
-		if (polygon.length < 3 || !polygon.flat().every(Number.isFinite)) {
-			throw new Error('A mask needs three or more corners, each two finite numbers.');
-		}
 		const remask = () => {
 			if (this.#destroyed) return;
 			this.#redraw = true;
 			this.requestFrame();
 		};
-		return createMask(this.#pool, options, (layer) => this.#layers.numberOf(layer), remask);
+		return createMask(this.#pool, options, this.#layers, remask);
 	}
 
 	addLine(points: readonly Point[], style?: LineStyle): Line {

@@ -7,6 +7,7 @@ import {
 	PARAMS,
 	type DecodedPage
 } from '../../format/index.ts';
+import { edges } from '../math/prism.ts';
 import { Heights } from './heights.ts';
 import { Pool } from './pool.ts';
 import { testDevice } from './test-device.ts';
@@ -84,29 +85,38 @@ describe('Heights', () => {
 		pool.destroy();
 	});
 
-	it('leaves out splats a mask hides', async () => {
+	it('leaves out splats a mask hides or fades below solid', async () => {
 		const device = await testDevice();
 		const pool = new Pool(device, CLUSTER);
 		const solid = page(
 			[100, 200, 0],
 			[
 				[[1.5, 1.5, 5], 255, 0],
-				[[2.5, 1.5, 7], 255, 0]
+				[[2.5, 1.5, 7], 255, 0],
+				[[3.5, 1.5, 9], 255, 0]
 			]
 		);
 		pool.add(0, solid, [0, 0], () => true);
 		pool.upload(Infinity);
-		pool.addMask(
-			{
-				polygon: Float64Array.from([102, 201, 103, 201, 103, 202, 102, 202]),
-				z: [-Infinity, Infinity]
-			},
-			new Set([0])
-		);
+		// over cell x of row 1, leaving splats opacity
+		const mask = (x: number, opacity: number) => {
+			const ring: [number, number][] = [
+				[100 + x, 201],
+				[101 + x, 201],
+				[101 + x, 202],
+				[100 + x, 202]
+			];
+			const prism = { edges: edges([ring]), z: [-Infinity, Infinity] as const, outside: false };
+			pool.addMask({ prism, targets: new Set([0]), opacity, tint: [0, 0, 0, 0] });
+		};
+		mask(1, 0.6);
+		mask(2, 0);
+		mask(3, 0.4);
 		pool.draw([{ id: 0, factors: 0xffffffff }]);
 		const tops = await heights(pool, 100, 200, 4);
 		expect(tops[4 + 1]).toBeCloseTo(5, 4);
 		expect(tops[4 + 2]).toBeNaN();
+		expect(tops[4 + 3]).toBeNaN();
 		pool.destroy();
 	});
 

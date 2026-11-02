@@ -3,6 +3,9 @@
 /** world metres: easting, northing, height */
 export type Point = readonly [e: number, n: number, h: number];
 
+/** world e, n corners of a ring; the last joins the first, whether it repeats it or not */
+export type Ring = readonly (readonly [e: number, n: number])[];
+
 /** rgba, each 0 to 1 */
 export type Colour = readonly [r: number, g: number, b: number, a: number];
 

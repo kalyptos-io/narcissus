@@ -19,8 +19,11 @@ import {
 } from './layout.ts';
 import { planes } from '../math/frustum.ts';
 import { multiply, perspective, transform, view } from '../math/mat4.ts';
+import { edges, type Prism } from '../math/prism.ts';
 import type { Shade } from '../plugin.ts';
+import type { Colour } from '../types.ts';
 import { frameBuffers } from './buffers.ts';
+import type { Spec } from './masks.ts';
 import { Pool } from './pool.ts';
 import { Project } from './project.ts';
 import { readBuffer, testDevice } from './test-device.ts';
@@ -282,6 +285,25 @@ function expectClose(got: number[], want: number[], tolerance: number): void {
 	});
 }
 
+/** a mask over the rectangle from (x0, y0) to (x1, y1) that hides the world's splats unless fields say else */
+function rect(
+	x0: number,
+	y0: number,
+	x1: number,
+	y1: number,
+	fields: Partial<Spec & Prism> = {}
+): Spec {
+	const { z = [-Infinity, Infinity], outside = false, targets = new Set([0]) } = fields;
+	const { opacity = 0, tint = [0, 0, 0, 0] } = fields;
+	const ring: [number, number][] = [
+		[x0, y0],
+		[x1, y0],
+		[x1, y1],
+		[x0, y1]
+	];
+	return { prism: { edges: edges([ring]), z, outside }, targets, opacity, tint };
+}
+
 async function setup(copies = 1, capacity = CAPACITY) {
 	const device = await testDevice();
 	const pool = new Pool(device, 4 * CLUSTER * copies);
@@ -427,10 +449,8 @@ describe('Project', () => {
 		pool.add(1, { ...page(), clusters: box }, [0, 0], () => false);
 		pool.upload(Infinity);
 		pool.draw([{ id: 1, factors: FACTORS }]);
-		const square = (y0: number, y1: number, x = 10) =>
-			Float64Array.from([-x, y0, x, y0, x, y1, -x, y1]);
 		const mask = (y0: number, y1: number, z: [number, number], layer = 0, x = 10) => {
-			const id = pool.addMask({ polygon: square(y0, y1, x), z }, new Set([layer]));
+			const id = pool.addMask(rect(-x, y0, x, y1, { z, targets: new Set([layer]) }));
 			pool.draw([{ id: 1, factors: FACTORS }]);
 			return id;
 		};
@@ -468,14 +488,8 @@ describe('Project', () => {
 		pool.add(1, { ...page(), clusters: box }, [0, 0], () => false);
 		pool.upload(Infinity);
 		pool.draw([{ id: 1, factors: FACTORS }]);
-		const all = [-Infinity, Infinity] as [number, number];
 		// one mask a splat, at y 10, 25, 50 and 80
-		const ids = [10, 25, 50, 80].map((y) =>
-			pool.addMask(
-				{ polygon: Float64Array.from([-5, y - 1, 5, y - 1, 5, y + 1, -5, y + 1]), z: all },
-				new Set([0])
-			)
-		);
+		const ids = [10, 25, 50, 80].map((y) => pool.addMask(rect(-5, y - 1, 5, y + 1)));
 		pool.enableMask(ids[0], false);
 		pool.deleteMask(ids[1]);
 		pool.draw([{ id: 1, factors: FACTORS }]);
@@ -487,6 +501,69 @@ describe('Project', () => {
 		for (const id of [ids[0], ids[2], ids[3]]) pool.deleteMask(id);
 		pool.draw([{ id: 1, factors: FACTORS }]);
 		expect((await run(context)).count).toBe(4);
+		pool.destroy();
+		context.buffers.destroy();
+	});
+
+	it('fades and tints what a mask covers, inside or out, in list order and as set', async () => {
+		const context = await setup();
+		const { pool } = context;
+		const box = new Float32Array([50, 0, 0, 110, 110, 20]);
+		pool.remove(1);
+		pool.add(1, { ...page(), clusters: box }, [0, 0], () => false);
+		pool.upload(Infinity);
+		const draw = () => pool.draw([{ id: 1, factors: FACTORS }]);
+		draw();
+		const centres = [0, 1, 2, 3].map((t) => expected(t, context.uniforms)!.centre);
+		/** colour and opacity of the splats on screen, by their index: those at y 10, 25, 50, 80 */
+		const shown = async () => {
+			const { count, projected } = await run(context);
+			const floats = new Float32Array(projected);
+			const words = new Uint32Array(projected);
+			const out = new Map<number, number[]>();
+			for (let i = 0; i < count; i++) {
+				const w = i * PROJECTED_WORDS;
+				const t = centres.findIndex((c) => gap(c, [floats[w], floats[w + 1]]) < 1);
+				out.set(t, [...unpack(words[w + 4]), ...unpack(words[w + 5])]);
+			}
+			return out;
+		};
+		const plain = await shown();
+		const [y10, y25, y50, y80] = [0, 1, 2, 3];
+		const covered = (got: Map<number, number[]>, keys: number[], tints: Colour[], fade: number) => {
+			for (const key of keys) {
+				const [r, g, b, opacity] = plain.get(key)!;
+				const colour = tints.reduce(
+					(c, [tr, tg, tb, ta]) => c.map((v, k) => v * (1 - ta) + [tr, tg, tb][k] * ta),
+					[r, g, b]
+				);
+				expectClose(got.get(key)!, [...colour, opacity * fade], 2e-3);
+			}
+		};
+		const red: Colour = [1, 0, 0, 0.6];
+		const id = pool.addMask(rect(-10, 20, 10, 60, { opacity: 0.5, tint: red }));
+		draw();
+		let got = await shown();
+		covered(got, [y25, y50], [red], 0.5);
+		covered(got, [y10, y80], [], 1);
+
+		const blue: Colour = [0, 0, 1, 0.2];
+		const second = pool.addMask(rect(-10, 0, 10, 30, { opacity: 0.5, tint: blue }));
+		draw();
+		got = await shown();
+		covered(got, [y25], [red, blue], 0.25);
+		covered(got, [y10], [blue], 0.5);
+		pool.deleteMask(second);
+
+		pool.setMask(id, rect(-10, 20, 10, 60, { opacity: 0.5, tint: red, outside: true }));
+		draw();
+		got = await shown();
+		covered(got, [y10, y80], [red], 0.5);
+		covered(got, [y25, y50], [], 1);
+
+		pool.setMask(id, rect(-10, 20, 10, 60, { outside: true }));
+		draw();
+		expect([...(await shown()).keys()].sort()).toEqual([y25, y50]);
 		pool.destroy();
 		context.buffers.destroy();
 	});

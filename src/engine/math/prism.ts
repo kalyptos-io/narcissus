@@ -1,25 +1,39 @@
-// vertical prisms: a polygon in e, n over a height range; the masks' geometry
+// vertical prisms: rings in e, n over a height range; the masks' geometry
 
-/** polygon as e0, n0, e1, n1, ..; z the height range, infinite for the full height */
+import type { Ring } from '../types.ts';
+
+/**
+ * edges of its rings as ax, ay, bx, by, ..; inside by the even-odd rule, so holes and islands need
+ * no bridge edges. z the height range, infinite for the full height
+ */
 export interface Prism {
-	polygon: Float64Array;
+	edges: Float64Array;
 	z: readonly [number, number];
+	/** acts on what lies outside the prism instead */
+	outside: boolean;
 }
 
-/** a box's relation to a prism, for every point in the box */
+/** a box's relation to what a prism acts on, for every point in the box */
 export const OUT = 0;
 export const IN = 1;
 export const CROSS = 2;
 
-/** (x, y) inside polygon by the even-odd rule; masks.wgsl tests the same way */
-export function inside(polygon: ArrayLike<number>, x: number, y: number): boolean {
+/** the edges of rings, each closed */
+export function edges(rings: readonly Ring[]): Float64Array {
+	const out: number[] = [];
+	for (const ring of rings)
+		ring.forEach(([ax, ay], k) => out.push(ax, ay, ...ring[(k + 1) % ring.length]));
+	return Float64Array.from(out);
+}
+
+/** (x, y) inside edges by the even-odd rule; masks.wgsl tests the same way */
+export function inside(edges: ArrayLike<number>, x: number, y: number): boolean {
 	let odd = false;
-	const n = polygon.length / 2;
-	for (let i = 0, j = n - 1; i < n; j = i++) {
-		const ax = polygon[2 * i];
-		const ay = polygon[2 * i + 1];
-		const bx = polygon[2 * j];
-		const by = polygon[2 * j + 1];
+	for (let k = 0; k < edges.length; k += 4) {
+		const ax = edges[k];
+		const ay = edges[k + 1];
+		const bx = edges[k + 2];
+		const by = edges[k + 3];
 		if (ay > y !== by > y && x < ((bx - ax) * (y - ay)) / (by - ay) + ax) odd = !odd;
 	}
 	return odd;
@@ -58,21 +72,22 @@ function meets(
 	return true;
 }
 
-/** OUT, IN or CROSS for the box min x, y, z to max x, y, z */
+/** OUT, IN or CROSS of what prism acts on, for the box min x, y, z to max x, y, z */
 export function relate(prism: Prism, min: ArrayLike<number>, max: ArrayLike<number>): number {
-	const { polygon, z } = prism;
+	const relation = within(prism, min, max);
+	if (!prism.outside || relation === CROSS) return relation;
+	return relation === IN ? OUT : IN;
+}
+
+/** OUT, IN or CROSS of the prism itself */
+function within(prism: Prism, min: ArrayLike<number>, max: ArrayLike<number>): number {
+	const { edges, z } = prism;
 	if (max[2] < z[0] || min[2] > z[1]) return OUT;
-	const n = polygon.length / 2;
-	for (let i = 0, j = n - 1; i < n; j = i++) {
-		const [ax, ay, bx, by] = [
-			polygon[2 * i],
-			polygon[2 * i + 1],
-			polygon[2 * j],
-			polygon[2 * j + 1]
-		];
-		if (meets(ax, ay, bx, by, min[0], min[1], max[0], max[1])) return CROSS;
+	for (let k = 0; k < edges.length; k += 4) {
+		if (meets(edges[k], edges[k + 1], edges[k + 2], edges[k + 3], min[0], min[1], max[0], max[1]))
+			return CROSS;
 	}
 	// no edge meets the box, so it lies wholly on one side
-	if (!inside(polygon, min[0], min[1])) return OUT;
+	if (!inside(edges, min[0], min[1])) return OUT;
 	return min[2] >= z[0] && max[2] <= z[1] ? IN : CROSS;
 }

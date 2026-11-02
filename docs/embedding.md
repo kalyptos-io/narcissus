@@ -30,11 +30,20 @@ layer.visible = mask.enabled = false;
 
 ## Masks
 
-`engine.addMask({ polygon, z, targets })` hides splats. `polygon` is three or more `[e, n]` corners. `z` is `[from, to]` in world heights, the full height when left out. `targets` lists what the mask hides: `'world'` for the world's own splats, and layers.
+`engine.addMask(options)` hides, fades or tints splats inside or outside a vertical prism. The options:
 
-The rule: a splat of a target is hidden while its centre lies inside the polygon by the even-odd rule and within `z`.
+- `polygon`: one ring of `[e, n]` corners, or a list of rings. Each ring has three or more corners. The rings count by the even-odd rule, so a ring inside another is a hole and a ring inside a hole is an island. GeoJSON Polygon `coordinates` fit as they are.
+- `z`: `[from, to]` in world heights, the full height when left out.
+- `targets`: what the mask acts on: `'world'` for the world's own splats, and layers.
+- `outside`: when `true`, the mask acts on what lies outside the prism.
+- `opacity`: what the splats it covers keep, 0 to 1. The default 0 hides them.
+- `tint`: `[r, g, b, a]`, each 0 to 1. A covered splat mixes its colour toward `rgb` by `a`. The default `[0, 0, 0, 0]` keeps the colour.
 
-It holds at every level of detail, through the fades between levels, and while pages stream: the test runs on each splat before it is projected, whatever page drew it. Clusters that a mask covers wholly are left out before the GPU sees them. Only splats in clusters that an edge of a mask crosses are tested one by one. `enabled` turns a mask off and on, and `remove()` ends it. Changes apply at the next frame, and all the changes made between two frames cost one pass over the pages they touch, so a page can hold thousands of small masks. `engine.heights()` follows the masks too. `engine.ground()` does not: it reads the coarse ground from the tree's index.
+The rule: a splat of a target is covered while its centre lies inside the polygon and within `z`, or, with `outside`, while it does not. The opacity of a covered splat is multiplied by `opacity`, and the splat takes the tint. Where several masks cover a splat, their opacities multiply and their tints apply in the order the masks were added.
+
+It holds at every level of detail, through the fades between levels, and while pages stream: the test runs on each splat before it is projected, whatever page drew it. Only a mask with opacity 0 drops whole clusters before the GPU sees them: the clusters it covers wholly. Other clusters pay a test for each splat when a mask may cover some of their splats. For a mask with opacity 0 these are only the clusters its edges or its `z` ends cross. A mask that fades or tints tests each splat of every cluster it covers in whole or in part, so it costs the test over its whole area. An `outside` mask is checked against every cluster.
+
+Every field of the `Mask` can be set: `polygon`, `z`, `targets`, `outside`, `opacity`, `tint` and `enabled`. Changes apply at the next frame, and all the changes made between two frames cost one pass over the pages they touch, so a page can hold thousands of small masks. `remove()` ends the mask. After it the setters do nothing and the getters keep their last values. A bad option, in `addMask` or a setter, throws a `RangeError` that names it. A target layer must belong to this engine and must not be removed. `engine.heights()` follows the masks too: a splat counts there with the opacity the masks leave it. `engine.ground()` does not: it reads the coarse ground from the tree's index.
 
 ## Picking
 

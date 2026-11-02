@@ -3,6 +3,7 @@ import { decodePage } from '../../format/index.ts';
 import { encodePage } from '../../format/encode.ts';
 import { planes } from '../math/frustum.ts';
 import { multiply, perspective, view } from '../math/mat4.ts';
+import { edges } from '../math/prism.ts';
 import type { Frame } from '../plugin.ts';
 import { frameBuffers } from './buffers.ts';
 import { FRAME_UNIFORM_BYTES, LOW_PASS, WORK } from './layout.ts';
@@ -205,10 +206,18 @@ describe('Pick', () => {
 	it('never finds a splat a mask hides', async () => {
 		const { pool, buffers, draw, centre } = await setup();
 		pool.add(1, page([10, 20]), [0, 0], () => false);
-		pool.addMask(
-			{ polygon: Float64Array.from([7, 9, 9, 9, 9, 11, 7, 11]), z: [-Infinity, Infinity] },
-			new Set([0])
-		);
+		const ring: [number, number][] = [
+			[7, 9],
+			[9, 9],
+			[9, 11],
+			[7, 11]
+		];
+		pool.addMask({
+			prism: { edges: edges([ring]), z: [-Infinity, Infinity], outside: false },
+			targets: new Set([0]),
+			opacity: 0,
+			tint: [0, 0, 0, 0]
+		});
 		draw([1]);
 		expect((await centre())!.depth).toBeCloseTo(20, 2);
 		pool.destroy();

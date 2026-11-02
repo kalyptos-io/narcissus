@@ -41,7 +41,8 @@ fn rotate(q: vec4f) -> mat3x3f {
 	);
 }
 
-// splat t of a cluster in the floating-origin frame, its record in g; false when a mask hides it
+// splat t of a cluster in the floating-origin frame as its masks leave it, its record in g; false
+// when a mask hides it
 fn decode(cluster: Cluster, t: u32, s: ptr<function, Splat>, g: ptr<function, vec4u>) -> bool {
 	let page = pages[cluster.page];
 	let rec = cluster.slot + t;
@@ -54,10 +55,11 @@ fn decode(cluster: Cluster, t: u32, s: ptr<function, Splat>, g: ptr<function, ve
 
 	var d: Splat;
 	d.position = position(page, *g);
-	if (masked(cluster, d.position)) {
+	let effect = masked(cluster, d.position);
+	if (effect.opacity == 0.0) {
 		return false;
 	}
-	d.opacity = fraction((*g).y, 16u) * fraction(page.factors, 8u * quadrant);
+	d.opacity = fraction((*g).y, 16u) * fraction(page.factors, 8u * quadrant) * effect.opacity;
 	let level = vec3f(fraction((*g).z, 24u), fraction((*g).w, 0u), fraction((*g).w, 8u));
 	d.scale = exp(mix(page.scaleMin, page.scaleMax, level));
 	let dc = mix(page.dcMin, page.dcMax, vec3f(fraction(w0, 0u), fraction(w0, 8u), fraction(w0, 16u)));
@@ -68,6 +70,7 @@ fn decode(cluster: Cluster, t: u32, s: ptr<function, Splat>, g: ptr<function, ve
 	let m2 = vec3f(code(w1, 8u), code(w2, 0u), code(w2, 24u)) * vec3f(k[0].z, k[1].y, k[2].x);
 	let toward = normalize(d.position - uniforms.camera);
 	d.colour = max(0.5 + C0 * dc + C1 * (-toward.y * m0 + toward.z * m1 - toward.x * m2), vec3f(0.0));
+	d.colour = d.colour * (1.0 - effect.tint.a) + effect.tint.rgb;
 	d.depth = -(uniforms.view * vec4f(d.position, 1.0)).z;
 	*s = d;
 	return true;

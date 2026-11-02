@@ -8,8 +8,7 @@ import {
 	type DecodedPage
 } from '../../format/index.ts';
 import { CLUSTER_WORDS, PAGE_WORDS, slots } from './layout.ts';
-import { Masks } from './masks.ts';
-import type { Prism } from '../math/prism.ts';
+import { Masks, type Spec } from './masks.ts';
 import type { Drawn } from '../types.ts';
 
 /** u32 words of Page.factors and Page.layer */
@@ -105,7 +104,7 @@ export class Pool {
 	#clusterDirty = new Dirty();
 	#list: Uint32Array<ArrayBuffer>;
 	#drawn: Entry[] = [];
-	/** per slot: 1 when a mask hides every splat, else the masks that may hide some */
+	/** per slot: 1 when a mask hides every splat, else the masks that may act on some */
 	#hidden: Uint8Array;
 	#masked: (readonly number[])[];
 	#maskedChanged = false;
@@ -273,11 +272,18 @@ export class Pool {
 		if (this.masks.size) this.masks.write();
 	}
 
-	/** a new mask over targets, layer numbers with 0 for the world; it hides from the next draw */
-	addMask(prism: Prism, targets: ReadonlySet<number>): number {
-		const id = this.masks.add(prism, targets);
+	/** a new mask; it acts from the next draw */
+	addMask(spec: Spec): number {
+		const id = this.masks.add(spec);
 		this.#stale(this.masks.area(id)!);
 		return id;
+	}
+
+	/** mask id as spec from the next draw */
+	setMask(id: number, spec: Spec): void {
+		this.#stale(this.masks.area(id)!);
+		this.masks.set(id, spec);
+		this.#stale(this.masks.area(id)!);
 	}
 
 	enableMask(id: number, enabled: boolean): void {
@@ -542,13 +548,13 @@ export class Pool {
 		const max = [0, 0, 0];
 		for (const slot of entry.slots) {
 			this.#box(entry, slot, min, max);
-			const crossing: number[] = [];
-			const hidden = this.masks.relate(entry.layer, min, max, crossing) ? 1 : 0;
+			const listed: number[] = [];
+			const hidden = this.masks.relate(entry.layer, min, max, listed) ? 1 : 0;
 			const was = this.#masked[slot];
 			if (hidden !== this.#hidden[slot]) entry.mask = -1;
 			this.#hidden[slot] = hidden;
-			if (was.length || crossing.length) this.#maskedChanged = true;
-			this.#masked[slot] = crossing.length ? crossing : NONE;
+			if (was.length || listed.length) this.#maskedChanged = true;
+			this.#masked[slot] = listed.length ? listed : NONE;
 		}
 	}
 
