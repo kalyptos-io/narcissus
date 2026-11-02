@@ -90,7 +90,12 @@ describe('Layers', () => {
 	async function setup() {
 		const pool = new Pool(await testDevice(), 4 * CLUSTER);
 		const changes = { count: 0 };
-		const layers = new Layers(pool, none, () => changes.count++);
+		const layers = new Layers(
+			pool,
+			none,
+			() => changes.count++,
+			() => true
+		);
 		const { pack, origin } = await encodeLayer(splats(10, [500_000.5, 6_000_000.25, 12]));
 		const pages = await layerPages(pack, origin);
 		const add = (options: Omit<Parameters<Layers['add']>[1], 'bytes' | 'origin'> = {}) =>
@@ -228,7 +233,12 @@ describe('Layers', () => {
 
 	it('gives null and keeps nothing when the pool cannot hold its pages', async () => {
 		const pool = new Pool(await testDevice(), CLUSTER);
-		const layers = new Layers(pool, none, () => {});
+		const layers = new Layers(
+			pool,
+			none,
+			() => {},
+			() => true
+		);
 		const { pack, origin } = await encodeLayer(splats(2 * CLUSTER, [0, 0, 0]));
 		expect(layers.add(await layerPages(pack, origin), { bytes: pack, origin })).toBeNull();
 		expect(layers.pinned).toBe(0);

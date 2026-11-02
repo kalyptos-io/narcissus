@@ -119,7 +119,7 @@ function lowest(pages: readonly LayerPage[]): number {
 }
 
 /** pool splats the pages of a layer pin */
-export function pins(pages: readonly LayerPage[]): number {
+function pins(pages: readonly LayerPage[]): number {
 	return pages.reduce((sum, { page }) => sum + slots(page.count), 0);
 }
 
@@ -215,6 +215,7 @@ export class Layers {
 	#pool: Pool;
 	#keep: (id: number) => boolean;
 	#changed: () => void;
+	#reserve: (pinned: number) => boolean;
 	#shown = new Map<number, Shown>();
 	#count = 0;
 	/** layer page ids count down from -1, apart from the tree's */
@@ -222,11 +223,20 @@ export class Layers {
 	#pinned = 0;
 	#numbers = new WeakMap<Layer, number>();
 
-	/** keep: the pool pages a layer page may not evict; changed: what draws, or its budget, changed */
-	constructor(pool: Pool, keep: (id: number) => boolean, changed: () => void) {
+	/**
+	 * keep: the pool pages a layer page may not evict; changed: what draws, or its budget, changed;
+	 * reserve: makes the pool room for pinned more splats, false when it cannot
+	 */
+	constructor(
+		pool: Pool,
+		keep: (id: number) => boolean,
+		changed: () => void,
+		reserve: (pinned: number) => boolean
+	) {
 		this.#pool = pool;
 		this.#keep = keep;
 		this.#changed = changed;
+		this.#reserve = reserve;
 	}
 
 	/** pool splats the layers' pages pin */
@@ -237,6 +247,7 @@ export class Layers {
 	/** a layer of pages placed as options say, as readLayer checked them; null when the pool is full */
 	add(pages: readonly LayerPage[], options: LayerOptions): Layer | null {
 		const pinned = pins(pages);
+		if (!this.#reserve(pinned)) return null;
 		this.#pinned += pinned;
 		const number = ++this.#count;
 		const pool = this.#pool;

@@ -6,7 +6,7 @@ import { requestGpu, type Gpu } from './gpu/device.ts';
 import { Pool } from './gpu/pool.ts';
 import type { Found } from './gpu/pick.ts';
 import { Renderer, type HeightsRequest } from './gpu/renderer.ts';
-import { Layers, pins, readLayer, type Layer, type LayerOptions } from './layer.ts';
+import { Layers, readLayer, type Layer, type LayerOptions } from './layer.ts';
 import { createMask, type Mask, type MaskOptions } from './mask.ts';
 import { Graphics, type Line, type LineStyle, type Marker, type MarkerStyle } from './overlay.ts';
 import { planes } from './math/frustum.ts';
@@ -377,7 +377,12 @@ class GpuEngine implements Engine {
 		const { pool, frame } = capacities(this.#budget, gpu.device.limits);
 		this.#pool = new Pool(gpu.device, pool);
 		const keep = (id: number) => this.#feed?.protects(id) ?? false;
-		this.#layers = new Layers(this.#pool, keep, () => this.#changeLayers());
+		this.#layers = new Layers(
+			this.#pool,
+			keep,
+			() => this.#changeLayers(),
+			(pinned) => this.#rebudget(pinned)
+		);
 		this.#renderer = new Renderer(gpu, context, this.#pool, frame);
 		this.#frameCapacity = frame;
 		void gpu.device.lost.then((info) => {
@@ -440,7 +445,6 @@ class GpuEngine implements Engine {
 		if (this.#destroyed) throw new Error(DESTROYED);
 		const pages = await readLayer(options, this.#fetch);
 		if (this.#destroyed) throw new Error(DESTROYED);
-		if (!this.#rebudget(pins(pages))) throw new Error(NO_ROOM);
 		const layer = this.#layers.add(pages, options);
 		if (!layer) throw new Error(NO_ROOM);
 		return layer;

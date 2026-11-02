@@ -34,7 +34,8 @@ describe('createMask', () => {
 		const layers = new Layers(
 			pool,
 			() => false,
-			() => {}
+			() => {},
+			() => true
 		);
 		const changes = { count: 0 };
 		const mask = (options: MaskOptions) => createMask(pool, options, layers, () => changes.count++);
@@ -55,7 +56,8 @@ describe('createMask', () => {
 			new Layers(
 				pool,
 				() => false,
-				() => {}
+				() => {},
+				() => true
 			)
 		);
 		const world = { polygon: square, targets: ['world'] } as const;
