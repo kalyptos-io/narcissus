@@ -19,8 +19,9 @@ import {
 } from './layout.ts';
 import { planes } from '../math/frustum.ts';
 import { multiply, perspective, transform, view } from '../math/mat4.ts';
+import { edges } from '../math/prism.ts';
 import type { Shade } from '../plugin.ts';
-import type { Colour } from '../types.ts';
+import type { Colour, Ring } from '../types.ts';
 import { frameBuffers } from './buffers.ts';
 import { Pool } from './pool.ts';
 import { Project } from './project.ts';
@@ -490,6 +491,19 @@ describe('Project', () => {
 		// only the splat at y 25 lies in the height range
 		id = mask(20, 60, [2, 10]);
 		expect((await run(context)).count).toBe(3);
+		drop(id);
+		// a hole keeps the splats at y 25 and 50
+		const ring = (x: number, y0: number, y1: number): Ring => [
+			[-x, y0],
+			[x, y0],
+			[x, y1],
+			[-x, y1]
+		];
+		const holed = rect(-10, 0, 10, 100);
+		holed.prism = { ...holed.prism, edges: edges([ring(10, 0, 100), ring(5, 20, 60)]) };
+		id = pool.addMask(holed);
+		pool.draw([{ id: 1, factors: FACTORS }]);
+		expect((await run(context)).count).toBe(2);
 		drop(id);
 		// a mask over the whole cluster leaves nothing to list
 		id = mask(-100, 200, all, 0, 100);

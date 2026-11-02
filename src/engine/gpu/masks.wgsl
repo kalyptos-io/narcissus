@@ -1,8 +1,8 @@
-// prisms that hide, fade or tint splats by centre; masks.ts writes the records, their edges, then the
-// clusters' lists
+// prisms that hide, fade or tint splats by centre; masks.ts writes the records, their edges as runs
+// of vertices, then the clusters' lists
 
-// words of a record: min x y, max x y, min z, max z (f32), first edge word, edges, opacity (f32),
-// tint (pack4x8unorm), outside
+// words of a record: min x y, max x y, min z, max z (f32), first run word, run words, opacity (f32),
+// tint (pack4x8unorm), outside; a run: its count of vertices, then their x y (f32)
 const MASK_WORDS: u32 = 11u;
 
 @group(1) @binding(0) var<storage, read> masks: array<u32>;
@@ -45,13 +45,20 @@ fn acts(m: u32, p: vec3f) -> bool {
 	var odd = false;
 	if (p.x >= maskFloat(m) && p.y >= maskFloat(m + 1u) && p.x <= maskFloat(m + 2u) &&
 		p.y <= maskFloat(m + 3u) && p.z >= maskFloat(m + 4u) && p.z <= maskFloat(m + 5u)) {
-		let first = masks[m + 6u];
-		for (var e = first; e < first + 4u * masks[m + 7u]; e += 4u) {
-			let a = vec2f(maskFloat(e), maskFloat(e + 1u));
-			let b = vec2f(maskFloat(e + 2u), maskFloat(e + 3u));
-			if ((a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x) {
-				odd = !odd;
+		let end = masks[m + 6u] + masks[m + 7u];
+		var run = masks[m + 6u];
+		while (run < end) {
+			// each vertex joins the one before, the first the last
+			let last = run + 2u * masks[run] - 1u;
+			var a = vec2f(maskFloat(last), maskFloat(last + 1u));
+			for (var v = run + 1u; v <= last; v += 2u) {
+				let b = vec2f(maskFloat(v), maskFloat(v + 1u));
+				if ((a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x) {
+					odd = !odd;
+				}
+				a = b;
 			}
+			run = last + 2u;
 		}
 	}
 	return odd != (masks[m + 10u] != 0u);

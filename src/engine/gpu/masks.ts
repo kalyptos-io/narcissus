@@ -31,6 +31,8 @@ interface Held extends Spec {
 	bounds: [number, number, number, number];
 	/** world min e, n, max e, n of what it acts on: its bounds, or everywhere when outside */
 	area: readonly [number, number, number, number];
+	/** its edges as runs of vertices, x, y, each joined to the next and the last to the first */
+	runs: Float64Array[];
 }
 
 const EVERYWHERE = [-Infinity, -Infinity, Infinity, Infinity] as const;
@@ -121,39 +123,42 @@ export class Masks {
 		this.#origin = origin;
 	}
 
-	/** words before the lists: the records and their edges */
+	/** words before the lists: the records and their runs, each its count then its vertices */
 	get listBase(): number {
 		let words = this.#masks.size * MASK_WORDS;
-		for (const { prism } of this.#masks.values()) words += prism.edges.length;
+		for (const { runs } of this.#masks.values()) for (const run of runs) words += 1 + run.length;
 		return words;
 	}
 
-	/** the records, edges and lists, as relate's entries, from listBase on; the last lists when left out */
+	/** the records, runs and lists, as relate's entries, from listBase on; the last lists when left out */
 	write(lists: number[] = this.#lists): void {
 		this.#lists = lists;
 		const words = new Uint32Array(this.listBase + lists.length);
 		const floats = new Float32Array(words.buffer);
 		const [ox, oy, oz] = this.#origin;
 		const record = new Map<number, number>();
-		let edge = this.#masks.size * MASK_WORDS;
+		let at = this.#masks.size * MASK_WORDS;
 		let r = 0;
-		for (const [id, { prism, opacity, tint, bounds }] of this.#masks) {
-			const { edges, z, outside } = prism;
+		for (const [id, { prism, opacity, tint, bounds, runs }] of this.#masks) {
+			const { z, outside } = prism;
 			const w = r * MASK_WORDS;
 			floats.set([bounds[0] - ox, bounds[1] - oy, bounds[2] - ox, bounds[3] - oy], w);
 			floats[w + 4] = Number.isFinite(z[0]) ? z[0] - oz : -FAR;
 			floats[w + 5] = Number.isFinite(z[1]) ? z[1] - oz : FAR;
-			words[w + 6] = edge;
-			words[w + 7] = edges.length / 4;
+			words[w + 6] = at;
 			floats[w + 8] = opacity;
 			words[w + 9] = pack4x8unorm(tint);
 			words[w + 10] = outside ? 1 : 0;
-			for (let k = 0; k < edges.length; k++) floats[edge++] = edges[k] - (k % 2 ? oy : ox);
+			for (const run of runs) {
+				words[at++] = run.length / 2;
+				for (let k = 0; k < run.length; k++) floats[at++] = run[k] - (k % 2 ? oy : ox);
+			}
+			words[w + 7] = at - words[w + 6];
 			record.set(id, r++);
 		}
 		for (let k = 0; k < lists.length; k++) {
 			const entry = lists[k];
-			words[edge + k] = (record.get(entry >> 1) ?? 0) | (entry & 1 ? INSIDE : 0);
+			words[at + k] = (record.get(entry >> 1) ?? 0) | (entry & 1 ? INSIDE : 0);
 		}
 		if (words.byteLength > this.#buffer.size) {
 			this.#buffer.destroy();
@@ -176,7 +181,8 @@ export class Masks {
 			bounds[2] = Math.max(bounds[2], edges[k]);
 			bounds[3] = Math.max(bounds[3], edges[k + 1]);
 		}
-		this.#masks.set(id, { ...spec, enabled, bounds, area: outside ? EVERYWHERE : bounds });
+		const area = outside ? EVERYWHERE : bounds;
+		this.#masks.set(id, { ...spec, enabled, bounds, area, runs: runsOf(edges) });
 		this.#grid = null;
 	}
 
@@ -229,6 +235,24 @@ class Grid {
 				for (const id of this.#cells.get(`${x},${y}`) ?? []) out.add(id);
 		return out;
 	}
+}
+
+/** Prism.edges as runs: each edge's start, a run ending where the next edge starts elsewhere */
+function runsOf(edges: Float64Array): Float64Array[] {
+	const runs: Float64Array[] = [];
+	let start = 0;
+	for (let k = 0; k < edges.length; k += 4) {
+		const next = k + 4;
+		if (next < edges.length && edges[next] === edges[k + 2] && edges[next + 1] === edges[k + 3]) {
+			continue;
+		}
+		// rings close, so a run's last edge ends at its first vertex
+		const run = new Float64Array((next - start) / 2);
+		for (let e = start; e < next; e += 4) run.set(edges.subarray(e, e + 2), (e - start) / 2);
+		runs.push(run);
+		start = next;
+	}
+	return runs;
 }
 
 function cells(x0: number, y0: number, x1: number, y1: number, cell: number) {
