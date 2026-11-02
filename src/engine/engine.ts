@@ -86,7 +86,10 @@ export interface Engine {
 	 * plane; it renders no frame of its own
 	 */
 	pick(x: number, y: number): Promise<Hit | null>;
-	/** pick() of each canvas css pixel, answered together against one frame in one pass */
+	/**
+	 * pick() of each canvas css pixel, answered together against one frame in one pass; one that
+	 * found more splats under its pixels than the pass kept is answered by the next frame instead
+	 */
 	pickMany(points: readonly (readonly [number, number])[]): Promise<(Hit | null)[]>;
 	ground(e: number, n: number): number | undefined;
 	/** ground(e, n) once every .idx over (e, n) is read */
@@ -893,7 +896,10 @@ class GpuEngine implements Engine {
 		return { ...at, view: viewMatrix(this.#ahead, eye, c.yaw * DEG, c.pitch * DEG) };
 	}
 
-	/** the waiting picks against the last frame, whose uniforms and cull the gpu still holds */
+	/**
+	 * the waiting picks against the last frame, whose uniforms and cull the gpu still holds; one
+	 * that overflowed waits for the next frame, the pick buffer grown by then
+	 */
 	#answer(): void {
 		const frame = this.#rendered!;
 		// the next frame rewrites the view before the gpu answers
@@ -915,8 +921,15 @@ class GpuEngine implements Engine {
 			};
 		void this.#renderer.pick(pixels, frame).then((found) => {
 			let at = 0;
-			for (const { points, resolve } of picks) {
-				resolve(points.map((_, k) => hit(found[at + k], pixels[at + k])));
+			for (const picking of picks) {
+				const { points, resolve } = picking;
+				const mine = found.slice(at, at + points.length);
+				if (this.#destroyed || this.#lost || !mine.includes(undefined)) {
+					resolve(mine.map((f, k) => hit(f ?? null, pixels[at + k])));
+				} else {
+					this.#picks.push(picking);
+					this.requestFrame();
+				}
 				at += points.length;
 			}
 		});

@@ -91,11 +91,14 @@ export class Pick {
 	/**
 	 * submits picks of target pixels (x, y from the top-left) over the frame's visible clusters, one
 	 * dispatch a batch of PROBES; frame must be the last one submitted, whose uniforms and cull the
-	 * buffers still hold. null where the splats over a pixel never reach half, and over a whole batch
-	 * where more lay under its pixels than the buffer kept, which grows it for the next
+	 * buffers still hold. null where the splats over a pixel never reach half; undefined over a whole
+	 * batch where more lay under its pixels than the buffer kept, which grows it for the next
 	 */
-	run(pixels: readonly (readonly [number, number])[], frame: Frame): Promise<(Found | null)[]> {
-		const batches: Promise<(Found | null)[]>[] = [];
+	run(
+		pixels: readonly (readonly [number, number])[],
+		frame: Frame
+	): Promise<(Found | null | undefined)[]> {
+		const batches: Promise<(Found | null | undefined)[]>[] = [];
 		for (let k = 0; k < pixels.length; k += PROBES)
 			batches.push(this.#batch(pixels.slice(k, k + PROBES), frame));
 		return Promise.all(batches).then((found) => found.flat());
@@ -106,7 +109,10 @@ export class Pick {
 		this.#hits.destroy();
 	}
 
-	#batch(pixels: readonly (readonly [number, number])[], frame: Frame): Promise<(Found | null)[]> {
+	#batch(
+		pixels: readonly (readonly [number, number])[],
+		frame: Frame
+	): Promise<(Found | null | undefined)[]> {
 		const device = this.#device;
 		const pool = this.#pool;
 		const kept = this.#entries;
@@ -137,20 +143,22 @@ export class Pick {
 		pass.end();
 		encoder.copyBufferToBuffer(this.#hits, 0, readback, 0, bytes);
 		device.queue.submit([encoder.finish()]);
-		const none = () => pixels.map(() => null);
 		return readback
 			.mapAsync(GPUMapMode.READ)
-			.then(() => {
-				const read = readback.getMappedRange();
-				const count = new Uint32Array(read, 0, 1)[0];
-				if (count > kept) {
-					this.#grow(2 ** Math.ceil(Math.log2(count)));
-					return none();
-				}
-				const floats = new Float32Array(read, HEAD_BYTES);
-				const words = new Uint32Array(read, HEAD_BYTES);
-				return surfaces(floats, words, count, pixels.length);
-			}, none)
+			.then(
+				() => {
+					const read = readback.getMappedRange();
+					const count = new Uint32Array(read, 0, 1)[0];
+					if (count > kept) {
+						this.#grow(2 ** Math.ceil(Math.log2(count)));
+						return pixels.map(() => undefined);
+					}
+					const floats = new Float32Array(read, HEAD_BYTES);
+					const words = new Uint32Array(read, HEAD_BYTES);
+					return surfaces(floats, words, count, pixels.length);
+				},
+				() => pixels.map(() => null)
+			)
 			.finally(() => readback.destroy());
 	}
 

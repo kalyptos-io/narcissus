@@ -159,7 +159,7 @@ describe('Pick', () => {
 		buffers.destroy();
 	});
 
-	it('finds none while more splats lie over the pixel than it keeps, then grows to keep them', async () => {
+	it('marks a pixel undefined while more splats lie under it than it keeps, then grows to keep them', async () => {
 		const { pool, buffers, draw, centre } = await setup(8192);
 		// 5000 faint discs a centimetre apart, at an alpha a byte holds; the k-th brings it to half
 		const alpha = 4 / 255;
@@ -167,7 +167,7 @@ describe('Pick', () => {
 		const discs = Array.from({ length: 5000 }, (_, i) => ({ north: 10 + i / 100, alpha }));
 		pool.add(1, page(discs), [0, 0], () => false);
 		draw([1]);
-		expect(await centre()).toBeNull();
+		expect(await centre()).toBeUndefined();
 		expect((await centre())!.depth).toBeCloseTo(10 + (k - 1) / 100, 2);
 		pool.destroy();
 		buffers.destroy();

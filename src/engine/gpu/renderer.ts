@@ -149,8 +149,11 @@ export class Renderer {
 		this.#dropTargets();
 	}
 
-	/** the surface under target pixels (x, y from the top-left) as frame, the last rendered, drew it */
-	pick(pixels: readonly (readonly [number, number])[], frame: Frame): Promise<(Found | null)[]> {
+	/** Pick.run: the surface under target pixels (x, y from the top-left) as frame, the last, drew it */
+	pick(
+		pixels: readonly (readonly [number, number])[],
+		frame: Frame
+	): Promise<(Found | null | undefined)[]> {
 		return this.#pick.run(pixels, frame);
 	}
 

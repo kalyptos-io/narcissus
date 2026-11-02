@@ -38,13 +38,13 @@ It holds at every level of detail, through the fades between levels, and while p
 
 ## Picking
 
-`engine.pick(x, y)`, with canvas CSS pixels such as a pointer event's `offsetX` and `offsetY`, resolves with a `Hit` or `null` over the sky:
+`engine.pick(x, y)`, with canvas CSS pixels such as a pointer event's `offsetX` and `offsetY`, resolves with a `Hit`, or `null` where nothing is there, such as the sky:
 
 - `point`: where the pixel's ray meets the hit splat's plane.
 - `normal`: the splat's thinnest axis, toward the camera. Splats on a surface lie flat along it, so it is the surface normal there.
 - `layer`: the `Layer` hit, or `null` for the world.
 
-The hit is where the splats that the last frame drew over the pixel, blended front to back, first cover half of it, after masks and plugins. Faint splats that blend into a surface therefore give a hit too. When more splats lie over the pixel than the pick holds, it resolves `null` once and holds more on the next pick. A pick renders no frame. It is one small compute pass over the clusters under the pixel, so it is fast enough for every pointer move. It answers about a frame later, so a page should not start a new pick while one is pending.
+The hit is where the splats that the last frame drew over the pixel, blended front to back, first cover half of it, after masks and plugins. Faint splats that blend into a surface therefore give a hit too. A pick renders no frame. It is one small compute pass over the clusters under the pixel, so it is fast enough for every pointer move, and a page can start a pick while others are pending. It answers about a frame later. When more splats lie under the pixel than the pick holds, it holds more and answers on the next frame instead, so it is late but never falsely `null`.
 
 `engine.pickMany(points)` picks many canvas pixels against the same frame and resolves with a `Hit` or `null` for each, in order. One compute pass serves up to 64 pixels, so the pixels a pointer crossed in a frame, or a few around it, cost about as much as one pick. Picks asked for before the next frame are answered together in the same way.
 
