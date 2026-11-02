@@ -235,6 +235,26 @@ describe('Controls', () => {
 		expect(changed).toHaveBeenCalledOnce();
 	});
 
+	it('throws on bad limits, naming the field, and keeps the old ones', () => {
+		const bad: [string, object][] = [
+			['pitch', { pitch: [-20, -90] }],
+			['pitch', { pitch: [-100, -20] }],
+			['dist', { dist: [0, 100] }],
+			['dist', { dist: [1, Infinity] }],
+			['clearance', { clearance: NaN }],
+			['floor', { floor: -Infinity }]
+		];
+		for (const [field, wrong] of bad) {
+			expect(() => (controls.limits = { ...LIMITS, ...wrong })).toThrow(
+				expect.objectContaining({
+					name: 'RangeError',
+					message: expect.stringContaining(`limits.${field} `)
+				})
+			);
+		}
+		expect(controls.limits).toEqual(LIMITS);
+	});
+
 	it('jumps at once', () => {
 		controls.jump({ e: 40, dist: 100 });
 		expect(controls.pose).toEqual({ ...start, e: 40, dist: 100 });

@@ -104,7 +104,7 @@ export class Controls {
 		this.#canvas = canvas;
 		this.#engine = engine;
 		this.#ground = ground;
-		this.#limits = limits;
+		this.#limits = checked(limits);
 		this.#target = this.#clamp(pose);
 		this.#current = this.#target;
 		this.#offFrame = engine.onFrame(this.#tick);
@@ -138,7 +138,7 @@ export class Controls {
 
 	/** clamps the pose to the new limits at once */
 	set limits(limits: Limits) {
-		this.#limits = limits;
+		this.#limits = checked(limits);
 		this.#target = this.#clamp(this.#target);
 		const was = this.#current;
 		this.#current = this.#clamp(was);
@@ -344,6 +344,27 @@ export class Controls {
 	#place() {
 		this.#engine.setCamera(viewOf(this.#current));
 	}
+}
+
+/** the limits, or a RangeError naming the field that is wrong */
+function checked(limits: Limits): Limits {
+	const { pitch, dist, clearance, floor } = limits;
+	if (!ordered(pitch) || pitch[0] < -90 || pitch[1] > 90) {
+		throw new RangeError('limits.pitch must be two finite numbers in order, from -90 to 90.');
+	}
+	if (!ordered(dist) || dist[0] <= 0) {
+		throw new RangeError('limits.dist must be two finite numbers in order, above 0.');
+	}
+	if (!Number.isFinite(clearance))
+		throw new RangeError('limits.clearance must be a finite number.');
+	if (!Number.isFinite(floor)) throw new RangeError('limits.floor must be a finite number.');
+	return limits;
+}
+
+function ordered(pair: readonly [number, number]): boolean {
+	return (
+		pair?.length === 2 && Number.isFinite(pair[0]) && Number.isFinite(pair[1]) && pair[0] <= pair[1]
+	);
 }
 
 function same(a: Pose, b: Pose): boolean {
