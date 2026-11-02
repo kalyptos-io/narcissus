@@ -115,10 +115,12 @@ export class Controls {
 		canvas.addEventListener('wheel', this.#wheel, { passive: false, signal });
 		canvas.addEventListener('dblclick', this.#pick, { signal });
 		canvas.addEventListener('contextmenu', (e) => e.preventDefault(), { signal });
-		window.addEventListener('keydown', this.#keydown, { signal });
-		window.addEventListener('keyup', this.#keyup, { signal });
-		// a key released while the window is in the background never sends keyup
-		window.addEventListener('blur', () => this.#keys.clear(), { signal });
+		// keys only while the canvas has focus, so text fields and other viewers keep theirs
+		if (canvas.tabIndex < 0) canvas.tabIndex = 0;
+		canvas.addEventListener('keydown', this.#keydown, { signal });
+		canvas.addEventListener('keyup', this.#keyup, { signal });
+		// a key released after focus left never sends keyup here
+		canvas.addEventListener('blur', () => this.#keys.clear(), { signal });
 		this.#place();
 	}
 

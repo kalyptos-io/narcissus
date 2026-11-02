@@ -63,7 +63,7 @@ describe('smooth', () => {
 
 describe('Controls', () => {
 	const start: Pose = { e: 0, n: 0, h: 0, yaw: 0, pitch: -35, dist: 300 };
-	let canvas: EventTarget;
+	let canvas: EventTarget & { tabIndex: number };
 	let tick: (now: number) => void;
 	let now: number;
 	let controls: Controls;
@@ -71,7 +71,11 @@ describe('Controls', () => {
 
 	beforeEach(() => {
 		vi.stubGlobal('window', new EventTarget());
-		canvas = Object.assign(new EventTarget(), { clientHeight: 600, setPointerCapture() {} });
+		canvas = Object.assign(new EventTarget(), {
+			clientHeight: 600,
+			tabIndex: -1,
+			setPointerCapture() {}
+		});
 		const engine = {
 			onFrame: (fn: (now: number) => void) => ((tick = fn), () => {}),
 			requestFrame() {},
@@ -81,7 +85,7 @@ describe('Controls', () => {
 		};
 		now = 0;
 		warm.mockClear();
-		controls = new Controls(canvas as HTMLCanvasElement, engine as unknown as Engine, {
+		controls = new Controls(canvas as unknown as HTMLCanvasElement, engine as unknown as Engine, {
 			ground: () => 0,
 			pose: start
 		});
@@ -95,10 +99,16 @@ describe('Controls', () => {
 	const frames = (n: number) => {
 		for (let i = 0; i < n; i++) tick((now += 16));
 	};
-	const event = (type: string, fields: object, prevented = false) => {
+	const event = (type: string, fields: object, prevented = false, target: EventTarget = canvas) => {
 		const e = Object.assign(new Event(type, { cancelable: true }), fields);
 		if (prevented) e.preventDefault();
-		canvas.dispatchEvent(e);
+		target.dispatchEvent(e);
+	};
+	const key = (type: string, code: string, target: EventTarget = canvas) =>
+		event(type, { code, repeat: false }, false, target);
+	const fly = (target: EventTarget = canvas) => {
+		key('keydown', 'KeyF', target);
+		key('keydown', 'KeyW', target);
 	};
 	const drag = (prevented = false) => {
 		const pointer = { pointerId: 1, pointerType: 'mouse', buttons: 1 };
@@ -172,6 +182,33 @@ describe('Controls', () => {
 		frames(5);
 		abort.abort();
 		expect(await arrived).toBe(false);
+	});
+
+	it('makes the canvas focusable', () => {
+		expect(canvas.tabIndex).toBe(0);
+	});
+
+	it('flies on keys pressed on the canvas', () => {
+		fly();
+		frames(5);
+		expect(controls.pose.n).toBeGreaterThan(start.n);
+	});
+
+	it('ignores keys pressed elsewhere', () => {
+		fly(window);
+		fly(new EventTarget());
+		frames(5);
+		expect(controls.pose).toEqual(start);
+	});
+
+	it('lets go of held keys when the canvas loses focus', () => {
+		fly();
+		frames(5);
+		canvas.dispatchEvent(new Event('blur'));
+		frames(100);
+		const rest = controls.pose;
+		frames(50);
+		expect(controls.pose).toEqual(rest);
 	});
 
 	it('clamps the pose to new limits and tells the listeners', () => {
