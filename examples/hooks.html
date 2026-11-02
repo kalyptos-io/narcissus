@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>narcissus hooks</title>
+		<style>
+			html,
+			body {
+				height: 100%;
+				margin: 0;
+				font:
+					13px system-ui,
+					sans-serif;
+			}
+			narcissus-viewer {
+				height: 100%;
+			}
+			#panel {
+				position: fixed;
+				top: 8px;
+				left: 8px;
+				display: grid;
+				gap: 6px;
+				width: 220px;
+				padding: 10px;
+				border-radius: 6px;
+				background: #fffe;
+			}
+			#panel img {
+				width: 100%;
+			}
+			#label {
+				position: fixed;
+				top: 0;
+				left: 0;
+				padding: 2px 6px;
+				border-radius: 4px;
+				background: #000c;
+				color: #fff;
+				pointer-events: none;
+			}
+		</style>
+	</head>
+	<body>
+		<!-- ?src=<url of a world.json> shows another world -->
+		<narcissus-viewer src="../fixtures/tree/world.json" aria-label="the world">
+			<p>This browser cannot show the world.</p>
+		</narcissus-viewer>
+		<div id="label" hidden>layer</div>
+		<div id="panel">
+			<fieldset>
+				<legend>pointer</legend>
+				<label><input type="radio" name="mode" value="camera" checked /> camera</label>
+				<label><input type="radio" name="mode" value="move" /> move layer</label>
+				<label><input type="radio" name="mode" value="measure" /> measure</label>
+			</fieldset>
+			<label>heading <input id="heading" type="range" min="0" max="359" value="0" /></label>
+			<label><input id="fade" type="checkbox" /> fade ring with a hole</label>
+			<label><input id="tint" type="checkbox" /> tint</label>
+			<label><input id="crop" type="checkbox" /> crop to an area</label>
+			<label><input id="shown" type="checkbox" checked /> line visible</label>
+			<span>length <output id="length">0 m</output> <button id="clear">clear</button></span>
+			<button id="capture">capture</button>
+			<a id="shot" download="narcissus.png" hidden><img alt="the captured frame" /></a>
+			<input placeholder="type here: wasd stays in this field" />
+		</div>
+		<script type="module">
+			// from a clone: pnpm build, then serve the repository root. on a site, point these at the package's dist
+			import '../dist/element/index.js';
+			import { encodeLayer } from '../dist/index.js';
+
+			const viewer = document.querySelector('narcissus-viewer');
+			const src = new URLSearchParams(location.search).get('src');
+			if (src) viewer.setAttribute('src', src);
+			const $ = (id) => document.getElementById(id);
+			const rect = ({ e, n }) => [
+				[e[0], n[0]],
+				[e[1], n[0]],
+				[e[1], n[1]],
+				[e[0], n[1]]
+			];
+			const square = (e, n, r) => rect({ e: [e - r, e + r], n: [n - r, n + r] });
+
+			let layer = null;
+			let under = null;
+			let points = [];
+			let line = null;
+			let markers = [];
+
+			// an orange block of splats, 8 by 3.2 by 4 m, standing on (e, n, h)
+			function block([e, n, h]) {
+				const C0 = 0.28209479177387814;
+				const cells = [];
+				for (let i = -10; i <= 10; i++)
+					for (let j = -4; j <= 4; j++)
+						for (let k = 0; k <= 10; k++) cells.push([i * 0.4, j * 0.4, k * 0.4]);
+				const count = cells.length;
+				const splats = {
+					count,
+					position: new Float64Array(count * 3),
+					rotation: new Float32Array(count * 4),
+					scale: new Float32Array(count * 3).fill(Math.log(0.2)),
+					alpha: new Float32Array(count).fill(0.9),
+					dc: new Float32Array(count * 3),
+					sh: null
+				};
+				cells.forEach(([x, y, z], i) => {
+					splats.position.set([e + x, n + y, h + z], i * 3);
+					splats.rotation[i * 4] = 1;
+					// colour = 0.5 + C0 dc
+					splats.dc.set(
+						[0.95, 0.45 + z / 10, 0.1].map((c) => (c - 0.5) / C0),
+						i * 3
+					);
+				});
+				return splats;
+			}
+
+			async function measure(event) {
+				const hit = await viewer.engine.pick(event.offsetX, event.offsetY);
+				if (!hit) return;
+				points = [...points, hit.point];
+				const marker = viewer.engine.addMarker(hit.point, { size: 10 });
+				marker.visible = $('shown').checked;
+				markers.push(marker);
+				if (line) line.points = points;
+				else {
+					line = viewer.engine.addLine(points, { colour: [1, 0.8, 0, 1], width: 3 });
+					line.visible = $('shown').checked;
+				}
+				let metres = 0;
+				for (let k = 1; k < points.length; k++) {
+					const [a, b] = [points[k - 1], points[k]];
+					metres += Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+				}
+				$('length').value = `${metres.toFixed(2)} m`;
+			}
+
+			viewer.addEventListener('start', () => {
+				const engine = viewer.engine;
+				let mode = 'camera';
+				let dragging = false;
+				let picking = false;
+				for (const radio of document.getElementsByName('mode')) {
+					radio.onchange = () => (mode = radio.value);
+				}
+
+				// a capture listener runs before the controls, and preventDefault keeps the camera still
+				viewer.addEventListener(
+					'pointerdown',
+					(event) => {
+						if (mode === 'camera' || event.button !== 0 || !layer) return;
+						event.preventDefault();
+						if (mode === 'measure') return void measure(event);
+						dragging = true;
+						// the world under the layer must show for pick to find the ground there
+						under.enabled = false;
+						viewer.setPointerCapture(event.pointerId);
+					},
+					{ capture: true }
+				);
+				viewer.addEventListener('pointermove', async (event) => {
+					if (!dragging || picking) return;
+					picking = true;
+					const hit = await engine.pick(event.offsetX, event.offsetY);
+					picking = false;
+					if (hit && dragging) layer.position = hit.point;
+				});
+				viewer.addEventListener('pointerup', () => {
+					if (!dragging) return;
+					dragging = false;
+					under.polygon = rect(layer.box);
+					under.enabled = true;
+				});
+
+				$('heading').oninput = () => {
+					layer.heading = $('heading').valueAsNumber;
+					under.polygon = rect(layer.box);
+				};
+				$('shown').onchange = () => {
+					for (const graphic of [line, ...markers]) {
+						if (graphic) graphic.visible = $('shown').checked;
+					}
+				};
+				$('clear').onclick = () => {
+					for (const graphic of [line, ...markers]) graphic?.remove();
+					[points, line, markers] = [[], null, []];
+					$('length').value = '0 m';
+				};
+				$('capture').onclick = async () => {
+					const blob = await engine.capture();
+					URL.revokeObjectURL($('shot').href);
+					$('shot').href = $('shot').firstElementChild.src = URL.createObjectURL(blob);
+					$('shot').hidden = false;
+				};
+
+				// after the controls set the camera, so the label moves with the frame
+				engine.onFrame(() => {
+					if (!layer) return;
+					const at = engine.toScreen([layer.position[0], layer.position[1], layer.box.h[1]]);
+					$('label').hidden = !at;
+					if (at)
+						$('label').style.transform = `translate(${at[0]}px, ${at[1]}px) translate(-50%, -120%)`;
+				});
+			});
+
+			viewer.addEventListener(
+				'ready',
+				async () => {
+					const engine = viewer.engine;
+					const { e, n, h } = viewer.controls.pose;
+					const { pack, origin } = await encodeLayer(block([e, n, h]));
+					layer = await engine.addLayer({ bytes: pack, origin, pickable: false });
+					under = engine.addMask({ polygon: rect(layer.box), targets: ['world'] });
+					const masks = {
+						fade: engine.addMask({
+							polygon: [square(e - 60, n, 30), square(e - 60, n, 12)],
+							targets: ['world'],
+							opacity: 0.2
+						}),
+						tint: engine.addMask({
+							polygon: square(e + 60, n, 25),
+							targets: ['world'],
+							opacity: 1,
+							tint: [1, 0.1, 0.4, 0.6]
+						}),
+						crop: engine.addMask({
+							polygon: square(e, n, 90),
+							targets: ['world', layer],
+							outside: true
+						})
+					};
+					for (const [id, mask] of Object.entries(masks)) {
+						mask.enabled = $(id).checked;
+						$(id).onchange = () => (mask.enabled = $(id).checked);
+					}
+				},
+				{ once: true }
+			);
+			viewer.addEventListener('error', (event) => console.error(event.detail));
+		</script>
+	</body>
+</html>
