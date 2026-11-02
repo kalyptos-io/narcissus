@@ -1,10 +1,8 @@
 # Embedding the viewer
 
-A page that embeds narcissus can add its own splats, hide parts of the world, find what is under the cursor, draw lines and markers in the scene, and steer the camera. These hooks know nothing of the page. They are on the engine and the controls, which `<narcissus-viewer>` gives as its `engine` and `controls` properties from its `start` event. [examples/hooks.html](../examples/hooks.html) uses each of them on one page.
+From its `start` event, `<narcissus-viewer>` gives these hooks through its `engine` and `controls` properties; [examples/hooks.html](../examples/hooks.html) uses each. Positions are world coordinates as `world.json` declares them, as float64.
 
-All positions that go in or come out are world coordinates as `world.json` declares them, as JavaScript numbers (float64). Inside, the engine keeps them relative to a floating origin near the camera, so a projected northing keeps its millimetres.
-
-To replace a part of the world, combine a mask on the world with a layer:
+To replace part of the world:
 
 ```ts
 import { encodeLayer } from '@kalyptos/narcissus';
@@ -19,93 +17,96 @@ layer.visible = mask.enabled = false;
 
 ## Handles
 
-`addLayer`, `addMask`, `addLine` and `addMarker` give a handle. Its fields can be set, and `remove()` ends it. A change applies at the next frame, and all the changes made between two frames cost one update. After `remove()`, the setters do nothing and the getters keep their last values. A bad input, to an `add` or to a setter, throws a `RangeError` whose message names it.
+`addLayer`, `addMask`, `addLine` and `addMarker` give a handle with settable fields. Changes show at the next frame; all changes between two frames cost one update. After `remove()`, setters do nothing and getters keep their last values.
+
+Points, corners, headings, widths and sizes must be finite, and opacities and colour channels from 0 to 1. A bad input throws a `RangeError` that names the field; `addLayer` rejects with it.
 
 ## Layers
 
-`engine.addLayer(options)` adds a set of splats beside the world's tree. It resolves with a `Layer` once the layer is decoded. It rejects when the pack does not load or the layers hold more splats than the device can.
+`engine.addLayer(options)` resolves with a `Layer`. It rejects when the pack does not load, the layers need more splats than the device holds, or the engine is destroyed.
 
-```ts
-const layer = await engine.addLayer({
-	url: 'house.pack', // or bytes: pack
-	origin, // the pack's south-west corner, as encodeLayer gives it
-	position: [e, n, h], // where the anchor goes; where it was encoded when left out
-	heading: 30, // degrees clockwise seen from above, 0 when left out
-	pickable: false, // pick() passes through it to what lies behind
-	signal // aborts the read
-});
-```
+| option           | value                                                                                               | default              |
+| ---------------- | --------------------------------------------------------------------------------------------------- | -------------------- |
+| `url` or `bytes` | a pack as [format.md](format.md) gives it, or its URL                                               | required             |
+| `origin`         | `[e, n]`, the pack's south-west corner in whole metres                                              | required             |
+| `position`       | `[e, n, h]`, where the anchor goes                                                                  | where it was encoded |
+| `heading`        | degrees clockwise seen from above                                                                   | 0                    |
+| `visible`        | whether the layer draws                                                                             | `true`               |
+| `opacity`        | of every splat                                                                                      | 1                    |
+| `pickable`       | `false`: `pick()` passes through; the layer still draws, obeys masks and adds to `engine.heights()` | `true`               |
+| `signal`         | aborts the read; `addLayer` then rejects with `signal.reason`                                       |                      |
 
-- The input is a pack, as [format.md](format.md) gives it, whose positions count from `origin`, a south-west corner in whole metres. `encodeLayer(splats)` writes one from splats in world coordinates. It is in `@kalyptos/narcissus` and `@kalyptos/narcissus/format`, and runs in the browser and in Node.
-- `{ url }` is read through the engine's `source`, the same `Fetch` as the world, so the page's tokens or signed URLs apply. `signal` goes to that read and is checked again once the pack is decoded. An abort rejects with `signal.reason` and keeps nothing.
-- The anchor is the centre of the layer's box as it was encoded, at the height of its lowest splat centre, so a layer placed on a picked ground point rests on it. `position` is where the anchor sits, and `heading` turns the layer about the vertical through it, clockwise as a pose's yaw: at 90, what was north of the anchor is east of it. A splat encoded at `p` shows at `position + R(heading)(p - anchor)`. With neither, the layer shows where it was encoded.
-- `box` is the world extent of the layer where it stands now. A turned layer's box is a little larger than its splats.
-- `position`, `heading`, `visible`, `opacity` (0 to 1) and `pickable` can be set. Masks act on a moved or turned layer where it now stands.
-- An `origin` or `position` must be finite numbers, a `heading` finite, and an `opacity` from 0 to 1.
-- Layer splats go through the same passes as the world's, and one sort orders them all by depth. A layer never shows through the world's splats, or the world through a layer's.
-- A layer has no levels of detail. It draws the finest level of its pack at every distance. Off screen its clusters are culled, and far away its sub-pixel splats are dropped before the sort.
-- A hidden layer costs no frame time. Its splats stay on the GPU, at 28 bytes each, until `remove()`, so it shows again at once.
-- A layer that is not pickable still draws, casts its heights into `engine.heights()` and hides behind masks. Only `pick()` and `pickMany()` pass through it.
-- The splats of visible layers in view count in the budget: the world draws that many fewer.
-- Layers stay when the engine opens another world.
+`encodeLayer(splats)`, in `@kalyptos/narcissus` and `@kalyptos/narcissus/format`, writes a pack and its `origin` from world-coordinate splats, in the browser or Node. A `url` is read through the engine's `source`. The anchor is the centre of the encoded box, at the height of its lowest splat centre; a splat encoded at `p` shows at `position + R(heading)(p - anchor)`.
+
+A `Layer` gives `splats`, its splat count, and `box`, its world extent where it stands now. You can set `position`, `heading`, `visible`, `opacity` and `pickable`. A layer sorts with the world by depth and draws at full detail at every distance. A hidden layer costs no frame time, but keeps its splats on the GPU, at 28 bytes each, until `remove()`. Visible layers in view count in the world's budget. Layers stay through `open()`.
 
 ## Masks
 
-`engine.addMask(options)` hides, fades or tints splats inside or outside a vertical prism. The options:
+`engine.addMask(options)` hides, fades or tints splats inside or outside a vertical prism.
 
-- `polygon`: one ring of `[e, n]` corners, or a list of rings. Each ring has three or more corners. The rings count by the even-odd rule, so a ring inside another is a hole and a ring inside a hole is an island. GeoJSON Polygon `coordinates` fit as they are.
-- `z`: `[from, to]` in world heights, the full height when left out.
-- `targets`: what the mask acts on: `'world'` for the world's own splats, and layers.
-- `outside`: when `true`, the mask acts on what lies outside the prism.
-- `opacity`: what the splats it covers keep, 0 to 1. The default is 1 for a mask with a `tint` and 0, which hides them, for one without.
-- `tint`: `[r, g, b, a]`, each 0 to 1. A covered splat mixes its colour toward `rgb` by `a`. The default `[0, 0, 0, 0]` keeps the colour.
+| option    | value                                                                | default                                   |
+| --------- | -------------------------------------------------------------------- | ----------------------------------------- |
+| `polygon` | one ring of three or more `[e, n]` corners, or a list of rings       | required                                  |
+| `z`       | `[from, to]` in world heights, `from` at most `to`                   | the full height                           |
+| `targets` | `'world'` and layers of this engine that are not removed             | required                                  |
+| `outside` | `true` acts outside the prism                                        | `false`                                   |
+| `opacity` | what covered splats keep of their opacity                            | 1 with a `tint`; else 0, which hides them |
+| `tint`    | `[r, g, b, a]`: a covered splat mixes its colour toward `rgb` by `a` | `[0, 0, 0, 0]`                            |
 
-The rule: a splat of a target is covered while its centre lies inside the polygon and within `z`, or, with `outside`, while it does not. The opacity of a covered splat is multiplied by `opacity`, and the splat takes the tint. Where several masks cover a splat, their opacities multiply and their tints apply in the order the masks were added.
+Rings count by the even-odd rule, so GeoJSON Polygon `coordinates` fit as they are. A splat of a target is covered while its centre is inside the prism, or outside it with `outside`. Where masks overlap, opacities multiply and tints apply in the order of the masks. A hiding mask is cheap; a fading or tinting mask, and any `outside` mask, tests every splat it touches.
 
-The rule holds at every level of detail, through the fades between levels, and while pages stream: the test runs on each splat before it is projected, whatever page drew it. A mask that hides, with opacity 0, drops the clusters it covers wholly before the GPU sees them, and tests each splat only in the clusters its edges or its `z` ends cross. A mask that fades or tints tests each splat of every cluster it covers in whole or in part, so it costs the test over its whole area. An `outside` mask is checked against every cluster.
-
-Every field of the `Mask` can be set: `polygon`, `z`, `targets`, `outside`, `opacity`, `tint` and `enabled`. The changes made between two frames cost one pass over the pages they touch, so a page can hold thousands of small masks. `remove()` shows again what the mask covered. A target layer must belong to this engine and must not be removed. `engine.heights()` follows the masks too: a splat counts there with the opacity the masks leave it. `engine.ground()` does not: it reads the coarse ground from the tree's index.
+You can set every option, and `enabled`. `engine.heights()` obeys masks; `engine.ground()` does not.
 
 ## Picking
 
-`engine.pick(x, y)`, with canvas CSS pixels such as a pointer event's `offsetX` and `offsetY`, resolves with a `Hit`, or `null` where nothing is there, such as the sky:
+`engine.pick(x, y)` takes canvas CSS pixels. It resolves with `null` over nothing, else with a `Hit` on the surface that the last frame drew there, after masks: its world `point`, the surface `normal` toward the camera, and the `layer` hit, `null` for the world.
 
-- `point`: where the pixel's ray meets the hit splat's plane.
-- `normal`: the splat's thinnest axis, toward the camera. Splats on a surface lie flat along it, so it is the surface normal there.
-- `layer`: the `Layer` hit, or `null` for the world.
+A pick renders no frame. It answers about one frame later, or a frame later still when the pixel holds many splats. You can pick at each pointer move. `engine.pickMany(points)` resolves with a `Hit` or `null` for each pixel, in order, at about the cost of one pick for up to 64 pixels.
 
-The hit is where the splats that the last frame drew over the pixel, blended front to back, first cover half of it, after masks and plugins. Faint splats that blend into a surface therefore give a hit too, and a pick looks past the splats a mask hides. To drag a layer over the area that its own mask hides, turn that mask off while dragging, as [examples/hooks.html](../examples/hooks.html) does. A pick renders no frame. It is one small compute pass over the clusters under the pixel, so it is fast enough for every pointer move, and a page can start a pick while others are pending. It answers about a frame later. When more splats lie under the pixel than the pick holds, it holds more and answers on the next frame instead, so it is late but never falsely `null`.
-
-`engine.pickMany(points)` picks many canvas pixels against the same frame and resolves with a `Hit` or `null` for each, in order. One compute pass serves up to 64 pixels, so the pixels a pointer crossed in a frame, or a few around it, cost about as much as one pick. Picks asked for before the next frame are answered together in the same way.
+To drag a layer over the area its own mask hides, disable that mask during the drag.
 
 ## Lines and markers
 
-`engine.addLine(points, style)` draws a polyline through world points, and `engine.addMarker(point, style)` draws a dot. Both draw over the finished frame, after the plugins. Their handles have `points` (or `point`), `style` and `visible`. `style` reads back with the defaults filled in, so `line.style = { ...line.style, colour }` changes one of them. A hidden graphic is not drawn.
+`engine.addLine(points, style)` draws a polyline through one or more world points, and `engine.addMarker(point, style)` a dot. Their handles have `points` or `point`, `style` and `visible`.
 
-- `width` and `size` are CSS pixels, more than 0. `colour` is RGBA, each 0 to 1. `closed` joins a line's last point to its first.
-- With `occlude`, the default, a part behind splats is hidden. A line drawn on picked ground points still shows: a part may lie up to 2 % of its distance behind the splats.
-- The depth tested against is that of the nearest splat fragment with any opacity, so a faint floater can hide a short piece of a line.
+| `style` field | value                                  | default        |
+| ------------- | -------------------------------------- | -------------- |
+| `colour`      | `[r, g, b, a]`                         | `[1, 1, 1, 1]` |
+| `width`       | of a line, CSS pixels, more than 0     | 2              |
+| `size`        | of a marker, CSS pixels, more than 0   | 12             |
+| `closed`      | joins a line's last point to its first | `false`        |
+| `occlude`     | hides the parts behind splats          | `true`         |
 
-`engine.toScreen(point)` gives the CSS pixel of a world point under the camera set last, for HTML a page puts over the canvas, such as a label or a spinner. Update that HTML in `engine.onFrame(fn)`, which runs after the controls set the camera, so it moves with the frame. A page that draws on the GPU itself does so in a `Post` plugin, which gets the frame's matrices and its depth (see [architecture.md](architecture.md)).
+`style` reads back with the defaults filled in, so `line.style = { ...line.style, colour }` changes one field.
+
+`engine.toScreen(point)` gives the canvas CSS pixel of a world point, or `null` behind the camera. Place HTML over the canvas in `engine.onFrame(fn)`, which runs after the controls set the camera. To draw on the GPU, write a `Post` plugin ([architecture.md](architecture.md)).
 
 ## Capture
 
-`engine.capture({ type, quality })` resolves with the next frame as a `Blob`, as `canvas.toBlob` gives it: PNG by default, or `type: 'image/jpeg'` or `'image/webp'` with a `quality` from 0 to 1. It rejects when the browser cannot encode the image, and when the engine is destroyed or loses its device first.
+`engine.capture({ type, quality })` resolves with the next frame as a `Blob`, as `canvas.toBlob` gives it: PNG by default, or `'image/jpeg'` or `'image/webp'` with a `quality` from 0 to 1. It rejects when the browser cannot encode it, or the engine is destroyed or loses its device first.
 
 ## Camera and input
 
-The controls, `viewer.controls`, own the map camera. On a page of its own, `new Controls(canvas, engine, { ground, pose, limits })` makes them: `ground(e, n)` gives the height the camera stays above, `pose` is the first pose, and `limits` how far a pose may go, `LIMITS` when left out.
+`viewer.controls` owns the map camera. Without the element, use `new Controls(canvas, engine, { ground, pose, limits })`: `ground(e, n)` gives the height to stay above, `pose` the first pose, and `limits` defaults to `LIMITS`, `{ pitch: [-90, -20], dist: [1, 2485], clearance: 10, floor: 50 }`.
 
-- `pose` gives the pose shown, and `onChange(fn)` calls `fn(pose)` each time it changes.
-- `jump(pose)` shows a pose at once. Fields left out keep their value.
-- `flyTo(pose, { signal })` animates there. It resolves `true` on arrival, and `false` when the user moves the camera, another `flyTo` or `jump` starts, or the signal aborts.
-- `fit(box, pose)` from `@kalyptos/narcissus` gives the pose that shows a box, keeping the heading and tilt of `pose`: `controls.flyTo(fit(layer.box, controls.pose))`.
-- `limits` gives the limits, and setting it moves the camera into the new ones at once.
-- `enabled = false` makes the camera ignore the user, and flights still run.
+A `Pose` is `{ e, n, h, yaw, pitch, dist }`: the focus, `yaw` clockwise from north and `pitch` (negative down) in degrees, and `dist` from camera to focus in metres.
 
-The keys (f to fly, then WASD, the arrows, Q and E) act only while the canvas has focus, so text fields and other viewers on the page keep theirs. The controls make the canvas focusable, and a click on it gives it focus. The element gives the canvas its own `aria-label`.
+| member                    | what it does                                                                                            |
+| ------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `pose`                    | gives the pose shown                                                                                    |
+| `onChange(fn)`            | calls `fn(pose)` each time the pose changes                                                             |
+| `jump(pose)`              | shows a pose at once; fields left out keep their value                                                  |
+| `flyTo(pose, { signal })` | animates there; `true` on arrival, `false` when input, another move, the signal or `destroy()` stops it |
+| `moveTo(e, n)`            | moves the focus to the ground there; a view farther than 300 m closes in                                |
+| `limits`                  | setting it moves the camera into the new limits at once                                                 |
+| `enabled`                 | `false` ignores the user; flights still run                                                             |
+| `destroy()`               | stops a flight and removes the listeners                                                                |
 
-To take a pointer event for itself, so that the camera does not also orbit or pan, a page listens on the element in the capture phase and calls `preventDefault()`. A double click after a taken `pointerdown` does not fly the camera either, so a tool that ends on a double click needs nothing more:
+`fit(box, pose)` gives the pose that shows a box, with the heading and tilt of `pose`: `controls.flyTo(fit(layer.box, controls.pose))`.
+
+Keys (F to fly, then WASD, arrows, Q and E) act only while the canvas has focus; a click gives it focus.
+
+To take a pointer event from the camera, and the double click after it, call `preventDefault()` in a capture-phase listener on the element:
 
 ```ts
 viewer.addEventListener(
@@ -119,13 +120,13 @@ viewer.addEventListener(
 );
 ```
 
-## Events
+## Events and lifetime
 
-- The element sends `start` when it has made the engine and the controls, and `ready`, with the `World` as its detail, each time a world is open. `error` carries a message. `NarcissusViewerEventMap` types them for `addEventListener`.
-- The engine and the controls, and the layers, masks, lines, markers, listeners and settings a page adds to them, live from `start` until the element leaves the page. They stay when `src` changes. An element put back on the page makes new ones and sends `start` again.
-- `engine.open()` resolves when a world is open.
-- `engine.onProgress(fn)` calls `fn({ planned, missing, loading })` when the view's loading changes. `missing` of `planned` splats are not loaded yet.
-- `engine.onLost(fn)` reports a lost device.
+- The element sends `start` once the engine and the controls exist, `ready` with the `World` each time a world opens, and `error` with a message. `NarcissusViewerEventMap` types them.
+- The engine, the controls and all you add to them live from `start` until the element leaves the web page, through changes of `src`. Put back, the element makes new ones and sends `start` again.
+- `engine.onProgress(fn)` calls `fn({ planned, missing, loading })` when one of them changes: `missing` of the `planned` splats in view are not loaded yet.
+- `engine.onLost(fn)` calls `fn(reason)` when the device is lost; the engine then stops.
+- The `on` methods return a function that removes the listener.
 
 ## Cost
 
@@ -139,6 +140,4 @@ Measured with `SOURCE=synthetic LAYERS=4 pnpm bench`, one run each, on an RTX 40
 | splats in the world's plan | 2,066,432   | 1,454,080   |
 | pool MiB                   | 357         | 390         |
 
-The world's plan gives up about the 600,000 layer splats in view at each pose. The pool grows by the layers' 1,200,000 splats at 28 bytes each.
-
-`engine.stats()` gives numbers like these on a running page. It is for diagnosis, and its fields can change in any release.
+`engine.stats()` gives numbers like these, for diagnosis; its fields can change in any release.

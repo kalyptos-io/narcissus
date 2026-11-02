@@ -1,51 +1,42 @@
 # Hosting a world
 
-A world is a folder of static files. Any server or object store that answers range requests can serve it; there is no server software to run.
+A world is a folder of static files ([format.md](format.md)). Any server or object store with range requests can serve it.
 
 ```
 world.json                              the manifest; small, replaced when the world changes
 u/<level>/<E>/<N>.<hash>.{idx,pack,col}   unit files; named by their content, never changed
 ```
 
-[format.md](format.md) is the specification of these files.
+## Server rules
 
-## What the server must do
+- Answer `Range: bytes=a-b` with status `206`. A `200` works, but then the viewer downloads a whole pack for each page.
+- For other origins, send `access-control-allow-origin` with that origin or `*`.
+- Use HTTP/2 or later.
+- Server compression gains nothing: the unit files are compressed.
 
-- **Answer range requests.** The viewer reads pages out of the `.pack` files with `Range: bytes=a-b` and expects status `206`. A server that answers `200` with the whole file still works, but the viewer then downloads a whole pack for each page it reads.
-- **Send CORS headers** when the page that shows the world is on another origin: `access-control-allow-origin` with that origin or `*`.
-- **Speak HTTP/2 or later.** A view makes many small requests.
-
-The unit files are compressed already, so compression at the server gains nothing.
-
-## Cache headers
-
-| files        | header                                               | why                                                    |
-| ------------ | ---------------------------------------------------- | ------------------------------------------------------ |
-| `u/**`       | `cache-control: public, max-age=31536000, immutable` | a unit file never changes under its name               |
-| `world.json` | `cache-control: no-cache`                            | it names the current unit files, so it must stay fresh |
-
-A short `max-age` on `world.json` is also possible, when a CDN in front must not ask the origin on each load.
+| files        | header                                               |
+| ------------ | ---------------------------------------------------- |
+| `u/**`       | `cache-control: public, max-age=31536000, immutable` |
+| `world.json` | `cache-control: no-cache`, or a short `max-age`      |
 
 ## Publish
 
-Upload the unit files first and `world.json` last. A viewer then never reads a manifest that names files which are not there yet.
-
-`narcissus publish` does this with [rclone](https://rclone.org), which you install and configure for your storage yourself:
+Upload the unit files first and `world.json` last. `narcissus publish` does this with [rclone](https://rclone.org), which you install and configure:
 
 ```sh
 narcissus publish ./world remote:bucket/world --url https://example.com/world/world.json
 ```
 
-It checks the folder, runs the two commands below, and then checks the URL when you give one. Flags after `--` go to both rclone commands.
+It validates the folder, runs these two commands, then validates the `--url` when given. Flags after `--` go to both commands.
 
 ```sh
 rclone copy ./world/u remote:bucket/world/u --immutable --header-upload "Cache-Control: public, max-age=31536000, immutable"
 rclone copyto ./world/world.json remote:bucket/world/world.json --header-upload "Cache-Control: no-cache"
 ```
 
-`--immutable` makes rclone stop when a unit file is there already with other bytes. rclone sets the upload headers only on the storage types that keep them, such as S3 and the stores compatible with it; on the others, set the cache headers at the server.
+`--immutable` stops when a unit file is already there with different bytes. rclone sets the headers only on storage that keeps them, such as S3; elsewhere, set them at the server.
 
-To replace a world, publish the new folder to the same place. The unit files that both worlds hold are not sent again. Viewers that are open keep the old manifest; they read the new one when they meet a file that is gone, so delete the old unit files only after the new `world.json` is up.
+To replace a world, publish to the same place. Delete old unit files only after the new `world.json` is up.
 
 ## Check
 
@@ -55,9 +46,7 @@ narcissus validate ./world --deep     # also each file's hash, and each page dec
 narcissus validate https://example.com/world/world.json
 ```
 
-For a URL it also asks the server for a range from another origin, and reports a server that does not answer with `206` or sends no CORS header. A deep check reads every byte of the world.
-
-`narcissus info <world>` shows the size and the levels of a world.
+For a URL, it also checks that a range from another origin gets `206` and a CORS header. `--deep` reads every byte. `narcissus info <world>` shows a world's version, CRS, extent, size, and units and splats per level.
 
 ## Show
 
@@ -71,18 +60,17 @@ For a URL it also asks the server for a range from another origin, and reports a
 </narcissus-viewer>
 ```
 
-The viewer needs WebGPU. The content of the element shows when the browser has none, or when the world does not load.
+With a bundler, `import '@kalyptos/narcissus/element'` defines the element, in the browser only.
 
-With a bundler, `import '@kalyptos/narcissus/element'` defines the element. Import it in the browser only; a server that renders the page has no DOM for it.
+| attribute       | value                                                                                                    | default                                                                              |
+| --------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `src`           | the URL of a `world.json`                                                                                |                                                                                      |
+| `budget`        | the splats one frame can draw; when set, it stays fixed                                                  | 4,000,000, adapting from 2,000,000 to 6,000,000 to hold 30 FPS; 2,000,000 on a phone |
+| `view-distance` | metres                                                                                                   | 4000                                                                                 |
+| `camera`        | `E,N,H,yaw,pitch,distance`, read when a world opens; `E,N,,yaw,pitch,distance` looks at the ground there | the ground near the middle of the world, at yaw 0, pitch -35 and distance 300        |
+| `sky`           | `r,g,b`, each 0 to 1, read when the element starts                                                       | `0.62,0.72,0.8`, a pale blue                                                         |
+| `aria-label`    | the name of the canvas                                                                                   |                                                                                      |
 
-| attribute       | value                                                                                                                    | default                                                                                       |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
-| `src`           | the URL of a `world.json`                                                                                                |                                                                                               |
-| `budget`        | the splats one frame may draw; set, it stays fixed                                                                       | from 4,000,000, adapting between 2,000,000 and 6,000,000 to hold 30 FPS; 2,000,000 on a phone |
-| `view-distance` | metres                                                                                                                   | 4000                                                                                          |
-| `camera`        | the view to open on: `E,N,H,yaw,pitch,distance`; with `H` empty, `E,N,,yaw,pitch,distance`, it looks at the ground there | above the middle of the world, looking at its ground                                          |
-| `sky`           | the colour behind the world: `r,g,b`, each 0 to 1                                                                        | a pale blue                                                                                   |
+The viewer needs WebGPU. After an error, the element shows its own content in place of the canvas, or the error message when it has none. [embedding.md](embedding.md) covers its events and API.
 
-The element sends a `ready` event when a world is open and an `error` event with a message when it cannot go on. Its `engine` and `controls` properties give the page the full API; [embedding.md](embedding.md) shows how to add splats, hide parts of the world, pick and steer the camera.
-
-A page with a content security policy must allow `worker-src blob:`, because the engine starts its workers from a blob. The engine keeps the bytes it has read in the browser's origin private file system, so a second visit reads less from the network.
+A content security policy must allow `worker-src blob:`. The engine caches the bytes it reads in the origin private file system.

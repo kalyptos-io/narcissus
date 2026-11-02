@@ -5,7 +5,7 @@
 [![license](https://img.shields.io/npm/l/@kalyptos/narcissus)](LICENSE)
 [![unpacked size](https://img.shields.io/npm/unpacked-size/@kalyptos/narcissus)](https://www.npmjs.com/package/@kalyptos/narcissus)
 
-The open library for Guldmund Trees: gaussian-splat scenes of any size, stored as static files and streamed by range request. narcissus holds the format, a WebGPU engine that draws it, a viewer element, and tools to check and publish a world.
+The open library for Guldmund Trees: gaussian-splat scenes of any size, as static files streamed by range request. It holds the format, a WebGPU engine, a viewer element, and tools that check and publish a world.
 
 ## Show a world
 
@@ -41,10 +41,10 @@ npx @kalyptos/narcissus publish ./world remote:bucket/world
 
 ## Read more
 
-- [docs/format.md](docs/format.md): the specification of Guldmund Trees
-- [docs/hosting.md](docs/hosting.md): how to serve, publish and show a world
-- [docs/embedding.md](docs/embedding.md): the hooks for a page that embeds the viewer: layers, masks, picking, graphics and the camera. [examples/hooks.html](examples/hooks.html) uses each of them
-- [docs/architecture.md](docs/architecture.md): how the code is built, and how to add a source or a plugin
+- [docs/format.md](docs/format.md): the format
+- [docs/hosting.md](docs/hosting.md): serve, publish and show a world
+- [docs/embedding.md](docs/embedding.md) and [examples/hooks.html](examples/hooks.html): layers, masks, picking, lines, markers and the camera
+- [docs/architecture.md](docs/architecture.md): the code, sources and plugins
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Licence

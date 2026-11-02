@@ -1,16 +1,16 @@
 # Contributing
 
-Thanks for your interest in narcissus. Issues and pull requests are welcome.
+Issues and pull requests are welcome.
 
 ## Before you open a pull request
 
-1. Open an issue first for anything larger than a bug fix, so we can agree on the approach.
-2. Keep the change small and focused. One subject for each pull request.
+1. For more than a bug fix, open an issue first to agree on the approach.
+2. Keep the change small: one subject for each pull request.
 3. Add or update tests for the behaviour you change.
 
-[docs/architecture.md](docs/architecture.md) shows where code goes and which layer may import which.
+[docs/architecture.md](docs/architecture.md) shows where code goes.
 
-A change to [docs/format.md](docs/format.md) is a new version of the format, and each reader and writer must follow it. Open an issue before you start on one.
+A change to [docs/format.md](docs/format.md) is a new format version; open an issue first.
 
 ## Setup
 
@@ -22,7 +22,7 @@ pnpm install
 
 ## Linting, formatting and tests
 
-CI runs these four commands. Run them before you push:
+CI runs these commands; run them before you push:
 
 ```sh
 pnpm check
