@@ -135,15 +135,26 @@ describe('Layers', () => {
 		pool.destroy();
 	});
 
-	it('shows where it was encoded until moved, its anchor the bottom centre of its box', async () => {
+	it('shows where it was encoded until moved, its anchor the centre of its box at its lowest splat', async () => {
 		const { pool, add } = await setup();
 		const layer = add();
 		// as layerPages's box, but from the decoded clusters' extents
 		expect(sides(layer)).toEqual([500_000.2, 500_009.8, 5_999_999.95, 6_000_000.55, 11.7, 12.3]);
-		expect(layer.position.map((v) => +v.toFixed(2))).toEqual([500_005, 6_000_000.25, 11.7]);
+		expect(layer.position.map((v) => +v.toFixed(2))).toEqual([500_005, 6_000_000.25, 12]);
 		expect(layer.heading).toBe(0);
 		layer.position = [10, 20, 30];
-		expect(sides(layer)).toEqual([5.2, 14.8, 19.7, 20.3, 30, 30.6]);
+		// the splats' centres rest on position, their 3 sigma reaches below it
+		expect(sides(layer)).toEqual([5.2, 14.8, 19.7, 20.3, 29.7, 30.3]);
+		pool.destroy();
+	});
+
+	it('rests its anchor on its lowest splat centre, whatever the height of the others', async () => {
+		const { pool, layers } = await setup();
+		const tall = splats(3, [100, 200, 0]);
+		tall.position.set([5, 2.5, 9].flatMap((h, k) => [100 + k, 200, h]));
+		const { pack, origin } = await encodeLayer(tall);
+		const layer = layers.add(await layerPages(pack, origin), { bytes: pack, origin })!;
+		expect(layer.position.map((v) => +v.toFixed(3))).toEqual([101, 200, 2.5]);
 		pool.destroy();
 	});
 
@@ -156,10 +167,10 @@ describe('Layers', () => {
 		expect(e < 0 && n < 0).toBe(true);
 		layer.heading = 90;
 		// splats run 4.8 m either side of the anchor along e, 0.3 m along n
-		expect(sides(layer)).toEqual([-0.3, 0.3, -4.8, 4.8, 0, 0.6]);
+		expect(sides(layer)).toEqual([-0.3, 0.3, -4.8, 4.8, -0.3, 0.3]);
 		expect(place.mock.lastCall![1]).toEqual([expect.closeTo(n, 9), expect.closeTo(-e, 9), h]);
 		layer.heading = 180;
-		expect(sides(layer)).toEqual([-4.8, 4.8, -0.3, 0.3, 0, 0.6]);
+		expect(sides(layer)).toEqual([-4.8, 4.8, -0.3, 0.3, -0.3, 0.3]);
 		expect(place.mock.lastCall![1]).toEqual([expect.closeTo(-e, 9), expect.closeTo(-n, 9), h]);
 		pool.destroy();
 	});

@@ -1,6 +1,13 @@
 // layers: splat sets a host adds beside the world, drawn and sorted with it
 
-import { decodePage, inflate, packRows, PARAMS, type DecodedPage } from '../format/index.ts';
+import {
+	decodePage,
+	GEOMETRY_WORDS,
+	inflate,
+	packRows,
+	PARAMS,
+	type DecodedPage
+} from '../format/index.ts';
 import type { Fetch } from '../ports.ts';
 import { slots } from './gpu/layout.ts';
 import type { Pool } from './gpu/pool.ts';
@@ -8,9 +15,9 @@ import { boxVisible } from './math/frustum.ts';
 import type { Box, Drawn, Point } from './types.ts';
 
 /**
- * a pack, or the url the engine's source reads it from, and how it shows; its anchor is the
- * bottom centre of its box as encoded, and a splat encoded at p shows at
- * position + R(heading) (p - anchor)
+ * a pack, or the url the engine's source reads it from, and how it shows; its anchor is the centre
+ * of its box as encoded, at the height of its lowest splat centre, and a splat encoded at p shows
+ * at position + R(heading) (p - anchor)
  */
 export type LayerOptions = ({ url: string } | { bytes: Uint8Array }) & {
 	/** the pack's south-west corner, as encodeLayer gives it */
@@ -94,6 +101,19 @@ export function boxOf(boxes: Float64Array[]): Box {
 		Math.max(...boxes.map((b) => b[a + 3]))
 	];
 	return { e: span(0), n: span(1), h: span(2) };
+}
+
+/** world height of the lowest splat centre of pages, decoded as position() in the shader does */
+function lowest(pages: readonly LayerPage[]): number {
+	let low = Infinity;
+	for (const { page } of pages) {
+		let q = Infinity;
+		for (let t = 0; t < page.count; t++) {
+			q = Math.min(q, page.geometry[t * GEOMETRY_WORDS + 1] & 0xffff);
+		}
+		low = Math.min(low, page.params[PARAMS.origin + 2] + q * page.params[PARAMS.step + 2]);
+	}
+	return low;
 }
 
 /** pool splats the pages of a layer pin */
@@ -231,7 +251,7 @@ export class Layers {
 		const anchor: Point = [
 			(encoded.e[0] + encoded.e[1]) / 2,
 			(encoded.n[0] + encoded.n[1]) / 2,
-			encoded.h[0]
+			lowest(pages)
 		];
 		let position = options.position ? checkPosition(options.position) : anchor;
 		let { heading = 0, visible = true, opacity = 1, pickable = true } = options;
