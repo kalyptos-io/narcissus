@@ -49,8 +49,7 @@ fn heights(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) t
 		if (opacity < area.opacity || max(scale.x, max(scale.y, scale.z)) > area.scale) {
 			continue;
 		}
-		let q = vec3f(f32(g.x & 0xffffu), f32(g.x >> 16u), f32(g.y & 0xffffu));
-		let p = page.origin + q * page.step;
+		let p = position(page, g);
 		if (masked(cluster, p)) {
 			continue;
 		}

@@ -53,8 +53,7 @@ fn decode(cluster: Cluster, t: u32, s: ptr<function, Splat>, g: ptr<function, ve
 	let quadrant = u32(i >= page.q1) + u32(i >= page.q2) + u32(i >= page.q3);
 
 	var d: Splat;
-	let q = vec3f(f32((*g).x & 0xffffu), f32((*g).x >> 16u), f32((*g).y & 0xffffu));
-	d.position = page.origin + q * page.step;
+	d.position = position(page, *g);
 	if (masked(cluster, d.position)) {
 		return false;
 	}

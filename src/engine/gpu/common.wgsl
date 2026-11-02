@@ -48,6 +48,11 @@ struct Page {
 	shScale: array<vec4f, 3>,
 }
 
+// a splat's centre in the floating-origin frame from its geometry record
+fn position(page: Page, g: vec4u) -> vec3f {
+	return page.origin + vec3f(f32(g.x & 0xffffu), f32(g.x >> 16u), f32(g.y & 0xffffu)) * page.step;
+}
+
 // up to CLUSTER consecutive splats of one page in one pool slot
 struct Cluster {
 	page: u32,
