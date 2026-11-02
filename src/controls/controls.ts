@@ -85,6 +85,8 @@ export class Controls {
 	/** last client position of each pointer down on the canvas */
 	#pointers = new Map<number, { x: number; y: number }>();
 	#keys = new Set<string>();
+	/** the last pointerdown was consumed, so its double click is too */
+	#taken = false;
 	#orbit: [number, number] = [0, 0];
 	#pan: [number, number] = [0, 0];
 	#zoom = 0;
@@ -193,7 +195,8 @@ export class Controls {
 	}
 
 	#down = (e: PointerEvent) => {
-		if (!this.#heeds(e)) return;
+		this.#taken = !this.#heeds(e);
+		if (this.#taken) return;
 		this.#canvas.setPointerCapture(e.pointerId);
 		this.#pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 	};
@@ -242,7 +245,7 @@ export class Controls {
 	};
 
 	#pick = async (e: MouseEvent) => {
-		if (!this.#heeds(e)) return;
+		if (!this.#heeds(e) || this.#taken) return;
 		const hit = await this.#engine.pick(e.offsetX, e.offsetY);
 		if (!hit || this.#abort.signal.aborted) return;
 		const view = lookAt(cameraOf(this.#current), hit.point);

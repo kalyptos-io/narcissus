@@ -68,6 +68,7 @@ describe('Controls', () => {
 	let now: number;
 	let controls: Controls;
 	const warm = vi.fn();
+	const pick = vi.fn(() => Promise.resolve(null));
 
 	beforeEach(() => {
 		vi.stubGlobal('window', new EventTarget());
@@ -81,10 +82,11 @@ describe('Controls', () => {
 			requestFrame() {},
 			setCamera() {},
 			warm,
-			pick: () => Promise.resolve(null)
+			pick
 		};
 		now = 0;
 		warm.mockClear();
+		pick.mockClear();
 		controls = new Controls(canvas as unknown as HTMLCanvasElement, engine as unknown as Engine, {
 			ground: () => 0,
 			pose: start
@@ -209,6 +211,17 @@ describe('Controls', () => {
 		const rest = controls.pose;
 		frames(50);
 		expect(controls.pose).toEqual(rest);
+	});
+
+	it('does not fly to a double click whose pointerdown a host consumed', () => {
+		const pointer = { pointerId: 1, pointerType: 'mouse', buttons: 1, clientX: 0, clientY: 0 };
+		const click = { offsetX: 10, offsetY: 10 };
+		event('pointerdown', pointer, true);
+		event('dblclick', click);
+		expect(pick).not.toHaveBeenCalled();
+		event('pointerdown', pointer);
+		event('dblclick', click);
+		expect(pick).toHaveBeenCalledOnce();
 	});
 
 	it('clamps the pose to new limits and tells the listeners', () => {
