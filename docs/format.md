@@ -18,11 +18,11 @@ A change to this page is a new version. All integers are little-endian. `f32` is
 
 - A leaf (`L = 0`) holds `g = 0` (16×16 pages, its full detail) and `g = 1` (8×8 pages, one decimation of it).
 - A unit at `L ≥ 1` holds `g = L + 1` (8×8 pages): one decimation of its children's `g = L` splats merged.
-- A unit with no parent is a root. A root also holds `g = L + 2, L + 3, ...`, each one decimation of the last, until a level has fewer than 100,000 splats.
+- A unit with no parent is a root. A root also holds `g = L + 2, L + 3, ...`, each one decimation of the last. It stops at the first level that has fewer than 100,000 splats, or at `g = L + 4`, where one page covers the unit. It keeps that last level.
 
 A splat's page and quadrant come from its centre, clamped into the area its unit's existing children cover (for a leaf, its own square). The clamp does not move the splat.
 
-Inside a page, splats are ordered by quadrant, then by the 3D Morton code of their centres.
+Inside a page, splats are in quadrant order, as the quadrant starts in the header give. Inside a quadrant, the writer chooses the order. It should keep near splats together, because a reader can cull a run of consecutive splats as one. Guldmund's writer sorts them, stable, by the 3D Morton code of `trunc((p - min) / (max - min) · 1023)` per axis over the page's centres, with x in bit 0, y in bit 1 and z in bit 2.
 
 ## Names
 
@@ -37,7 +37,7 @@ A unit has a `.pack` and an `.idx`. A corrected unit also has a `.col`. Every su
 
 In order:
 
-1. The page blobs, back to back, coarsest level first. Within a level, blobs are in Morton order of `(i, j)`.
+1. The page blobs, back to back, coarsest level first. Within a level, blobs are in Morton order of `(i, j)`, with `i` in the even bits and `j` in the odd bits.
 2. The page table, with rows as in `.idx`.
 3. A 16-byte trailer:
 
@@ -99,7 +99,7 @@ Then, when `k > 0`, the codebook: `k × 9` i8, entry-major, coefficient `3c + m`
 - **Rotation**: normalised, with the sign that makes the largest component positive.
 - **Codebook**: k-means over the page's SH1, with `k = min(n, 2048, max(256, ⌈n / 12 / 64⌉ · 64))`. Entries and scale are as for a linear i8 code, with the scale the per-coefficient maximum magnitude of the entries.
 
-Measured on aerial data, 26 land pages and 8 water pages of one leaf: 14.9 bytes per splat on land and 9.8 on water, with errors of 0.25 mm rms in position, 0.35° in rotation, 0.4 % in scale, 0.8 of 255 in DC and 4.35 of 255 in SH1.
+Measured on aerial data, 26 land pages and 8 water pages of one leaf: 14.9 bytes per splat on land and 9.8 on water, with rms errors of 0.25 mm in position, 0.35° in rotation, 0.4 % in scale, 0.8 of 255 in DC and 4.35 of 255 in SH1.
 
 ## `.idx`
 
@@ -131,9 +131,11 @@ Then the rows, 52 bytes each:
 | 4      | u32     | count                                                       |
 | 8      | u32 × 3 | first splat of quadrants 1, 2, 3                            |
 | 20     | f32 × 3 | extent minimum: centres less 3σ along each axis, unit-local |
-| 32     | f32 × 3 | extent maximum                                              |
+| 32     | f32 × 3 | extent maximum: centres plus 3σ along each axis, unit-local |
 | 44     | u32     | blob offset in the pack                                     |
 | 48     | u32     | blob length                                                 |
+
+The σ of a splat on an axis is the square root of that axis's diagonal element of `R · diag(s²) · Rᵀ`, with `R` its rotation and `s` its scale before they are coded. The extent is the minimum and maximum over the page's splats.
 
 Then the children, 9 bytes each: u8 quadrant `a + 2b`, 8-byte idx hash.
 
@@ -174,19 +176,19 @@ A unit's colour correction. A writer can replace it without a change to the pack
 }
 ```
 
-| member    | value                                                                                  |
-| --------- | -------------------------------------------------------------------------------------- |
-| `version` | 1                                                                                      |
-| `crs`     | the name of the projected coordinate system of `E` and `N`; any text that is not empty |
-| `height`  | the name of the height datum; any text that is not empty                               |
-| `leaf`    | 250, the side of a leaf unit in metres                                                 |
-| `roots`   | one or more units with no parent: `level`, `e`, `n` and the path of the `.idx`         |
-| `extent`  | the bounds of the world as `[minimum, maximum]` of easting, northing and height        |
+| member    | value                                                                                                              |
+| --------- | ------------------------------------------------------------------------------------------------------------------ |
+| `version` | 1                                                                                                                  |
+| `crs`     | the name of the projected coordinate system of `E` and `N`; any text that is not empty                             |
+| `height`  | the name of the height datum; any text that is not empty                                                           |
+| `leaf`    | 250, the side of a leaf unit in metres                                                                             |
+| `roots`   | one or more units with no parent: `level`, `e`, `n` and the path of the `.idx`                                     |
+| `extent`  | `[minimum, maximum]` of easting, northing and height over the extents of every root row, outward to the centimetre |
 
 - Paths are relative to `world.json`.
 - A writer may add its own members. A reader ignores the members that it does not know.
 - `waiting`, if present, lists the `.idx` of units that no root reaches yet.
-- A viewer reads only `roots`.
+- A reader uses only `roots`.
 - A publisher writes every unit file before the `world.json` that reaches it.
 - A reader that finds a missing unit file reloads `world.json`.
 
