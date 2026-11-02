@@ -1,5 +1,8 @@
 // column-major 4x4 matrices in the ENU frame: x east, y north, z up; view space looks down -z
 
+/** radians per degree */
+export const DEG = Math.PI / 180;
+
 export type Mat4 = Float32Array | Float64Array;
 export type Vec3 = readonly [number, number, number] | Float32Array | Float64Array;
 

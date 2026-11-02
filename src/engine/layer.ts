@@ -13,6 +13,7 @@ import { checkPoint, checkUnit } from './check.ts';
 import { baseOf, slots } from './gpu/layout.ts';
 import type { Pool } from './gpu/pool.ts';
 import { boxVisible } from './math/frustum.ts';
+import { DEG } from './math/mat4.ts';
 import type { Box, Drawn, Point } from './types.ts';
 
 /**
@@ -143,8 +144,6 @@ interface Shown {
 	settle(): void;
 }
 
-const DEG = Math.PI / 180;
-
 /** throws a RangeError naming the first field of options out of range */
 function checkLayer({ origin, position, heading, opacity }: LayerOptions): void {
 	if (origin.length !== 2 || !origin.every(Number.isFinite)) {
@@ -254,9 +253,9 @@ export class Layers {
 		let turned = true;
 		let box: Box;
 		const kept: Kept[] = [];
-		const live = () => this.#shown.has(number);
-		const move = () => {
-			moved = true;
+		const edit = (apply: () => void) => {
+			if (!this.#shown.has(number)) return;
+			apply();
 			changed();
 		};
 		const settle = () => {
@@ -287,43 +286,40 @@ export class Layers {
 				return position;
 			},
 			set position(value: Point) {
-				if (!live()) return;
-				position = checkPoint(value, "A layer's position");
-				move();
+				edit(() => {
+					position = checkPoint(value, "A layer's position");
+					moved = true;
+				});
 			},
 			get heading() {
 				return heading;
 			},
 			set heading(value: number) {
-				if (!live()) return;
-				heading = checkHeading(value);
-				turned = true;
-				move();
+				edit(() => {
+					heading = checkHeading(value);
+					moved = turned = true;
+				});
 			},
 			get visible() {
 				return visible;
 			},
 			set visible(on: boolean) {
-				if (!live()) return;
-				visible = on;
-				changed();
+				edit(() => (visible = on));
 			},
 			get opacity() {
 				return opacity;
 			},
 			set opacity(value: number) {
-				if (!live()) return;
-				opacity = checkUnit(value, "A layer's opacity");
-				changed();
+				edit(() => (opacity = checkUnit(value, "A layer's opacity")));
 			},
 			get pickable() {
 				return pickable;
 			},
 			set pickable(on: boolean) {
-				if (!live()) return;
-				pickable = on;
-				for (const { id } of kept) pool.setPickable(id, on);
-				changed();
+				edit(() => {
+					pickable = on;
+					for (const { id } of kept) pool.setPickable(id, on);
+				});
 			},
 			remove
 		};

@@ -11,6 +11,7 @@ import { createMask, type Mask, type MaskOptions } from './mask.ts';
 import { Graphics, type Line, type LineStyle, type Marker, type MarkerStyle } from './overlay.ts';
 import { planes } from './math/frustum.ts';
 import {
+	DEG,
 	invert,
 	multiply,
 	perspective,
@@ -180,7 +181,6 @@ const WARM_MS = 400;
 const REOPEN_MS = 5000;
 /** animated frames the timing medians cover */
 const SAMPLES = 60;
-const DEG = Math.PI / 180;
 const DESTROYED = 'The viewer was closed.';
 const NO_ROOM = 'The layers hold more splats than this device can.';
 const SUPERSEDED = 'Another world was opened.';
@@ -427,11 +427,7 @@ class GpuEngine implements Engine {
 		if (this.#destroyed) throw new Error(DESTROYED);
 		const pages = await readLayer(options, this.#fetch);
 		if (this.#destroyed) throw new Error(DESTROYED);
-		const pinned = pins(pages);
-		const limits = this.#gpu.device.limits;
-		const room = capacities(this.#budget, limits).pool + this.#layers.pinned + pinned;
-		if (room > capacities(Infinity, limits).pool) throw new Error(NO_ROOM);
-		this.#rebudget(pinned);
+		if (!this.#rebudget(pins(pages))) throw new Error(NO_ROOM);
 		const layer = this.#layers.add(pages, options);
 		if (!layer) throw new Error(NO_ROOM);
 		return layer;
@@ -663,13 +659,19 @@ class GpuEngine implements Engine {
 		return new Quality(fit(budget), [fit(budgetRange[0]), fit(budgetRange[1])]);
 	}
 
-	/** buffers that hold the budget and the pinned splats, extra of them yet to pin, and a plan */
-	#rebudget(extra = 0): void {
-		const { pool, frame } = capacities(this.#budget, this.#gpu.device.limits);
+	/**
+	 * buffers that hold the budget and the pinned splats, extra of them yet to pin, and a plan; false,
+	 * changing nothing, when no pool holds the extra
+	 */
+	#rebudget(extra = 0): boolean {
+		const limits = this.#gpu.device.limits;
+		const { pool, frame } = capacities(this.#budget, limits);
 		const room = pool + this.#layers.pinned + extra;
+		if (extra > 0 && room > capacities(Infinity, limits).pool) return false;
 		if (room > this.#pool.capacity || frame > this.#frameCapacity) this.#grow(room, frame);
 		this.#dirty = true;
 		this.requestFrame();
+		return true;
 	}
 
 	/** a larger pool with its pages in place, and a renderer over it */
