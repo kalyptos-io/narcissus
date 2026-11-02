@@ -1,5 +1,11 @@
 // data shared across engine modules
 
+/** world metres: easting, northing, height */
+export type Point = readonly [e: number, n: number, h: number];
+
+/** rgba, each 0 to 1 */
+export type Colour = readonly [r: number, g: number, b: number, a: number];
+
 /** a page to draw and its quadrant opacities, 0-255, quadrant k at bits 8k */
 export interface Drawn {
 	id: number;

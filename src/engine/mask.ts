@@ -1,5 +1,6 @@
 // masks: vertical prisms that hide the splats of the world or of layers
 
+import type { Pool } from './gpu/pool.ts';
 import type { Layer } from './layer.ts';
 
 /**
@@ -19,4 +20,36 @@ export interface Mask {
 	enabled: boolean;
 	/** shows what it hid; the handle then does nothing */
 	remove(): void;
+}
+
+/** the handle of a mask in pool, its options checked; changed runs as what the pool draws changes */
+export function createMask(
+	pool: Pool,
+	{ polygon, z = [-Infinity, Infinity], targets }: MaskOptions,
+	numberOf: (layer: Layer) => number | undefined,
+	changed: () => void
+): Mask {
+	const layers = new Set(targets.map((t) => (t === 'world' ? 0 : (numberOf(t) ?? -1))));
+	const prism = { polygon: Float64Array.from(polygon.flat()), z: [z[0], z[1]] as const };
+	const id = pool.addMask(prism, layers);
+	let enabled = true;
+	let removed = false;
+	changed();
+	return {
+		get enabled() {
+			return enabled;
+		},
+		set enabled(on: boolean) {
+			if (removed || on === enabled) return;
+			enabled = on;
+			pool.enableMask(id, on);
+			changed();
+		},
+		remove() {
+			if (removed) return;
+			removed = true;
+			pool.deleteMask(id);
+			changed();
+		}
+	};
 }
