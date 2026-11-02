@@ -58,6 +58,10 @@ The hit is where the splats that the last frame drew over the pixel, blended fro
 
 `engine.toScreen(point)` gives the CSS pixel of a world point under the camera set last, for HTML a page puts over the canvas, such as a label or a spinner. Update that HTML in `engine.onFrame(fn)`, which runs after the controls set the camera, so it moves with the frame. A page that draws on the GPU itself does so in a `Post` plugin, which gets the frame's matrices and its depth (see [architecture.md](architecture.md)).
 
+## Capture
+
+`engine.capture({ type, quality })` resolves with the next frame as a `Blob`, as `canvas.toBlob` gives it: PNG by default, or `type: 'image/jpeg'` or `'image/webp'` with a `quality` from 0 to 1. It rejects when the browser cannot encode the image, and when the engine is destroyed or loses its device first.
+
 ## Camera and input
 
 The controls, `viewer.controls`, own the map camera:

@@ -99,6 +99,8 @@ export interface Engine {
 	 * south-west corner (west, south), rows south to north, NaN where none; null if no frame comes
 	 */
 	heights(west: number, south: number, cells: number): Promise<Float32Array | null>;
+	/** the next frame as an image, as canvas.toBlob gives it for type and quality */
+	capture(options?: { type?: string; quality?: number }): Promise<Blob>;
 	stats(): Stats;
 	/** resolves once nothing loads and the cut is drawn without fades */
 	idle(): Promise<void>;
@@ -184,6 +186,7 @@ const DEG = Math.PI / 180;
 const DESTROYED = 'The viewer was closed.';
 const NO_ROOM = 'The layers hold more splats than this device can.';
 const SUPERSEDED = 'Another world was opened.';
+const NO_IMAGE = 'The browser could not encode the frame.';
 
 /** pool and frame capacities in splats for a budget, every binding within the device limits */
 export function capacities(
@@ -247,6 +250,13 @@ interface Picking {
 	/** canvas css pixels */
 	points: readonly (readonly [number, number])[];
 	resolve: (hits: (Hit | null)[]) => void;
+}
+
+interface Capturing {
+	type?: string;
+	quality?: number;
+	resolve: (blob: Blob) => void;
+	reject: (reason: Error) => void;
 }
 
 interface Measuring {
@@ -324,6 +334,7 @@ class GpuEngine implements Engine {
 	/** the last frame submitted; null while the gpu holds none to pick in */
 	#rendered: Frame | null = null;
 	#measures: Measuring[] = [];
+	#captures: Capturing[] = [];
 	#idlers: (() => void)[] = [];
 	#lostListeners = new Set<(reason: string) => void>();
 	#frameListeners = new Set<(now: number) => void>();
@@ -360,7 +371,9 @@ class GpuEngine implements Engine {
 			if (this.#destroyed) return;
 			this.#lost = true;
 			cancelAnimationFrame(this.#raf);
-			for (const fn of this.#lostListeners) fn(info.message || info.reason);
+			const reason = info.message || info.reason;
+			for (const { reject } of this.#captures.splice(0)) reject(new Error(reason));
+			for (const fn of this.#lostListeners) fn(reason);
 		});
 	}
 
@@ -543,6 +556,14 @@ class GpuEngine implements Engine {
 		});
 	}
 
+	capture({ type, quality }: { type?: string; quality?: number } = {}): Promise<Blob> {
+		if (this.#destroyed || this.#lost) return Promise.reject(new Error(DESTROYED));
+		return new Promise((resolve, reject) => {
+			this.#captures.push({ type, quality, resolve, reject });
+			this.requestFrame();
+		});
+	}
+
 	stats(): Stats {
 		const pool = this.#pool;
 		const feed = this.#feed;
@@ -633,6 +654,7 @@ class GpuEngine implements Engine {
 		this.#layers.clear();
 		for (const { points, resolve } of this.#picks.splice(0)) resolve(points.map(() => null));
 		for (const { resolve } of this.#measures.splice(0)) resolve(null);
+		for (const { reject } of this.#captures.splice(0)) reject(new Error(DESTROYED));
 		for (const resolve of this.#idlers.splice(0)) resolve();
 		this.#gpu.device.destroy();
 	}
@@ -823,6 +845,11 @@ class GpuEngine implements Engine {
 		if (capsules) this.#renderer.overlay(capsules, origin);
 		const heights = this.#measures.splice(0).map((measuring) => this.#measure(measuring, origin));
 		const done = this.#renderer.render(frame, this.#planes, this.#options.sky, heights);
+		// the canvas holds the frame until the next getCurrentTexture, and toBlob reads it now
+		for (const { type, quality, resolve, reject } of this.#captures.splice(0)) {
+			const answer = (blob: Blob | null) => (blob ? resolve(blob) : reject(new Error(NO_IMAGE)));
+			this.#canvas.toBlob(answer, type, quality);
+		}
 		this.#rendered = frame;
 		if (this.#picks.length) this.#answer();
 		const cpuMs = performance.now() - now;
