@@ -1,6 +1,6 @@
 # Embedding the viewer
 
-A page that embeds narcissus can add its own splats, hide parts of the world, find what is under the cursor, draw lines and markers in the scene, and steer the camera. These hooks know nothing of the page. They are on the engine and the controls, which `<narcissus-viewer>` gives as its `engine` and `controls` properties from its `start` event.
+A page that embeds narcissus can add its own splats, hide parts of the world, find what is under the cursor, draw lines and markers in the scene, and steer the camera. These hooks know nothing of the page. They are on the engine and the controls, which `<narcissus-viewer>` gives as its `engine` and `controls` properties from its `start` event. [examples/hooks.html](../examples/hooks.html) uses each of them on one page.
 
 All positions that go in or come out are world coordinates as `world.json` declares them, as JavaScript numbers (float64). Inside, the engine keeps them relative to a floating origin near the camera, so a projected northing keeps its millimetres.
 
@@ -16,6 +16,10 @@ const mask = engine.addMask({ polygon, targets: ['world'] });
 // show the original again, exactly
 layer.visible = mask.enabled = false;
 ```
+
+## Handles
+
+`addLayer`, `addMask`, `addLine` and `addMarker` give a handle. Its fields can be set, and `remove()` ends it. A change applies at the next frame, and all the changes made between two frames cost one update. After `remove()`, the setters do nothing and the getters keep their last values. A bad input, to an `add` or to a setter, throws a `RangeError` whose message names it.
 
 ## Layers
 
@@ -36,9 +40,8 @@ const layer = await engine.addLayer({
 - `{ url }` is read through the engine's `source`, the same `Fetch` as the world, so the page's tokens or signed URLs apply. `signal` goes to that read and is checked again once the pack is decoded. An abort rejects with `signal.reason` and keeps nothing.
 - The anchor is the bottom centre of the layer's box as it was encoded. `position` is where the anchor sits, and `heading` turns the layer about the vertical through it, clockwise as a pose's yaw: at 90, what was north of the anchor is east of it. A splat encoded at `p` shows at `position + R(heading)(p - anchor)`. With neither, the layer shows where it was encoded.
 - `box` is the world extent of the layer where it stands now. A turned layer's box is a little larger than its splats.
-- `position`, `heading`, `visible`, `opacity` (0 to 1) and `pickable` can be set on the layer. A change shows at the next frame, and all the changes made between two frames cost one update. Masks act on a moved or turned layer where it now stands.
-- A value out of range throws a `RangeError` that names it: an `origin` or `position` that is not finite numbers, a `heading` that is not finite, an `opacity` outside 0 to 1.
-- After `remove()`, the setters do nothing and the getters keep their last values.
+- `position`, `heading`, `visible`, `opacity` (0 to 1) and `pickable` can be set. Masks act on a moved or turned layer where it now stands.
+- An `origin` or `position` must be finite numbers, a `heading` finite, and an `opacity` from 0 to 1.
 - Layer splats go through the same passes as the world's, and one sort orders them all by depth. A layer never shows through the world's splats, or the world through a layer's.
 - A layer has no levels of detail. It draws the finest level of its pack at every distance. Off screen its clusters are culled, and far away its sub-pixel splats are dropped before the sort.
 - A hidden layer costs no frame time. Its splats stay on the GPU, at 28 bytes each, until `remove()`, so it shows again at once.
@@ -59,9 +62,9 @@ const layer = await engine.addLayer({
 
 The rule: a splat of a target is covered while its centre lies inside the polygon and within `z`, or, with `outside`, while it does not. The opacity of a covered splat is multiplied by `opacity`, and the splat takes the tint. Where several masks cover a splat, their opacities multiply and their tints apply in the order the masks were added.
 
-It holds at every level of detail, through the fades between levels, and while pages stream: the test runs on each splat before it is projected, whatever page drew it. Only a mask with opacity 0 drops whole clusters before the GPU sees them: the clusters it covers wholly. Other clusters pay a test for each splat when a mask may cover some of their splats. For a mask with opacity 0 these are only the clusters its edges or its `z` ends cross. A mask that fades or tints tests each splat of every cluster it covers in whole or in part, so it costs the test over its whole area. An `outside` mask is checked against every cluster.
+The rule holds at every level of detail, through the fades between levels, and while pages stream: the test runs on each splat before it is projected, whatever page drew it. A mask that hides, with opacity 0, drops the clusters it covers wholly before the GPU sees them, and tests each splat only in the clusters its edges or its `z` ends cross. A mask that fades or tints tests each splat of every cluster it covers in whole or in part, so it costs the test over its whole area. An `outside` mask is checked against every cluster.
 
-Every field of the `Mask` can be set: `polygon`, `z`, `targets`, `outside`, `opacity`, `tint` and `enabled`. Changes apply at the next frame, and all the changes made between two frames cost one pass over the pages they touch, so a page can hold thousands of small masks. `remove()` ends the mask. After it the setters do nothing and the getters keep their last values. A bad option, in `addMask` or a setter, throws a `RangeError` that names it. A target layer must belong to this engine and must not be removed. `engine.heights()` follows the masks too: a splat counts there with the opacity the masks leave it. `engine.ground()` does not: it reads the coarse ground from the tree's index.
+Every field of the `Mask` can be set: `polygon`, `z`, `targets`, `outside`, `opacity`, `tint` and `enabled`. The changes made between two frames cost one pass over the pages they touch, so a page can hold thousands of small masks. `remove()` shows again what the mask covered. A target layer must belong to this engine and must not be removed. `engine.heights()` follows the masks too: a splat counts there with the opacity the masks leave it. `engine.ground()` does not: it reads the coarse ground from the tree's index.
 
 ## Picking
 
@@ -77,9 +80,9 @@ The hit is where the splats that the last frame drew over the pixel, blended fro
 
 ## Lines and markers
 
-`engine.addLine(points, style)` draws a polyline through world points, and `engine.addMarker(point, style)` draws a dot. Both draw over the finished frame, after the plugins. Each returns a handle whose fields set it: `points` (or `point`), `style` and `visible`. `style` reads back with the defaults filled in, so `line.style = { ...line.style, colour }` changes one of them. A hidden graphic is not drawn. Changes apply at the next frame. `remove()` ends a graphic; after it, its setters do nothing. A bad point or style throws a `RangeError`.
+`engine.addLine(points, style)` draws a polyline through world points, and `engine.addMarker(point, style)` draws a dot. Both draw over the finished frame, after the plugins. Their handles have `points` (or `point`), `style` and `visible`. `style` reads back with the defaults filled in, so `line.style = { ...line.style, colour }` changes one of them. A hidden graphic is not drawn.
 
-- `width` and `size` are CSS pixels. `colour` is RGBA from 0 to 1. `closed` joins a line's last point to its first.
+- `width` and `size` are CSS pixels, more than 0. `colour` is RGBA, each 0 to 1. `closed` joins a line's last point to its first.
 - With `occlude`, the default, a part behind splats is hidden. A line drawn on picked ground points still shows: a part may lie up to 2 % of its distance behind the splats.
 - The depth tested against is that of the nearest splat fragment with any opacity, so a faint floater can hide a short piece of a line.
 
@@ -121,7 +124,6 @@ viewer.addEventListener(
 - The element sends `start` when it has made the engine and the controls, and `ready`, with the `World` as its detail, each time a world is open. `error` carries a message. `NarcissusViewerEventMap` types them for `addEventListener`.
 - The engine and the controls, and the layers, masks, lines, markers, listeners and settings a page adds to them, live from `start` until the element leaves the page. They stay when `src` changes. An element put back on the page makes new ones and sends `start` again.
 - `engine.open()` resolves when a world is open.
-- `addLayer` resolves when a layer is in and rejects when it fails.
 - `engine.onProgress(fn)` calls `fn({ planned, missing, loading })` when the view's loading changes. `missing` of `planned` splats are not loaded yet.
 - `engine.onLost(fn)` reports a lost device.
 
@@ -131,10 +133,12 @@ Measured with `SOURCE=synthetic LAYERS=4 pnpm bench`, one run each, on an RTX 40
 
 | metric                     | world alone | with layers |
 | -------------------------- | ----------- | ----------- |
-| GPU ms per frame           | 3.47        | 4.07        |
-| frames per second          | 251         | 222         |
+| GPU ms per frame           | 3.30        | 3.98        |
+| frames per second          | 260         | 236         |
 | splats drawn               | 1,799,922   | 2,110,387   |
 | splats in the world's plan | 2,066,432   | 1,454,080   |
 | pool MiB                   | 357         | 390         |
 
 The world's plan gives up about the 600,000 layer splats in view at each pose. The pool grows by the layers' 1,200,000 splats at 28 bytes each.
+
+`engine.stats()` gives numbers like these on a running page. It is for diagnosis, and its fields can change in any release.
