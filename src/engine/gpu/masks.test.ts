@@ -42,7 +42,7 @@ describe('Masks', () => {
 				.map((id) => [id, relate(squares[ids.indexOf(id)].prism, min, max)]);
 			expect(held).toBe(scanned.some(([, r]) => r === 1));
 			if (!held)
-				expect(crossing.sort((a, b) => a - b)).toEqual(
+				expect(crossing.map((entry) => entry / 2).sort((a, b) => a - b)).toEqual(
 					scanned.filter(([, r]) => r === 2).map(([id]) => id)
 				);
 		}
@@ -59,17 +59,18 @@ describe('Masks', () => {
 			const hidden = masks.relate(0, [x, y, 0], [x + s, y + s, 1], listed);
 			return hidden ? 'hidden' : listed;
 		};
-		expect(relation(2.5, 2.5, 1)).toEqual([fade]);
-		expect(relation(1, 1, 2)).toEqual([fade]);
-		expect(relation(9, 9, 2)).toEqual([hide]);
+		// a box the mask holds whole is marked so, sparing the shader its edges
+		expect(relation(2.5, 2.5, 1)).toEqual([2 * fade + 1]);
+		expect(relation(1, 1, 2)).toEqual([2 * fade]);
+		expect(relation(9, 9, 2)).toEqual([2 * hide]);
 		expect(relation(1e4, 1e4, 1)).toBe('hidden');
 		expect(relation(500.5, 500.5, 1)).toBe('hidden');
 		masks.enable(hide, false);
-		expect(relation(500.5, 500.5, 1)).toEqual([far]);
+		expect(relation(500.5, 500.5, 1)).toEqual([2 * far + 1]);
 		// a set keeps its place in the list
 		masks.enable(hide, true);
 		masks.set(hide, rect(0, 0, 10, 10, { z: [-5, 5], outside: true, opacity: 0.5 }));
-		expect(relation(1, 1, 10)).toEqual([hide, fade]);
+		expect(relation(1, 1, 10)).toEqual([2 * hide, 2 * fade]);
 		masks.destroy();
 	});
 });

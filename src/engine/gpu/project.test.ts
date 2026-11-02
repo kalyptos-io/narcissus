@@ -584,6 +584,14 @@ describe('Project', () => {
 		covered(got, [y10, y80], [red], 0.5);
 		covered(got, [y25, y50], [], 1);
 
+		// one that holds the whole cluster acts without its edges
+		const whole = pool.addMask(rect(-1e4, -1e4, 1e4, 1e4, { opacity: 0.5, tint: blue }));
+		draw();
+		got = await shown();
+		covered(got, [y10, y80], [red, blue], 0.25);
+		covered(got, [y25, y50], [blue], 0.5);
+		pool.deleteMask(whole);
+
 		pool.setMask(id, rect(-10, 20, 10, 60, { outside: true }));
 		draw();
 		expect([...(await shown()).keys()].sort()).toEqual([y25, y50]);

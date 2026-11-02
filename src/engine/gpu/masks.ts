@@ -11,6 +11,8 @@ const MASK_WORDS = 11;
 const FAR = 3e38;
 /** cells across past which a mask is tested by every box rather than filed by cell */
 const SPAN = 4;
+/** masks.wgsl's list entry bit for a mask that acts on every centre of the cluster */
+const INSIDE = 0x80000000;
 
 /** a mask as the pool holds it */
 export interface Spec {
@@ -88,7 +90,7 @@ export class Masks {
 
 	/**
 	 * whether an enabled mask over layer hides every centre in the world box min to max; when none
-	 * does, the ids of those that may act on some go into listed, in the order they were added
+	 * does, those that may act on some go into listed as entries, in the order they were added
 	 */
 	relate(layer: number, min: ArrayLike<number>, max: ArrayLike<number>, listed: number[]): boolean {
 		for (const id of (this.#grid ??= new Grid(this.#masks)).near(min, max)) {
@@ -98,7 +100,8 @@ export class Masks {
 			const relation = relate(prism, min, max);
 			if (relation === OUT) continue;
 			if (relation === IN && opacity === 0) return true;
-			listed.push(id);
+			// an entry: id times 2, odd where the mask acts on every centre
+			listed.push(id * 2 + (relation === IN ? 1 : 0));
 		}
 		// ids count up as masks are added, and the shader composites tints in list order
 		listed.sort((a, b) => a - b);
@@ -116,7 +119,7 @@ export class Masks {
 		return words;
 	}
 
-	/** the records, edges and lists, as mask ids from listBase on; the last lists when left out */
+	/** the records, edges and lists, as relate's entries, from listBase on; the last lists when left out */
 	write(lists: number[] = this.#lists): void {
 		this.#lists = lists;
 		const words = new Uint32Array(this.listBase + lists.length);
@@ -139,7 +142,10 @@ export class Masks {
 			for (let k = 0; k < edges.length; k++) floats[edge++] = edges[k] - (k % 2 ? oy : ox);
 			record.set(id, r++);
 		}
-		for (let k = 0; k < lists.length; k++) words[edge + k] = record.get(lists[k]) ?? 0;
+		for (let k = 0; k < lists.length; k++) {
+			const entry = lists[k];
+			words[edge + k] = (record.get(entry >> 1) ?? 0) | (entry & 1 ? INSIDE : 0);
+		}
 		if (words.byteLength > this.#buffer.size) {
 			this.#buffer.destroy();
 			this.#buffer = this.#make(words.byteLength);
