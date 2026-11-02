@@ -417,6 +417,9 @@ class GpuEngine implements Engine {
 		this.#fader = new Fader();
 		// page ids restart with the tree, so the old world's pages must leave the pool
 		this.#pool.clear();
+		// the jump to the new world's pose is no motion to predict from
+		this.#velocity.fill(0);
+		this.#cameraAt = -Infinity;
 		this.#feed = this.#feedFor(tree, loader);
 		this.#dirty = true;
 		this.requestFrame();
