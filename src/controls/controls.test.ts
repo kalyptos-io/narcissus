@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Engine } from '../engine/index.ts';
 import { Controls, flyAxes, metresPerPixel, smooth } from './controls.ts';
-import { cameraOf, type Pose } from './pose.ts';
+import { cameraOf, LIMITS, type Pose } from './pose.ts';
 
 describe('metresPerPixel', () => {
 	it('spans the 45 degree view at the focus over the canvas height', () => {
@@ -81,12 +81,10 @@ describe('Controls', () => {
 		};
 		now = 0;
 		warm.mockClear();
-		controls = new Controls(
-			canvas as HTMLCanvasElement,
-			engine as unknown as Engine,
-			() => 0,
-			start
-		);
+		controls = new Controls(canvas as HTMLCanvasElement, engine as unknown as Engine, {
+			ground: () => 0,
+			pose: start
+		});
 	});
 
 	afterEach(() => {
@@ -174,6 +172,17 @@ describe('Controls', () => {
 		frames(5);
 		abort.abort();
 		expect(await arrived).toBe(false);
+	});
+
+	it('clamps the pose to new limits and tells the listeners', () => {
+		const changed = vi.fn();
+		controls.onChange(changed);
+		controls.limits = { ...LIMITS, dist: [1, 100] };
+		expect(controls.pose.dist).toBe(100);
+		expect(controls.limits.dist).toEqual([1, 100]);
+		expect(changed).toHaveBeenCalledWith(controls.pose);
+		controls.limits = { ...LIMITS, dist: [1, 200] };
+		expect(changed).toHaveBeenCalledOnce();
 	});
 
 	it('jumps at once', () => {

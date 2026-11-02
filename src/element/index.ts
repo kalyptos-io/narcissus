@@ -135,7 +135,7 @@ export class NarcissusViewer extends HTMLElement {
 			pose.h = h ?? world.extent.h[0];
 		}
 		this.#controls?.destroy();
-		this.#controls = new Controls(this.#canvas, engine, ground, pose);
+		this.#controls = new Controls(this.#canvas, engine, { ground, pose });
 		this.dispatchEvent(new CustomEvent('ready', { detail: world }));
 	}
 

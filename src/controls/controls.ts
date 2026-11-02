@@ -31,6 +31,14 @@ const TAU = 0.05;
 
 type Ground = (e: number, n: number) => number;
 
+export interface ControlsOptions {
+	/** ground height at a point, which the camera stays above */
+	ground: Ground;
+	/** the pose to show first */
+	pose: Pose;
+	limits?: Limits;
+}
+
 interface Trip {
 	path: ReturnType<typeof flight>;
 	/** frame time the trip set off, null before its first frame */
@@ -89,13 +97,8 @@ export class Controls {
 	#offFrame: () => void;
 	#last: number | null = null;
 
-	constructor(
-		canvas: HTMLCanvasElement,
-		engine: Engine,
-		ground: Ground,
-		pose: Pose,
-		limits = LIMITS
-	) {
+	constructor(canvas: HTMLCanvasElement, engine: Engine, options: ControlsOptions) {
+		const { ground, pose, limits = LIMITS } = options;
 		this.#canvas = canvas;
 		this.#engine = engine;
 		this.#ground = ground;
@@ -122,6 +125,20 @@ export class Controls {
 	/** the pose the camera shows now */
 	get pose(): Pose {
 		return { ...this.#current };
+	}
+
+	/** how far the pose may go */
+	get limits(): Limits {
+		return { ...this.#limits };
+	}
+
+	/** clamps the pose to the new limits at once */
+	set limits(limits: Limits) {
+		this.#limits = limits;
+		this.#target = this.#clamp(this.#target);
+		const was = this.#current;
+		this.#current = this.#clamp(was);
+		if (!same(was, this.#current)) this.#changed();
 	}
 
 	/** fires with the shown pose each time it changes, from input, flights and jumps */
@@ -322,6 +339,17 @@ export class Controls {
 	#place() {
 		this.#engine.setCamera(viewOf(this.#current));
 	}
+}
+
+function same(a: Pose, b: Pose): boolean {
+	return (
+		a.e === b.e &&
+		a.n === b.n &&
+		a.h === b.h &&
+		a.yaw === b.yaw &&
+		a.pitch === b.pitch &&
+		a.dist === b.dist
+	);
 }
 
 function add(sum: [number, number], dx: number, dy: number) {
