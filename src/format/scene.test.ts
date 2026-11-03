@@ -84,7 +84,7 @@ function splats(pi: number, pj: number) {
 				position.set([x, y, z], t * 3);
 				const turn = Math.PI * ((hash(i * 4 + k, j) & 0xffff) / 0xffff);
 				rotation.set([Math.cos(turn), 0, 0, Math.sin(turn)], t * 4);
-				scale.set([Math.log(0.22), Math.log(0.14), Math.log(0.01)], t * 3);
+				scale.set([Math.log(0.3), Math.log(0.22), Math.log(0.01)], t * 3);
 				dc.set(
 					[tone, tone + 0.05, tone - 0.03].map((c) => (c - 0.5) / C0),
 					t * 3
