@@ -1,0 +1,42 @@
+{
+	"version": 1,
+	"crs": "EPSG:25832",
+	"height": "DVR90",
+	"leaf": 250,
+	"roots": [
+		{
+			"level": 0,
+			"e": 723000,
+			"n": 6177000,
+			"idx": "u/0/723000/6177000.5e469f6dc04a5e37.idx"
+		}
+	],
+	"extent": {
+		"e": [
+			722999.65,
+			723062.85
+		],
+		"n": [
+			6176999.65,
+			6177062.85
+		],
+		"h": [
+			0.25,
+			3.65
+		]
+	},
+	"attributes": {
+		"example.confidence": {
+			"type": "f16",
+			"components": 1,
+			"default": 0,
+			"rule": "aggregated"
+		},
+		"example.object": {
+			"type": "u32",
+			"components": 1,
+			"default": 0,
+			"rule": "preserved"
+		}
+	}
+}
