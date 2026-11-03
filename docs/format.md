@@ -1,11 +1,13 @@
-# Guldmund Trees, version 1
+# Guldmund Trees, version 2
 
 A Guldmund tree stores one gaussian-splat world as static files:
 
 - `world.json`, a short-lived manifest.
 - Unit files under `u/`.
 
-A change to this page is a new version. All integers are little-endian. `f32` is IEEE float32.
+A change to this page is a new version. All integers are little-endian. `f32` is IEEE float32, `f16` IEEE float16.
+
+Version 2 adds attribute streams: typed values for each splat that a producer gives meaning to (`.atr`, below). A version 2 reader reads version 1 trees. A tree without attributes is written as version 1.
 
 ## Grid, levels and pages
 
@@ -31,7 +33,7 @@ Inside a page, splats are in quadrant order, as the quadrant starts in the heade
 - `E` and `N` are the unit's south-west corner in whole metres.
 - `hash` is the 16 lowercase hex digits of the file's blake2b digest of size 8.
 
-A unit has a `.pack` and an `.idx`. A corrected unit also has a `.col`. Every such file is immutable.
+A unit has a `.pack` and an `.idx`. A corrected unit also has a `.col`, and a unit with attributes an `.atr`. Every such file is immutable.
 
 ## `.pack`
 
@@ -103,7 +105,7 @@ Measured on aerial data, 26 land pages and 8 water pages of one leaf: 14.9 bytes
 
 ## `.idx`
 
-An 8-byte prefix (`GMIX`, u16 version 1, u16 0), then a raw deflate stream of:
+An 8-byte prefix (`GMIX`, u16 version 1 or 2, u16 0), then a raw deflate stream of a 40-byte header in version 1, or 48 bytes in version 2:
 
 | offset | type    | field                          |
 | ------ | ------- | ------------------------------ |
@@ -119,6 +121,7 @@ An 8-byte prefix (`GMIX`, u16 version 1, u16 0), then a raw deflate stream of:
 | 35     | u8      | 0                              |
 | 36     | u16     | descendants                    |
 | 38     | u16     | 0                              |
+| 40     | 8 bytes | attribute hash (version 2 only) |
 
 Then the rows, 52 bytes each:
 
@@ -161,6 +164,51 @@ A unit's colour correction. A writer can replace it without a change to the pack
 - Channels 0-2 add to the displayed red, green and blue. Channel `3 + 3c + m` adds to `sh[c][m]` (ENU, as above).
 - The correction applies to the splats of every page of the unit. A splat reads it bilinearly at its centre, clamped to the outer nodes.
 
+## `.atr`
+
+A unit's attribute streams. A writer can replace it without a change to the pack; the unit's `.idx` (version 2) names it by its hash, all zero for none.
+
+In order:
+
+1. The chunks, back to back. A chunk is a raw deflate stream of one stream's values for one page.
+2. The tables.
+3. A 24-byte trailer:
+
+| offset from end | type    | field                                   |
+| --------------- | ------- | --------------------------------------- |
+| -24             | 8 bytes | hash of the `.pack` the values describe |
+| -16             | u32     | byte offset of the tables               |
+| -12             | u32     | chunks                                  |
+| -8              | 4 bytes | `GMAT`                                  |
+| -4              | u16     | version, 1                              |
+| -2              | u16     | 0                                       |
+
+The tables, not compressed:
+
+- u16 streams `s`, u16 0.
+- `s` stream names: u8 length, then that many bytes of UTF-8. A name is one that `world.json` declares.
+- The chunks, 20 bytes each, ordered by blob offset, then stream:
+
+| offset | type | field                                           |
+| ------ | ---- | ----------------------------------------------- |
+| 0      | u16  | stream, the index of its name above             |
+| 2      | u8   | encoding                                        |
+| 3      | u8   | 0                                               |
+| 4      | u32  | blob offset of the page in the pack             |
+| 8      | u32  | rows: the page's count                          |
+| 12     | u32  | byte offset of the chunk in the file            |
+| 16     | u32  | chunk length in bytes                           |
+
+A chunk's values follow the page's splat order. A page with no chunk for a stream takes the stream's default for every splat. The pack's page table, not the `.idx`, is the reference: a chunk can describe a page that the `.idx` does not list (the unreferenced levels of a unit that gained a parent).
+
+A value of a fixed stream is `components` scalars of its `type`, back to back. A value of a `records` stream is a run of bytes; the default is empty. Encodings:
+
+| encoding | fixed stream                                                                                   | `records` stream                                                    |
+| -------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| 0 plain  | `rows` values                                                                                  | `rows + 1` u32 offsets into the bytes that follow, then the bytes   |
+| 1 dictionary | u32 `k`, `k` values, then `rows` indices: u8 when `k ≤ 256`, else u16; `k ≤ 65536`         | not used                                                            |
+| 2 sparse | u32 `m`, `m` u32 rows in increasing order, then their `m` values; other rows take the default  | u32 `m`, `m` u32 rows in increasing order, `m + 1` u32 offsets, then the bytes |
+
 ## `world.json`
 
 ```json
@@ -188,6 +236,11 @@ A unit's colour correction. A writer can replace it without a change to the pack
 - Paths are relative to `world.json`.
 - A writer may add its own members. A reader ignores the members that it does not know.
 - `waiting`, if present, lists the `.idx` of units that no root reaches yet.
+- `attributes`, if present, declares the streams that `.atr` files may hold, by name: `{ "type", "components", "default", "rule" }`.
+  - `type`: `u8`, `u16`, `u32`, `i8`, `i16`, `i32`, `f16`, `f32`, or `records` for a run of bytes per splat.
+  - `components`: 1 to 4 for a fixed stream; left out for `records`. `default`: a number, or one per component; left out for `records`.
+  - `rule`: how the producer gave values to coarse splats, which merge others. `preserved`: each coarse value is exact for every splat it merges. `aggregated`: a reduction the producer defines. `unavailable`: coarse splats take the default. A reader never derives a coarse value from finer splats.
+  - A name is namespaced, `<producer>.<name>`. What the values mean is the producer's and the reading application's; the format gives only their storage.
 - A reader uses only `roots`.
 - A publisher writes every unit file before the `world.json` that reaches it.
 - A reader that finds a missing unit file reloads `world.json`.
