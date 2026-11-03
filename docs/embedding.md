@@ -59,11 +59,28 @@ You can set every option, and `enabled`. `engine.heights()` obeys masks; `engine
 
 ## Picking
 
-`engine.pick(x, y)` takes canvas CSS pixels. It resolves with `null` over nothing, else with a `Hit` on the surface that the last frame drew there, after masks: its world `point`, the surface `normal` toward the camera, and the `layer` hit, `null` for the world.
+`engine.pick(x, y)` takes canvas CSS pixels. It resolves with `null` over nothing, else with a `Hit` on the surface that the last frame drew there, after masks: its world `point`, the surface `normal` toward the camera, the `layer` hit, `null` for the world, and the `object` hit, 0 for none.
 
 A pick renders no frame. It answers about one frame later, or a frame later still when the pixel holds many splats. You can pick at each pointer move. `engine.pickMany(points)` resolves with a `Hit` or `null` for each pixel, in order, at about the cost of one pick for up to 64 pixels.
 
 To drag a layer over the area its own mask hides, disable that mask during the drag.
+
+## Objects
+
+A host can give each splat of the world an object id from 0 to 65535, such as the building it is part of. Pass `objects` to `engine.open(url, { objects })`, or set `viewer.objects` before `src`; the element reads it each time a world opens. It maps the pack path of a unit, as its `.idx` names it (`u/0/723000/6179250.<hash>.pack`), to the URL of the unit's `.ids` file. A unit that it does not name has object 0 everywhere. The format of the world does not change.
+
+An `.ids` file has an 8-byte prefix (`NIDS`, u16 version 1, u16 0), then a raw deflate stream of:
+
+| offset | type    | field      |
+| ------ | ------- | ---------- |
+| 0      | u32     | count `n`  |
+| 4      | u16 × n | object ids |
+
+There is one id for each splat of the pack: the pages in the order of their blobs, and the splats of each page in file order. Integers are little-endian.
+
+- The engine reads each `.ids` once for each open world, through its `source`, and keeps it out of its `cache`. The pages of a unit wait for its `.ids`.
+- When the file does not load, or `n` differs from the splats that the unit's `.idx` lists, the engine ignores the file and writes a warning to the console.
+- `pick()` gives the object in `Hit.object`. A `Shade` hook reads it as `(*s).object`, a `u32`. Layers have object 0.
 
 ## Lines and markers
 

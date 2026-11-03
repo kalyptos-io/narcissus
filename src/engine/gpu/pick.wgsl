@@ -18,14 +18,15 @@ struct Probes {
 }
 
 // a splat over a probed pixel: its face toward the camera, its view depth, which orders the blend,
-// the view depth where the pixel's ray meets its plane, its alpha at the pixel, its layer and the
-// probe's index
+// the view depth where the pixel's ray meets its plane, its alpha at the pixel, its layer, its object
+// and the probe's index
 struct Entry {
 	normal: vec3f,
 	depth: f32,
 	meets: f32,
 	alpha: f32,
 	layer: u32,
+	object: u32,
 	probe: u32,
 }
 
@@ -120,7 +121,7 @@ fn give(cluster: Cluster, t: u32) {
 		}
 		let slot = atomicAdd(&hits.count, 1u);
 		if (slot < arrayLength(&hits.entries)) {
-			hits.entries[slot] = Entry(normal, d.depth, meets(s, d, normal, pixel), a, layer, k);
+			hits.entries[slot] = Entry(normal, d.depth, meets(s, d, normal, pixel), a, layer, s.object, k);
 		}
 	}
 }

@@ -10,8 +10,10 @@ export const LEAF = 250;
 export const PACK_MAGIC = 'GMPK';
 export const IDX_MAGIC = 'GMIX';
 export const COL_MAGIC = 'GMCL';
+/** narcissus's own object id sidecar, docs/embedding.md */
+export const IDS_MAGIC = 'NIDS';
 export const VERSION = 1;
-/** bytes of the .idx and .col prefix before their deflate stream */
+/** bytes of the .idx, .col and .ids prefix before their deflate stream */
 export const PREFIX = 8;
 export const PACK_TRAILER = 16;
 export const IDX_HEADER = 40;
@@ -44,10 +46,11 @@ export const CLUSTER = 256;
  * geometry: w0 x u16 | y u16 << 16
  *           w1 z u16 | alpha u8 << 16 | rotation index << 24
  *           w2 rotation a | b << 8 | c << 16 | scale x << 24
- *           w3 scale y | scale z << 8
+ *           w3 scale y | scale z << 8 | object << 16
  * colour:   w0 dc r | g << 8 | b << 16 | sh0 << 24
  *           w1 sh1 .. sh4, w2 sh5 .. sh8, sh as i8 over the page's sh scale
- * bytes decode as in the file; dc and sh are recoded after the colour correction.
+ * bytes decode as in the file; dc and sh are recoded after the colour correction. object is the
+ * host's id from its .ids, 0 without one.
  */
 export const GEOMETRY_WORDS = 4;
 export const COLOUR_WORDS = 3;

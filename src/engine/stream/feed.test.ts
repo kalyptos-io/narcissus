@@ -7,6 +7,7 @@ import { Tree, unitKey, type PageNode, type Wanted } from '../world/tree.ts';
 import { FEED, Feed, type FeedOptions } from './feed.ts';
 import { Missing } from '../../ports.ts';
 import type { Loader } from './loader.ts';
+import { Objects } from './objects.ts';
 import type { Batch } from './scheduler.ts';
 
 const E = 720000;
@@ -114,7 +115,11 @@ function setup(options: Partial<FeedOptions> = {}, capacity = Infinity) {
 	const arrive = vi.fn();
 	const stale = vi.fn();
 	const typed = { loader: loader as unknown as Loader, pool: pool as unknown as Pool };
-	const feed = new Feed(tree, typed.loader, typed.pool, arrive, stale, { ...FEED, ...options });
+	const objects = new Objects({}, vi.fn(), vi.fn());
+	const feed = new Feed(tree, typed.loader, objects, typed.pool, arrive, stale, {
+		...FEED,
+		...options
+	});
 	return { tree, root, loader, pool, arrive, stale, feed };
 }
 

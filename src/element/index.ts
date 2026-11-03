@@ -34,6 +34,7 @@ export interface NarcissusViewerEventMap extends Omit<HTMLElementEventMap, 'erro
  * E,N,H,yaw,pitch,dist, its focus on the ground there when H is left empty, as the opening view's;
  * sky as r,g,b from 0 to 1. camera and sky are read when a world opens and when the element starts.
  * aria-label names the canvas too, which takes focus for the camera's keys.
+ * properties: objects, read when a world opens, as engine.open() takes it.
  * events: start once the engine and the controls are made, ready with the World as its detail each
  * time a world opens, and error with a message. the engine and the controls, and all a page adds to
  * them, live from start until the element leaves the page, through every change of src.
@@ -42,6 +43,9 @@ export interface NarcissusViewerEventMap extends Omit<HTMLElementEventMap, 'erro
  */
 export class NarcissusViewer extends HTMLElement {
 	static observedAttributes = ['src', 'budget', 'view-distance', 'aria-label'];
+
+	/** the url of each unit's .ids by its pack path, for each world it opens; see engine.open() */
+	objects: Readonly<Record<string, string>> = {};
 
 	#canvas: HTMLCanvasElement;
 	#fallback: HTMLSlotElement;
@@ -174,7 +178,7 @@ export class NarcissusViewer extends HTMLElement {
 		const turn = ++this.#turn;
 		let world: World;
 		try {
-			world = await engine.open(src);
+			world = await engine.open(src, { objects: this.objects });
 		} catch (error) {
 			if (turn !== this.#turn) return;
 			const why = error instanceof Error ? error.message : String(error);

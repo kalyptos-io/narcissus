@@ -62,6 +62,7 @@ fn decode(cluster: Cluster, t: u32, s: ptr<function, Splat>, g: ptr<function, ve
 	d.opacity = fraction((*g).y, 16u) * fraction(page.factors, 8u * quadrant) * effect.opacity;
 	let level = vec3f(fraction((*g).z, 24u), fraction((*g).w, 0u), fraction((*g).w, 8u));
 	d.scale = exp(mix(page.scaleMin, page.scaleMax, level));
+	d.object = (*g).w >> 16u;
 	let dc = mix(page.dcMin, page.dcMax, vec3f(fraction(w0, 0u), fraction(w0, 8u), fraction(w0, 16u)));
 	// sh[c][m] at 3c + m, gathered per m across the colours
 	let k = page.shScale;

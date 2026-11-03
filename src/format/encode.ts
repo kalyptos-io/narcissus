@@ -11,6 +11,7 @@ import {
 	COL_MAGIC,
 	DESCENDANT_BYTES,
 	IDX_HEADER,
+	IDS_MAGIC,
 	IDX_MAGIC,
 	PACK_MAGIC,
 	PACK_TRAILER,
@@ -396,6 +397,14 @@ export async function encodeCol(col: Col): Promise<Uint8Array> {
 		}
 	}
 	return wrap(body, COL_MAGIC);
+}
+
+export async function encodeIds(ids: Uint16Array): Promise<Uint8Array> {
+	const body = new Uint8Array(4 + 2 * ids.length);
+	const view = new DataView(body.buffer);
+	view.setUint32(0, ids.length, true);
+	ids.forEach((id, k) => view.setUint16(4 + 2 * k, id, true));
+	return wrap(body, IDS_MAGIC);
 }
 
 /** 16 hex digits naming bytes; readers never check it, so synthetic worlds need not use blake2b */

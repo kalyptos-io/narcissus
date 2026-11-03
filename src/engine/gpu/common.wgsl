@@ -95,6 +95,8 @@ struct Splat {
 	colour: vec3f,
 	opacity: f32,
 	scale: vec3f,
+	// the host's object id, 0 for none
+	object: u32,
 }
 
 // the byte of word at bit, 0 to 1

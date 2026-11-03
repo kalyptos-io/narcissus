@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { decodePage, PARAMS } from '../../format/index.ts';
+import { decodePage, GEOMETRY_WORDS, PARAMS } from '../../format/index.ts';
 import { encodePage } from '../../format/encode.ts';
 import { planes } from '../math/frustum.ts';
 import { multiply, perspective, view } from '../math/mat4.ts';
-import type { Frame } from '../plugin.ts';
+import type { Frame, Shade } from '../plugin.ts';
 import { frameBuffers } from './buffers.ts';
 import { FRAME_UNIFORM_BYTES, LOW_PASS, WORK } from './layout.ts';
 import { Pick, PROBES } from './pick.ts';
@@ -93,6 +93,7 @@ async function setup(slots = 4096) {
 	};
 	const one = (x: number, y: number) => pick.run([[x, y]], at).then(([found]) => found);
 	return {
+		pick,
 		pool,
 		buffers,
 		draw,
@@ -221,6 +222,30 @@ describe('Pick', () => {
 		pool.setPickable(-1, false);
 		draw([1, -1]);
 		expect(await centre()).toMatchObject({ depth: expect.closeTo(20, 2), layer: 0 });
+		pool.destroy();
+		buffers.destroy();
+	});
+
+	it('finds the object of the splat at the surface, as shade hooks leave it', async () => {
+		const { pick, pool, buffers, draw, centre } = await setup();
+		/** a page whose splats are of object, as the feed writes it */
+		const of = (object: number, north: number) => {
+			const p = page([north]);
+			for (let t = 0; t < p.count; t++) p.geometry[t * GEOMETRY_WORDS + 3] |= object << 16;
+			return p;
+		};
+		pool.add(1, of(7, 10), [0, 0], () => false);
+		pool.add(2, of(9, 20), [0, 0], () => false);
+		draw([1, 2]);
+		expect(await centre()).toMatchObject({ depth: expect.closeTo(10, 2), object: 7 });
+		const hide: Shade = {
+			name: 'hide',
+			uniforms: 1,
+			wgsl: 'fn hide(s: ptr<function, Splat>, u: array<vec4f, 1>) { if ((*s).object == 7u) { (*s).opacity = 0.0; } }',
+			update: () => {}
+		};
+		pick.hooks([{ shade: hide, slot: 0 }]);
+		expect(await centre()).toMatchObject({ depth: expect.closeTo(20, 2), object: 9 });
 		pool.destroy();
 		buffers.destroy();
 	});

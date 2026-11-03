@@ -27,6 +27,7 @@ import { percentile, pixelRatio, Quality } from './quality.ts';
 import { Feed } from './stream/feed.ts';
 import { http } from '../adapters/http.ts';
 import { Loader } from './stream/loader.ts';
+import { Objects } from './stream/objects.ts';
 import type { Camera, Drawn, Point, Progress, Settings, Stats } from './types.ts';
 import { Tree } from './world/tree.ts';
 
@@ -51,6 +52,8 @@ export interface Hit {
 	normal: [number, number, number];
 	/** null for the world */
 	layer: Layer | null;
+	/** the splat's object as the host's .ids gives it, 0 for none */
+	object: number;
 }
 
 export interface StepReport {
@@ -62,7 +65,11 @@ export interface StepReport {
 }
 
 export interface Engine {
-	open(worldUrl: string): Promise<World>;
+	/**
+	 * objects maps a unit's pack path, as its .idx names it, to the url of its .ids, the object ids
+	 * of its splats; a unit it leaves out has object 0 everywhere. a new release keeps them
+	 */
+	open(worldUrl: string, options?: { objects?: Readonly<Record<string, string>> }): Promise<World>;
 	/**
 	 * a layer from a pack, its bytes or its url read through the engine's source, placed as options
 	 * say; it stays through open(). a field out of range throws a RangeError naming it
@@ -292,6 +299,7 @@ class GpuEngine implements Engine {
 	#has = (id: number) => this.#pool.has(id);
 
 	#url: string | null = null;
+	#objects: Readonly<Record<string, string>> = {};
 	#tree: Tree | null = null;
 	#loader: Loader | null = null;
 	#feed: Feed | null = null;
@@ -395,7 +403,10 @@ class GpuEngine implements Engine {
 		});
 	}
 
-	async open(worldUrl: string): Promise<World> {
+	async open(
+		worldUrl: string,
+		{ objects = {} }: { objects?: Readonly<Record<string, string>> } = {}
+	): Promise<World> {
 		if (this.#destroyed) throw new Error(DESTROYED);
 		const ticket = ++this.#opening;
 		const check = () => {
@@ -428,6 +439,7 @@ class GpuEngine implements Engine {
 		this.#feed = null;
 		this.#loader?.destroy();
 		this.#url = worldUrl;
+		this.#objects = objects;
 		this.#tree = tree;
 		this.#loader = loader;
 		this.#plan = null;
@@ -707,7 +719,8 @@ class GpuEngine implements Engine {
 			this.#arrived = true;
 			this.requestFrame();
 		};
-		return new Feed(tree, loader, this.#pool, arrive, this.#reopen);
+		const objects = new Objects(this.#objects, this.#fetch, arrive);
+		return new Feed(tree, loader, objects, this.#pool, arrive, this.#reopen);
 	}
 
 	/** a release replaced the world: open its world.json again at the same camera */
@@ -720,7 +733,7 @@ class GpuEngine implements Engine {
 			this.#reopening = false;
 			if (this.#tree === tree) setTimeout(this.#reopen, REOPEN_MS);
 		};
-		void this.open(url).then(() => (this.#reopening = false), retry);
+		void this.open(url, { objects: this.#objects }).then(() => (this.#reopening = false), retry);
 	};
 
 	/** the layers' pages draw anew; the plan follows if what they take from it changed */
@@ -964,7 +977,8 @@ class GpuEngine implements Engine {
 			found && {
 				point: unproject(pixel, size, found.depth, frame.proj, view, frame.origin),
 				normal: found.normal,
-				layer: this.#layers.layerOf(found.layer)
+				layer: this.#layers.layerOf(found.layer),
+				object: found.object
 			};
 		void this.#renderer.pick(pixels, frame).then((found) => {
 			let at = 0;

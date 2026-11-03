@@ -21,7 +21,7 @@ const PROBES_HEAD_BYTES = 16;
 const PROBE_BYTES = 80;
 /** bytes of pick.wgsl's Hits before its entries, and of each Entry */
 const HEAD_BYTES = 16;
-const ENTRY_BYTES = 32;
+const ENTRY_BYTES = 48;
 /** entries a pick keeps at first; one that counts more grows the buffer for the next */
 const ENTRIES = 4096;
 /** the share of the pixel the splats in front cover where the surface is */
@@ -33,6 +33,8 @@ export interface Found {
 	depth: number;
 	/** 0 for the world */
 	layer: number;
+	/** the host's object id, 0 for none */
+	object: number;
 	/** the splat's thinnest axis, toward the camera */
 	normal: [number, number, number];
 }
@@ -210,7 +212,7 @@ function surfaces(
 ): (Found | null)[] {
 	const stride = ENTRY_BYTES / 4;
 	const under: number[][] = Array.from({ length: probes }, () => []);
-	for (let k = 0; k < count; k++) under[words[k * stride + 7]]?.push(k);
+	for (let k = 0; k < count; k++) under[words[k * stride + 8]]?.push(k);
 	return under.map((entries) => {
 		entries.sort((a, b) => floats[a * stride + 3] - floats[b * stride + 3]);
 		let through = 1;
@@ -221,6 +223,7 @@ function surfaces(
 				return {
 					depth: floats[at + 4],
 					layer: words[at + 6],
+					object: words[at + 7],
 					normal: [floats[at], floats[at + 1], floats[at + 2]]
 				};
 		}

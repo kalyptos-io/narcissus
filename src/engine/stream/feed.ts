@@ -6,6 +6,7 @@ import type { Plan } from '../plan/cut.ts';
 import type { Tree, UnitNode } from '../world/tree.ts';
 import { Missing } from '../../ports.ts';
 import type { Loader } from './loader.ts';
+import type { Objects } from './objects.ts';
 import { Scheduler, type Batch, type PageJob, type SchedulerOptions } from './scheduler.ts';
 import type { Loaded } from './worker.ts';
 
@@ -28,6 +29,7 @@ const PRUNE = 2000;
 export class Feed {
 	#tree: Tree;
 	#loader: Loader;
+	#objects: Objects;
 	#pool: Pool;
 	#onArrive: () => void;
 	/** runs once, when an immutable file was missing: the world was released anew and must be reopened */
@@ -62,6 +64,7 @@ export class Feed {
 	constructor(
 		tree: Tree,
 		loader: Loader,
+		objects: Objects,
 		pool: Pool,
 		onArrive: () => void,
 		onStale: () => void,
@@ -69,6 +72,7 @@ export class Feed {
 	) {
 		this.#tree = tree;
 		this.#loader = loader;
+		this.#objects = objects;
 		this.#pool = pool;
 		this.#onArrive = onArrive;
 		this.#onStale = onStale;
@@ -152,7 +156,7 @@ export class Feed {
 		for (const { id, unit, row } of this.#plan.load) {
 			const { idx } = unit;
 			const pack = unitPath(unit, idx.pack, 'pack');
-			if (!this.#ready(id, pack)) continue;
+			if (!this.#ready(id, pack) || !this.#objects.ready(pack, idx.rows)) continue;
 			const col = idx.col ? unitPath(unit, idx.col, 'col') : null;
 			jobs.push({ id, pack, col, offset: row.offset, length: row.length });
 		}
@@ -178,7 +182,9 @@ export class Feed {
 		if (this.#destroyed) return;
 		const node = this.#tree.pages.get(id);
 		if (!node) return;
-		if (this.#pool.add(id, page, [node.unit.e, node.unit.n], this.protects)) {
+		const { unit, row } = node;
+		this.#objects.write(unitPath(unit, unit.idx.pack, 'pack'), row.offset, page);
+		if (this.#pool.add(id, page, [unit.e, unit.n], this.protects)) {
 			this.#held.add(id);
 			if (this.#refused.delete(id)) this.#unwake(id);
 		} else {

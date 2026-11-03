@@ -5,6 +5,7 @@ export type { Col, DecodedPage, Idx, PageRow, UnitKey, World, WorldRoot } from '
 export { directory, parseWorld } from './world.ts';
 export { namedUnits, packRows, parseIdx, parseUnitPath, rowAt, unitPath } from './idx.ts';
 export { parseCol, sampleCol } from './col.ts';
+export { parseIds } from './ids.ts';
 export { decodePage, pageHeader, readSplat } from './page.ts';
 export type { SplatValues } from './page.ts';
 export { inflate } from './inflate.ts';
