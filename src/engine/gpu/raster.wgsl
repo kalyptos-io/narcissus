@@ -38,6 +38,11 @@ fn coverage_over() {
 	atomicAdd(&over, 1u);
 }
 
+// shades are compiled here for their sample hooks alone, and never run
+fn source(s: ptr<function, Splat>, p: vec3f) -> vec3f {
+	return vec3f();
+}
+
 fn corner(v: u32, i: u32) -> SampledCorner {
 	let p = projected[sort[sorted.values + i]];
 	let major = unpack2x16float(p.axes.x);

@@ -10,12 +10,16 @@ fn code(word: u32, bit: u32) -> f32 {
 	return f32(extractBits(i32(word), bit, 8u)) / 127.0;
 }
 
+// the record decode() read last, for source()
+var<private> decoded: vec4u;
+
 // splat t of a cluster in the floating-origin frame as its masks leave it, its record in g; false
 // when a mask hides it
 fn decode(cluster: Cluster, t: u32, s: ptr<function, Splat>, g: ptr<function, vec4u>) -> bool {
 	let page = pages[cluster.page];
 	let rec = cluster.slot + t;
 	*g = geometry[rec];
+	decoded = *g;
 	let w0 = colours[rec * 3u];
 	let w1 = colours[rec * 3u + 1u];
 	let w2 = colours[rec * 3u + 2u];
@@ -78,6 +82,15 @@ fn clip_splat(at: u32, count: u32, s: Splat, g: vec4u, by: vec2f, clip: ptr<func
 		}
 	}
 	return true;
+}
+
+// p of the floating-origin frame in the source coordinates of s, the splat decode() read last:
+// sigmas from its centre along each of its scale axes, which are orthogonal
+fn source(s: ptr<function, Splat>, p: vec3f) -> vec3f {
+	let r = rotate(rotation(decoded));
+	let by = pages[(*s).page].turn;
+	let d = p - (*s).position;
+	return vec3f(dot(d, turn(r[0], by)), dot(d, turn(r[1], by)), dot(d, turn(r[2], by))) / (*s).scale;
 }
 
 // ewa: the screen covariance B Bᵀ + L of coverage_of, a b c in px²

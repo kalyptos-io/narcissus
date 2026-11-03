@@ -28,13 +28,13 @@ const RECORD_WORDS = 20;
 const SOURCE = { pack: 'u/0/0/0.0123456789abcdef.pack', blob: 120 };
 
 /** discs facing south, the camera's way, grey (0.5), 1 m across and solid unless given */
-function page(discs: { at: [number, number, number]; alpha?: number }[]) {
+function page(discs: { at: [number, number, number]; alpha?: number; rotation?: number[] }[]) {
 	const n = discs.length;
 	const { payload } = encodePage(
 		{
 			count: n,
 			position: Float64Array.from(discs.flatMap((d) => d.at)),
-			rotation: Float32Array.from(discs.flatMap(() => [1, 0, 0, 0])),
+			rotation: Float32Array.from(discs.flatMap(({ rotation = [1, 0, 0, 0] }) => rotation)),
 			scale: Float32Array.from(discs.flatMap(() => [Math.log(0.5), Math.log(0.01), Math.log(0.5)])),
 			alpha: Float32Array.from(discs.map(({ alpha = 1 }) => alpha)),
 			dc: new Float32Array(n * 3),
@@ -308,6 +308,29 @@ fn recorded_sample(c: Sample, u: array<vec4f, 1>) -> Sampled {
 		const { pixels } = await render([recorded]);
 		expect(largest(pixels, plain)).toBeLessThanOrEqual(1e-5);
 		expect((await pick.run([[SIZE / 2, SIZE / 2]], camera))[0]?.token).toBe(4);
+		destroy();
+	});
+
+	it('give a shade the source coordinates of a world point, along the axes as the splat turns them', async () => {
+		// a quarter turn about north: axis 0 points down, axis 2 east, 0.5 m sigma each
+		const turned = [Math.SQRT1_2, 0, Math.SQRT1_2, 0];
+		const { render, pick, camera, destroy } = await setup([{ at: [8, 10, 1.5], rotation: turned }]);
+		// 0.25 m east and 0.5 m up of the centre, as hundredths of a sigma from -8 along axes 0 and 2;
+		// along the 1 cm axis the 8-bit rotation's error is tens of sigmas
+		const sourced: Shade = {
+			name: 'sourced',
+			uniforms: 1,
+			wgsl: `
+fn sourced(s: ptr<function, Splat>, u: array<vec4f, 1>) {
+	let z = source(s, (*s).position + vec3f(0.25, 0.0, 0.5));
+	let q = vec3u(round((z + 8.0) * 100.0));
+	(*s).token = q.x * 2000u + q.z;
+}`,
+			update: () => {}
+		};
+		await render([sourced]);
+		const token = (await pick.run([[SIZE / 2, SIZE / 2]], camera))[0]!.token;
+		expect([Math.floor(token / 2000), token % 2000]).toEqual([700, 850]);
 		destroy();
 	});
 
