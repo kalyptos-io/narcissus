@@ -42,25 +42,32 @@ interface AttributeUse {
 	stream: string;
 	/** the WGSL identifier: the hook reads it as attr_<as>(s) */
 	as: string;
+	/** what attr_<as> returns; the world's stream must widen to it */
+	type: 'u32' | 'i32' | 'f32' | 'records';
+	/** 1 to 4, 1 when left out */
+	components?: number;
 	/** a world that lacks the stream disables the hook, else its rows take the default */
 	required?: boolean;
 }
 ```
 
+A stream of `u8`, `u16` or `u32` widens to `u32`, `i8`, `i16` or `i32` to `i32`, and `f16` or `f32` to `f32`, with the same components; `records` only to `records`. A world that declares the stream otherwise lacks it. Two hooks may read one `as` only as the same stream, type and components.
+
 WGSL defines `fn <name>(s: ptr<function, Splat>, u: array<vec4f, <uniforms>>)`. It may change `colour`, `opacity` and `token`; opacity 0 culls the splat. Projection and pick run the same shade hooks on the same inputs.
 
 `Splat` (common.wgsl) adds to its fields of version 1:
 
-| field   | meaning                                                         |
-| ------- | --------------------------------------------------------------- |
-| `token` | `u32`, 0 by default; what pick reports for the splat            |
-| `page`  | the resident page, for attribute reads                          |
-| `row`   | the splat's index in its page                                   |
+| field   | meaning                                              |
+| ------- | ---------------------------------------------------- |
+| `token` | `u32`, 0 by default; what pick reports for the splat |
+| `page`  | the resident page, for attribute reads               |
+| `row`   | the splat's index in its page                        |
 
 Generated accessors, one for each `AttributeUse`:
 
-- A fixed stream with one component: `fn attr_<as>(s: ptr<function, Splat>) -> T`, with `T` `u32`, `i32` or `f32` (narrow types widen).
+- A fixed stream with one component: `fn attr_<as>(s: ptr<function, Splat>) -> T`, with `T` the use's `type` (narrow types widen).
 - With 2 to 4 components: the matching `vec2`-`vec4`.
+- A stream the world lacks reads 0, or an empty record.
 - A `records` stream: `fn attr_<as>(s: ptr<function, Splat>) -> Record`, then `fn record_u32(r: Record, i: u32) -> u32` and `fn record_f16x2(r: Record, i: u32) -> vec2f` read word `i` of the record; `r.words` is its length in whole words, the last padded with 0.
 
 `fn table(id: u32, i: u32) -> u32` reads word `i` of a host table; 0 past its end. A hook gets a table's `id` through its uniforms.
@@ -104,7 +111,7 @@ The library for hooks that split a splat's contribution by where its light comes
 - `z ~ N(0, I)` in source coordinates: sigma units along the splat's three scale axes, in their stored order.
 - A pixel offset `x = B z + e`, with `B` the 2 × 3 map of those axes onto the screen in pixels and `e ~ N(0, L)` the screen filter. The raster's falloff is that of `N(0, B Bᵀ + L)`.
 
-`Coverage` carries `B` and `L` for the splat, from the same decoded and quantised inputs in the raster and in pick.
+`Coverage` carries `B` and `L` for the splat, from the same decoded and quantised inputs in the raster and in pick; both reach a sample hook as f16.
 
 ```wgsl
 // z given x: mean B^T C^-1 x, covariance I - B^T C^-1 B, C = B B^T + L
@@ -132,8 +139,8 @@ fn polygon(p: Posterior2, v: array<vec2f, 12>, count: u32) -> f32
 
 ## Pick
 
-`Hit.token` is the token of the surface sample, from the shade or the sample hook; `Hit.row` names its source: the pack, the page's blob offset and the row. `Hit.object` stays the `.ids` object.
+`Hit.token` is the token of the surface sample, from the shade or the sample hook; `Hit.row` names its source: the pack, the page's blob offset and the row, `null` for a layer's splat. `Hit.object` stays the `.ids` object.
 
 ## Cost
 
-Rows without a sample request take the projection path as in version 1. A sampled row adds a record of at most 64 bytes for the frame, in a buffer sized before dispatch from the admitted rows. Attribute streams, tables and sample records count toward the engine's stated memory.
+Rows without a sample request take the projection path as in version 1, and with no sample hook installed the raster draws as in version 1. A sampled row adds a record of 64 bytes for the frame. The records' room is sized before dispatch: 1.5 times what the last measured frame asked, in a power of two, at most the rows of the drawn clusters. A row past it draws unsampled, `engine.stats().unsampled` counts it, and the next frame has room. Attribute streams, tables and sample records count toward the engine's stated memory.

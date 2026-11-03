@@ -139,7 +139,7 @@ export class Pick {
 		device.queue.writeBuffer(this.#probes, 0, values.buffer, 0, used);
 		device.queue.writeBuffer(this.#hits, 0, CLEAR);
 
-		// the slots the gpu reads now, whatever the pool holds by the time it answers
+		// the pages as the gpu reads them now: the pool may evict some before the answer
 		const sources = pool.sources();
 		const encoder = device.createCommandEncoder({ label: 'pick' });
 		const pass = encoder.beginComputePass({ label: 'pick' });

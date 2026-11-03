@@ -135,13 +135,14 @@ export class Raster {
 		const device = this.#device;
 		const code = shaded([...HOOKED, source], this.#hooks);
 		const module = device.createShaderModule({ label: 'raster', code });
+		const sampled = this.#hooks.some(({ shade }) => shade.sample) ? 'Sampled' : '';
 		return device.createRenderPipeline({
 			label: `raster ${variant}`,
 			layout: this.#pipelineLayout,
-			vertex: { module, entryPoint: `vs${variant}` },
+			vertex: { module, entryPoint: `vs${sampled}${variant}` },
 			fragment: {
 				module,
-				entryPoint: 'fs',
+				entryPoint: `fs${sampled}`,
 				targets: [{ format: this.#format, blend: { color: OVER, alpha: OVER } }]
 			},
 			primitive: { topology: 'triangle-strip' },

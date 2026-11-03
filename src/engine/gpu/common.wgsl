@@ -31,7 +31,7 @@ struct FrameUniforms {
 	lowPass: f32,
 	// drawn cluster ids in the pool's list
 	clusters: u32,
-	// extension words: the table directory and its entries, the sample records and how many fit
+	// extension words: the table directory and the ids it holds, the sample records and how many fit
 	tables: u32,
 	tableCount: u32,
 	records: u32,

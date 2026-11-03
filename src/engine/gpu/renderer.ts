@@ -138,15 +138,14 @@ export class Renderer {
 			throw new Error(`Shade hooks may use ${PLUGIN_VEC4S} uniform slots in all.`);
 		}
 		this.#checkAttributes(hook);
-		const registry = this.#pool.attributes;
-		const entry = { shade: hook, slot: 0, streams: streams(hook, registry) };
+		const entry = { shade: hook, slot: 0, streams: streams(hook, this.#pool.attributes) };
 		this.#shades.push(entry);
 		this.#hooks();
 		return () => {
 			const k = this.#shades.indexOf(entry);
 			if (k < 0) return;
 			this.#shades.splice(k, 1);
-			for (const stream of entry.streams ?? []) if (stream) registry.release(stream.id);
+			this.#release(entry.streams);
 			this.#hooks();
 		};
 	}
@@ -272,6 +271,7 @@ export class Renderer {
 
 	destroy(): void {
 		for (const { pass } of this.#posts.splice(0)) pass.destroy();
+		for (const { streams } of this.#shades.splice(0)) this.#release(streams);
 		this.#dropTargets();
 		this.#buffers.destroy();
 		this.#sort.destroy();
@@ -292,6 +292,10 @@ export class Renderer {
 		this.#project.hooks(hooked);
 		this.#pick.hooks(hooked);
 		this.#raster.hooks(hooked);
+	}
+
+	#release(streams: Hooked['streams'] | null): void {
+		for (const stream of streams ?? []) if (stream) this.#pool.attributes.release(stream.id);
 	}
 
 	/** throws where hook names an accessor badly, or as an installed hook names another */
