@@ -1,49 +1,53 @@
 {
-	"version": 1,
-	"crs": "EPSG:25832",
-	"height": "DVR90",
-	"leaf": 250,
-	"roots": [
-		{
-			"level": 2,
-			"e": 723000,
-			"n": 6177000,
-			"idx": "u/2/723000/6177000.b477ff21f0350c2f.idx"
-		}
-	],
-	"extent": {
-		"e": [
-			723014.65,
-			723373.42
-		],
-		"n": [
-			6177003.37,
-			6177249.4
-		],
-		"h": [
-			27.32,
-			32.43
-		]
-	},
-	"attributes": {
-		"test.class": {
-			"type": "u16",
-			"components": 1,
-			"default": 0,
-			"rule": "preserved"
-		},
-		"test.tone": {
-			"type": "f16",
-			"components": 2,
-			"default": [
-				0.5,
-				0.5
-			],
-			"rule": "aggregated"
-		},
-		"test.parts": {
-			"type": "records",
-			"rule": "preserved"
-		}
-	}
+ "version": 1,
+ "crs": "EPSG:25832",
+ "height": "DVR90",
+ "leaf": 250,
+ "roots": [
+  {
+   "level": 2,
+   "e": 723000,
+   "n": 6177000,
+   "idx": "u/2/723000/6177000.a9bd96fd8838c92b.idx"
+  }
+ ],
+ "extent": {
+  "e": [
+   723037.8,
+   723356.1
+  ],
+  "n": [
+   6177021.63,
+   6177229.76
+  ],
+  "h": [
+   23.99,
+   37.94
+  ]
+ },
+ "attribution": {
+  "retrieved": "2026-11-03",
+  "epoch": "synthetic"
+ },
+ "attributes": {
+  "test.class": {
+   "type": "u16",
+   "components": 1,
+   "default": 0,
+   "rule": "preserved"
+  },
+  "test.tone": {
+   "type": "f16",
+   "components": 2,
+   "default": [
+    0.5,
+    0.5
+   ],
+   "rule": "aggregated"
+  },
+  "test.parts": {
+   "type": "records",
+   "rule": "preserved"
+  }
+ }
 }

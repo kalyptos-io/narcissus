@@ -11,4 +11,4 @@ A small Guldmund tree, version 2, with attribute streams. `world.json` declares 
 
 guldmund writes the canonical fixture with its own writer, from its fixture test with `GULDMUND_FIXTURES=write`, as it writes `fixtures/tree`. guldmund checks its own output against these files byte for byte.
 
-Until then, narcissus's own writers make a provisional one: `NARCISSUS_FIXTURES=write pnpm exec vitest --run src/format/attributes.test.ts`.
+The committed files are guldmund's. narcissus's own writers can write the same tree with `NARCISSUS_FIXTURES=write pnpm exec vitest --run src/format/attributes.test.ts`; do not commit theirs.
