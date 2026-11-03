@@ -105,7 +105,7 @@ Measured on aerial data, 26 land pages and 8 water pages of one leaf: 14.9 bytes
 
 ## `.idx`
 
-An 8-byte prefix (`GMIX`, u16 version 1 or 2, u16 0), then a raw deflate stream of a 40-byte header in version 1, or 48 bytes in version 2:
+An 8-byte prefix (`GMIX`, u16 version 1 or 2, u16 0), then a raw deflate stream of a 40-byte header in version 1, or 52 bytes in version 2:
 
 | offset | type    | field                          |
 | ------ | ------- | ------------------------------ |
@@ -121,7 +121,8 @@ An 8-byte prefix (`GMIX`, u16 version 1 or 2, u16 0), then a raw deflate stream 
 | 35     | u8      | 0                              |
 | 36     | u16     | descendants                    |
 | 38     | u16     | 0                              |
-| 40     | 8 bytes | attribute hash (version 2 only) |
+| 40     | 8 bytes | attribute hash, all zero for none (version 2 only) |
+| 48     | u32     | attribute size in bytes, 0 for none (version 2 only) |
 
 Then the rows, 52 bytes each:
 
