@@ -42,7 +42,11 @@ interface AttributeUse {
 	stream: string;
 	/** the WGSL identifier: the hook reads it as attr_<as>(s) */
 	as: string;
-	/** a world that lacks the stream disables the hook, else its rows take the default */
+	/** what the hook reads; the world's declared type must widen to it (u8-u32 to u32, i8-i32 to i32, f16-f32 to f32, same components) */
+	type: 'u32' | 'i32' | 'f32' | 'records';
+	/** 1 to 4; left out for records */
+	components?: number;
+	/** a world that lacks the stream, or declares a type that does not widen, disables the hook; else its rows take the default (0 when undeclared) */
 	required?: boolean;
 }
 ```
@@ -59,7 +63,7 @@ WGSL defines `fn <name>(s: ptr<function, Splat>, u: array<vec4f, <uniforms>>)`. 
 
 Generated accessors, one for each `AttributeUse`:
 
-- A fixed stream with one component: `fn attr_<as>(s: ptr<function, Splat>) -> T`, with `T` `u32`, `i32` or `f32` (narrow types widen).
+- A fixed stream with one component: `fn attr_<as>(s: ptr<function, Splat>) -> T`, with `T` the use's `type`. The engine resolves streams each time a world opens and on install.
 - With 2 to 4 components: the matching `vec2`-`vec4`.
 - A `records` stream: `fn attr_<as>(s: ptr<function, Splat>) -> Record`, then `fn record_u32(r: Record, i: u32) -> u32` and `fn record_f16x2(r: Record, i: u32) -> vec2f` read word `i` of the record; `r.words` is its length in whole words, the last padded with 0.
 
