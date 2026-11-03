@@ -34,7 +34,7 @@ export interface NarcissusViewerEventMap extends Omit<HTMLElementEventMap, 'erro
  * E,N,H,yaw,pitch,dist, its focus on the ground there when H is left empty, as the opening view's;
  * sky as r,g,b from 0 to 1. camera and sky are read when a world opens and when the element starts.
  * aria-label names the canvas too, which takes focus for the camera's keys.
- * properties: objects, read when a world opens, as engine.open() takes it.
+ * properties: objects, read when a world opens, as engine.open() takes it; world, the open world.
  * events: start once the engine and the controls are made, ready with the World as its detail each
  * time a world opens, and error with a message. the engine and the controls, and all a page adds to
  * them, live from start until the element leaves the page, through every change of src.
@@ -74,6 +74,11 @@ export class NarcissusViewer extends HTMLElement {
 	/** the camera controls while the engine runs */
 	get controls(): Controls | null {
 		return this.#controls;
+	}
+
+	/** the world of the last ready, null before it and after an error; until then the pose is a placeholder */
+	get world(): World | null {
+		return this.#world;
 	}
 
 	connectedCallback(): void {
@@ -185,7 +190,6 @@ export class NarcissusViewer extends HTMLElement {
 			return this.#fail(`Could not load the world (${why}).`);
 		}
 		if (turn !== this.#turn) return;
-		this.#world = world;
 		const parts = (this.getAttribute('camera') ?? '').split(',');
 		const grounded = parts.length === 6 && parts[2].trim() === '';
 		const asked = parsePose((grounded ? parts.with(2, '0') : parts).join(','));
@@ -197,6 +201,7 @@ export class NarcissusViewer extends HTMLElement {
 			if (turn !== this.#turn) return;
 			pose.h = h ?? world.extent.h[0];
 		}
+		this.#world = world;
 		this.#controls!.jump(pose);
 		this.dispatchEvent(new CustomEvent('ready', { detail: world }));
 	}

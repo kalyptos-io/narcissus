@@ -142,6 +142,7 @@ viewer.addEventListener(
 ## Events and lifetime
 
 - The element sends `start` once the engine and the controls exist, `ready` with the `World` each time a world opens, and `error` with a message. `NarcissusViewerEventMap` types them.
+- `viewer.world` is the `World` of the last `ready`, and `null` before it and after an error. Until it is set, `controls.pose` is a placeholder at 0, 0, 0.
 - The engine, the controls and all you add to them live from `start` until the element leaves the web page, through changes of `src`. Put back, the element makes new ones and sends `start` again.
 - `engine.onProgress(fn)` calls `fn({ planned, missing, loading })` when one of them changes: `missing` of the `planned` splats in view are not loaded yet.
 - `engine.onLost(fn)` calls `fn(reason)` when the device is lost; the engine then stops.
