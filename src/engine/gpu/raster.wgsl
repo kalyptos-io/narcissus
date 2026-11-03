@@ -31,9 +31,8 @@ struct SampledCorner {
 @group(0) @binding(2) var<storage, read> sort: array<u32>;
 @group(0) @binding(3) var<uniform> sorted: Sorted;
 @group(0) @binding(4) var<uniform> plugins: array<vec4f, 16>;
-@group(0) @binding(5) var<storage, read> pages: array<Page>;
-@group(0) @binding(6) var<storage, read> extension: array<u32>;
-@group(0) @binding(7) var<storage, read_write> over: atomic<u32>;
+@group(0) @binding(5) var<storage, read> extension: array<u32>;
+@group(0) @binding(6) var<storage, read_write> over: atomic<u32>;
 
 fn coverage_over() {
 	atomicAdd(&over, 1u);

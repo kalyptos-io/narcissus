@@ -72,7 +72,7 @@ Generated accessors, one for each `AttributeUse`:
 
 `fn table(id: u32, i: u32) -> u32` reads word `i` of a host table; 0 past its end. A hook gets a table's `id` through its uniforms.
 
-A shade asks for per-pixel evaluation with `fn sample_request(s: ptr<function, Splat>, data: array<u32, 8>)`: the splat then draws through the hook's `<name>_sample`, which receives `data`. A splat has at most one sample hook: the first that asks.
+A shade asks for per-pixel evaluation with `fn sample_request(s: ptr<function, Splat>, data: array<u32, 8>)`: the splat then draws through the hook's `<name>_sample`, which receives `data`. A splat has at most one sample hook: the first that asks. A sample hook reads no attributes: its shade looks them up and passes them through `data`, a record as its `at` and `words`, which the sample rebuilds with `Record(c.data[0], c.data[1])` for `record_u32` and `record_f16x2`.
 
 ## Sample
 

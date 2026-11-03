@@ -451,6 +451,7 @@ class GpuEngine implements Engine {
 		this.#fader = new Fader();
 		// page ids restart with the tree, so the old world's pages must leave the pool
 		this.#pool.clear();
+		this.#renderer.restream();
 		this.#feed = this.#feedFor(tree, loader);
 		this.#dirty = true;
 		this.requestFrame();

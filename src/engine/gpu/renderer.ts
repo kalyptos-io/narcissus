@@ -150,6 +150,15 @@ export class Renderer {
 		};
 	}
 
+	/** each hook's streams resolved again, in the world the registry now declares */
+	restream(): void {
+		for (const entry of this.#shades) {
+			this.#release(entry.streams);
+			entry.streams = streams(entry.shade, this.#pool.attributes);
+		}
+		this.#hooks();
+	}
+
 	post(pass: Post): () => void {
 		const entry = { post: pass, pass: pass.setup(this.#device, this.#format) };
 		const order = pass.order ?? 0;
@@ -295,7 +304,7 @@ export class Renderer {
 	}
 
 	#release(streams: Hooked['streams'] | null): void {
-		for (const stream of streams ?? []) if (stream) this.#pool.attributes.release(stream.id);
+		for (const stream of streams ?? []) if (stream !== null) this.#pool.attributes.release(stream);
 	}
 
 	/** throws where hook names an accessor badly, or as an installed hook names another */
