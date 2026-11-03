@@ -107,21 +107,21 @@ Measured on aerial data, 26 land pages and 8 water pages of one leaf: 14.9 bytes
 
 An 8-byte prefix (`GMIX`, u16 version 1 or 2, u16 0), then a raw deflate stream of a 40-byte header in version 1, or 52 bytes in version 2:
 
-| offset | type    | field                          |
-| ------ | ------- | ------------------------------ |
-| 0      | u8      | level `L`                      |
-| 1      | 3 bytes | 0                              |
-| 4      | i32     | `E`                            |
-| 8      | i32     | `N`                            |
-| 12     | 8 bytes | pack hash                      |
-| 20     | u32     | pack size in bytes             |
-| 24     | 8 bytes | colour hash, all zero for none |
-| 32     | u16     | rows                           |
-| 34     | u8      | children                       |
-| 35     | u8      | 0                              |
-| 36     | u16     | descendants                    |
-| 38     | u16     | 0                              |
-| 40     | 8 bytes | attribute hash, all zero for none (version 2 only) |
+| offset | type    | field                                                |
+| ------ | ------- | ---------------------------------------------------- |
+| 0      | u8      | level `L`                                            |
+| 1      | 3 bytes | 0                                                    |
+| 4      | i32     | `E`                                                  |
+| 8      | i32     | `N`                                                  |
+| 12     | 8 bytes | pack hash                                            |
+| 20     | u32     | pack size in bytes                                   |
+| 24     | 8 bytes | colour hash, all zero for none                       |
+| 32     | u16     | rows                                                 |
+| 34     | u8      | children                                             |
+| 35     | u8      | 0                                                    |
+| 36     | u16     | descendants                                          |
+| 38     | u16     | 0                                                    |
+| 40     | 8 bytes | attribute hash, all zero for none (version 2 only)   |
 | 48     | u32     | attribute size in bytes, 0 for none (version 2 only) |
 
 Then the rows, 52 bytes each:
@@ -190,25 +190,25 @@ The tables, not compressed:
 - `s` stream names: u8 length, then that many bytes of UTF-8. A name is one that `world.json` declares.
 - The chunks, 20 bytes each, ordered by blob offset, then stream:
 
-| offset | type | field                                           |
-| ------ | ---- | ----------------------------------------------- |
-| 0      | u16  | stream, the index of its name above             |
-| 2      | u8   | encoding                                        |
-| 3      | u8   | 0                                               |
-| 4      | u32  | blob offset of the page in the pack             |
-| 8      | u32  | rows: the page's count                          |
-| 12     | u32  | byte offset of the chunk in the file            |
-| 16     | u32  | chunk length in bytes                           |
+| offset | type | field                                |
+| ------ | ---- | ------------------------------------ |
+| 0      | u16  | stream, the index of its name above  |
+| 2      | u8   | encoding                             |
+| 3      | u8   | 0                                    |
+| 4      | u32  | blob offset of the page in the pack  |
+| 8      | u32  | rows: the page's count               |
+| 12     | u32  | byte offset of the chunk in the file |
+| 16     | u32  | chunk length in bytes                |
 
 A chunk's values follow the page's splat order. A page with no chunk for a stream takes the stream's default for every splat. The pack's page table, not the `.idx`, is the reference: a chunk can describe a page that the `.idx` does not list (the unreferenced levels of a unit that gained a parent).
 
 A value of a fixed stream is `components` scalars of its `type`, back to back. A value of a `records` stream is a run of bytes; the default is empty. Encodings:
 
-| encoding | fixed stream                                                                                   | `records` stream                                                    |
-| -------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| 0 plain  | `rows` values                                                                                  | `rows + 1` u32 offsets into the bytes that follow, then the bytes   |
-| 1 dictionary | u32 `k`, `k` values, then `rows` indices: u8 when `k ≤ 256`, else u16; `k ≤ 65536`         | not used                                                            |
-| 2 sparse | u32 `m`, `m` u32 rows in increasing order, then their `m` values; other rows take the default  | u32 `m`, `m` u32 rows in increasing order, `m + 1` u32 offsets, then the bytes |
+| encoding     | fixed stream                                                                                  | `records` stream                                                               |
+| ------------ | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| 0 plain      | `rows` values                                                                                 | `rows + 1` u32 offsets into the bytes that follow, then the bytes              |
+| 1 dictionary | u32 `k`, `k` values, then `rows` indices: u8 when `k ≤ 256`, else u16; `k ≤ 65536`            | not used                                                                       |
+| 2 sparse     | u32 `m`, `m` u32 rows in increasing order, then their `m` values; other rows take the default | u32 `m`, `m` u32 rows in increasing order, `m + 1` u32 offsets, then the bytes |
 
 ## `world.json`
 
