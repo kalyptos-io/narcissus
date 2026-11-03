@@ -109,26 +109,14 @@ fn meets(s: Splat, d: Drawn, normal: vec3f, pixel: vec2f) -> f32 {
 fn give(cluster: Cluster, t: u32) {
 	var s: Splat;
 	var g: vec4u;
-	if (!decode(cluster, t, &s, &g)) {
-		return;
-	}
-	let page = pages[cluster.page];
 	var clip: Clip;
-	if (!clip_splat(uniforms.clips, uniforms.clipCount, s, g, page.turn, &clip)) {
-		return;
-	}
-	shade(&s);
 	var d: Drawn;
-	if (!drawn(s, g, page.turn, &d)) {
+	var record: array<u32, RECORD_WORDS>;
+	if (!show(cluster, t, uniforms.clipCount, &s, &g, &clip, &d, &record)) {
 		return;
 	}
-	// a sampled splat's hook sees its record as the raster reads it
-	let sampled = sample_hook != 0u || clip.count > 0u;
-	var record: array<u32, RECORD_WORDS>;
-	if (sampled) {
-		let viewPos = (uniforms.view * vec4f(s.position, 1.0)).xyz;
-		record = sample_record(s, coverage_of(g, page.turn, s.scale, viewPos), clip);
-	}
+	let sampled = asks_record(clip);
+	let page = pages[cluster.page];
 	let normal = face(s, g, page.turn);
 	let layer = page.layer & ~PICKLESS;
 	for (var k = 0u; k < probes.count; k++) {

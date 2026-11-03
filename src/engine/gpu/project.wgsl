@@ -29,9 +29,9 @@ fn coverage_over() {
 }
 
 // false when splat t of the cluster cannot show, tested against clips of the frame's planes; else
-// its Projected and sort key, and its sample record when its shade asked for one or it crosses a
-// plane, *wants then RECORD_CENTRED, or RECORD_CUT where a plane it crosses cuts its centre
-fn shown(
+// its Projected and sort key, and its sample record where it asks for one, *wants then
+// RECORD_CENTRED, or RECORD_CUT where a plane it crosses cuts its centre
+fn projected_of(
 	cluster: Cluster,
 	t: u32,
 	clips: u32,
@@ -42,22 +42,12 @@ fn shown(
 ) -> bool {
 	var s: Splat;
 	var g: vec4u;
-	if (!decode(cluster, t, &s, &g)) {
-		return false;
-	}
-	let turned = pages[cluster.page].turn;
 	var clip: Clip;
-	if (!clip_splat(uniforms.clips, clips, s, g, turned, &clip)) {
-		return false;
-	}
-	shade(&s);
 	var d: Drawn;
-	if (!drawn(s, g, turned, &d)) {
+	if (!show(cluster, t, clips, &s, &g, &clip, &d, record)) {
 		return false;
 	}
-	if (sample_hook != 0u || clip.count > 0u) {
-		let viewPos = (uniforms.view * vec4f(s.position, 1.0)).xyz;
-		*record = sample_record(s, coverage_of(g, turned, s.scale, viewPos), clip);
+	if (asks_record(clip)) {
 		let cut = (clip.count > 0u && clip.planes[0].w < 0.0) || (clip.count > 1u && clip.planes[1].w < 0.0);
 		*wants = select(RECORD_CENTRED, RECORD_CUT, cut);
 	}
@@ -91,7 +81,7 @@ fn project(
 		var record: array<u32, RECORD_WORDS>;
 		var wants = RECORD_NONE;
 		if (t < cluster.count) {
-			keep = shown(cluster, t, clips, &splat, &key, &record, &wants);
+			keep = projected_of(cluster, t, clips, &splat, &key, &record, &wants);
 		}
 		let sampled = keep && wants != RECORD_NONE;
 

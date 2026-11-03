@@ -10,6 +10,7 @@ import { WORK } from './layout.ts';
 import source from './project.wgsl?raw';
 import records from './records.wgsl?raw';
 import sample from './sample.wgsl?raw';
+import show from './show.wgsl?raw';
 import splat from './splat.wgsl?raw';
 import type { Pool } from './pool.ts';
 
@@ -136,7 +137,7 @@ export function shaded(source: string, hooks: readonly Hooked[], runs: 'shade' |
 		records,
 		coverage,
 		sample,
-		...(shades ? [attributes, masks, clip, splat] : []),
+		...(shades ? [attributes, masks, clip, splat, show] : []),
 		source,
 		...accessors(included, shades),
 		...included.map(({ shade }) => shade.wgsl),
