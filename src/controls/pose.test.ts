@@ -7,6 +7,7 @@ import {
 	fit,
 	flight,
 	fly,
+	focusOf,
 	FOV,
 	formatPose,
 	height,
@@ -38,7 +39,7 @@ describe('pose and scene', () => {
 		[359.9, -89.9, 5000]
 	])('round-trips yaw %d pitch %d dist %d', (yaw, pitch, dist) => {
 		const p = pose(yaw, pitch, dist);
-		expectPose(lookAt(cameraOf(p), [p.e, p.n, p.h]), p);
+		expectPose(lookAt(cameraOf(p), focusOf(p)), p);
 	});
 
 	it('puts the camera behind the focus', () => {

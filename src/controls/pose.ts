@@ -97,7 +97,7 @@ export function clampPose(
 	if (ground) {
 		const [e, n, h] = cameraOf(q);
 		const floor = Math.max(limits.floor, ground(e, n) + limits.clearance);
-		if (h < floor) return { ...lookAt([e, n, floor], [q.e, q.n, q.h]), yaw: q.yaw };
+		if (h < floor) return { ...lookAt([e, n, floor], focusOf(q)), yaw: q.yaw };
 	}
 	return q;
 }
@@ -106,6 +106,10 @@ export function clampPose(
 function direction(yaw: number, pitch: number): Point {
 	const c = Math.cos(pitch * RAD);
 	return [Math.sin(yaw * RAD) * c, Math.cos(yaw * RAD) * c, Math.sin(pitch * RAD)];
+}
+
+export function focusOf(p: Pose): Point {
+	return [p.e, p.n, p.h];
 }
 
 export function cameraOf(p: Pose): Point {
