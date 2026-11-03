@@ -1,28 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { CLUSTER, decodePage } from '../../format/index.ts';
 import { encodePage } from '../../format/encode.ts';
-import { planes } from '../math/frustum.ts';
-import { multiply, perspective, view } from '../math/mat4.ts';
-import type { Frame, Shade } from '../plugin.ts';
+import type { Shade } from '../plugin.ts';
 import type { Plane } from '../types.ts';
-import { frameBuffers } from './buffers.ts';
 import { Cull } from './cull.ts';
 import { Heights } from './heights.ts';
-import { FRAME_UNIFORM_BYTES, LOW_PASS, PROJECTED_WORDS, WORK } from './layout.ts';
-import { Pick } from './pick.ts';
-import { Pool } from './pool.ts';
-import { Project } from './project.ts';
-import { Raster } from './raster.ts';
-import { Sort } from './sort.ts';
+import { PROJECTED_WORDS, RECORD_WORDS, WORK } from './layout.ts';
 import * as ref from './test-coverage.ts';
 import type { Vec2 } from './test-coverage.ts';
-import { readBuffer, testDevice } from './test-device.ts';
+import { readBuffer } from './test-device.ts';
+import { scene, SIZE, texels, writeUniforms } from './test-scene.ts';
 
-const SIZE = 64;
-const NEAR = 0.5;
-const FAR = 300;
-const EYE: [number, number, number] = [8, 0, 1.5];
-const RECORD_WORDS = 20;
 const RECORDS = 64;
 const TARGET = 1 / 255;
 /** a disc's grey */
@@ -50,42 +38,15 @@ function page(discs: { at: At; facing?: 'south' | 'up' }[]) {
 	return decodePage(payload, null);
 }
 
-/** the camera at EYE looking north */
-function frame(): Frame {
-	return {
-		time: 0,
-		width: SIZE,
-		height: SIZE,
-		view: view(new Float32Array(16), EYE, 0, 0),
-		proj: perspective(new Float32Array(16), Math.PI / 3, 1, NEAR, FAR),
-		near: NEAR,
-		far: FAR,
-		camera: Float32Array.from(EYE),
-		origin: [0, 0, 0]
-	};
-}
-
 async function setup(discs: Parameters<typeof page>[0]) {
-	const device = await testDevice();
-	const slots = 4 * CLUSTER;
-	const pool = new Pool(device, slots);
-	const buffers = frameBuffers(device, slots, pool.slots);
+	const { device, pool, buffers, project, sort, raster, pick, target, camera, destroy } =
+		await scene(page(discs));
 	const cull = new Cull(device, pool, buffers);
-	const project = new Project(device, pool, buffers);
-	const sort = new Sort(device, buffers);
-	const raster = new Raster(device, buffers, sort, pool, 'rgba32float');
-	const pick = new Pick(device, pool, buffers);
-	pool.add(1, page(discs), [0, 0], () => false);
-	pool.upload(Infinity);
-	const target = device.createTexture({
-		size: [SIZE, SIZE],
-		format: 'rgba32float',
-		usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC
-	});
-	const camera = frame();
+	let sampling = false;
 	const hooks = (shades: Shade[]) => {
 		const hooked = shades.map((shade, k) => ({ shade, slot: k, streams: [] }));
 		for (const pass of [project, raster, pick]) pass.hooks(hooked);
+		sampling = shades.some((shade) => shade.sample);
 	};
 
 	/** a frame through cull, project, sort and raster: its pixels, work counts, records and splats */
@@ -99,7 +60,8 @@ async function setup(discs: Parameters<typeof page>[0]) {
 		cull.encode(encoder);
 		project.encode(encoder, pool.listed);
 		sort.encode(encoder, pool.listed * CLUSTER, 0);
-		raster.encode(encoder, target.createView(), null, [0, 0, 0]);
+		const sampled = sampling || pool.clips.count > 0;
+		raster.encode(encoder, target.createView(), null, [0, 0, 0], sampled);
 		device.queue.submit([encoder.finish()]);
 		const work = new Uint32Array(await readBuffer(device, buffers.work, 0, WORK.list * 4));
 		const records = await readBuffer(
@@ -120,51 +82,7 @@ async function setup(discs: Parameters<typeof page>[0]) {
 		return (await read())!;
 	};
 
-	const destroy = () => {
-		target.destroy();
-		pick.destroy();
-		raster.destroy();
-		sort.destroy();
-		buffers.destroy();
-		pool.destroy();
-	};
 	return { pool, render, hooks, heights, pick, camera, destroy };
-}
-
-/** FrameUniforms of the camera, with the pool's tables and clips and the records given */
-function writeUniforms(
-	device: GPUDevice,
-	buffer: GPUBuffer,
-	{ view: v, proj: p }: Frame,
-	pool: Pool,
-	records: [number, number]
-): void {
-	const u = new Float32Array(FRAME_UNIFORM_BYTES / 4);
-	u.set(v, 0);
-	u.set(p, 16);
-	multiply(u.subarray(32, 48), p, v);
-	planes(u.subarray(48, 72), u.subarray(32, 48));
-	u.set(EYE, 72);
-	u.set([SIZE, SIZE, (p[0] * SIZE) / 2, (p[5] * SIZE) / 2, NEAR, FAR, LOW_PASS], 76);
-	const words = new Uint32Array(u.buffer);
-	words[83] = pool.listed;
-	words.set([pool.tables.directory, pool.tables.count, ...records], 84);
-	words.set([pool.clips.at, pool.clips.count], 88);
-	device.queue.writeBuffer(buffer, 0, u);
-}
-
-/** rgba of every texel, row by row from the top-left */
-async function texels(device: GPUDevice, texture: GPUTexture): Promise<Float32Array> {
-	const buffer = device.createBuffer({
-		size: SIZE * SIZE * 16,
-		usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
-	});
-	const encoder = device.createCommandEncoder();
-	encoder.copyTextureToBuffer({ texture }, { buffer, bytesPerRow: SIZE * 16 }, [SIZE, SIZE]);
-	device.queue.submit([encoder.finish()]);
-	const data = new Float32Array(await readBuffer(device, buffer));
-	buffer.destroy();
-	return data;
 }
 
 /** record r as a coverage and its clip planes, f16 as the raster reads them */

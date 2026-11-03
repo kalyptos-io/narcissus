@@ -528,42 +528,53 @@ export async function encodeAtr(
 ): Promise<Uint8Array> {
 	const ordered = chunks.toSorted((a, b) => a.offset - b.offset || a.stream - b.stream);
 	const blobs = await Promise.all(ordered.map(({ body }) => deflate(body)));
-	const names = streams.map((name) => new TextEncoder().encode(name));
-	const tables = blobs.reduce((sum, blob) => sum + blob.length, 0);
-	const size =
-		tables +
-		4 +
-		names.reduce((sum, name) => sum + 1 + name.length, 0) +
-		ordered.length * ATR_CHUNK_BYTES +
-		ATR_TRAILER;
-	const out = new Uint8Array(size);
-	const view = new DataView(out.buffer);
 	let at = 0;
-	const placed = blobs.map((blob) => {
-		out.set(blob, at);
-		at += blob.length;
-		return at - blob.length;
+	const placed = ordered.map(({ stream, encoding, offset, rows }, c) => {
+		at += blobs[c].length;
+		return { stream, encoding, offset, rows, at: at - blobs[c].length, length: blobs[c].length };
 	});
-	view.setUint16(at, streams.length, true);
-	at += 4;
+	return concat([...blobs, encodeAtrTables(pack, streams, placed, at)]);
+}
+
+/** the tables and trailer that follow an .atr's chunks, which take its first tables bytes */
+export function encodeAtrTables(
+	pack: string,
+	streams: readonly string[],
+	chunks: readonly {
+		stream: number;
+		encoding: number;
+		offset: number;
+		rows: number;
+		at: number;
+		length: number;
+	}[],
+	tables: number
+): Uint8Array {
+	const names = streams.map((name) => new TextEncoder().encode(name));
+	const size =
+		4 + names.reduce((sum, name) => sum + 1 + name.length, 0) + chunks.length * ATR_CHUNK_BYTES;
+	const out = new Uint8Array(size + ATR_TRAILER);
+	const view = new DataView(out.buffer);
+	view.setUint16(0, streams.length, true);
+	let at = 4;
 	for (const name of names) {
 		if (name.length > 255) throw new Error('a stream name is longer than 255 bytes');
 		out[at] = name.length;
 		out.set(name, at + 1);
 		at += 1 + name.length;
 	}
-	ordered.forEach((chunk, c) => {
+	for (const chunk of chunks) {
 		view.setUint16(at, chunk.stream, true);
 		view.setUint8(at + 2, chunk.encoding);
 		view.setUint32(at + 4, chunk.offset, true);
 		view.setUint32(at + 8, chunk.rows, true);
-		view.setUint32(at + 12, placed[c], true);
-		view.setUint32(at + 16, blobs[c].length, true);
+		view.setUint32(at + 12, chunk.at, true);
+		view.setUint32(at + 16, chunk.length, true);
 		at += ATR_CHUNK_BYTES;
-	});
+	}
 	out.set(unhex(pack), at);
 	view.setUint32(at + 8, tables, true);
-	view.setUint32(at + 12, ordered.length, true);
+	view.setUint32(at + 12, chunks.length, true);
 	writeMagic(out, at + 16, ATR_MAGIC);
 	view.setUint16(at + 20, VERSION, true);
 	return out;

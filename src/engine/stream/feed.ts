@@ -5,7 +5,6 @@ import type { Pool } from '../gpu/pool.ts';
 import type { Plan } from '../plan/cut.ts';
 import type { PageNode, Tree, UnitNode } from '../world/tree.ts';
 import { Missing } from '../../ports.ts';
-import type { Wanted } from './attributes.ts';
 import type { Loader } from './loader.ts';
 import type { Objects } from './objects.ts';
 import { Scheduler, type Batch, type PageJob, type SchedulerOptions } from './scheduler.ts';
@@ -27,17 +26,10 @@ const REFUSED = 1000;
 /** ms between prune checks */
 const PRUNE = 2000;
 
-/** the attribute streams hooks read, as AttributeRegistry gives them */
-export interface Streams {
-	readonly wanted: Wanted[];
-	readonly generation: number;
-}
-
 export class Feed {
 	#tree: Tree;
 	#loader: Loader;
 	#objects: Objects;
-	#streams: Streams;
 	#pool: Pool;
 	#onArrive: () => void;
 	/** runs once, when an immutable file was missing: the world was released anew and must be reopened */
@@ -73,7 +65,6 @@ export class Feed {
 		tree: Tree,
 		loader: Loader,
 		objects: Objects,
-		streams: Streams,
 		pool: Pool,
 		onArrive: () => void,
 		onStale: () => void,
@@ -82,7 +73,6 @@ export class Feed {
 		this.#tree = tree;
 		this.#loader = loader;
 		this.#objects = objects;
-		this.#streams = streams;
 		this.#pool = pool;
 		this.#onArrive = onArrive;
 		this.#onStale = onStale;
@@ -178,7 +168,7 @@ export class Feed {
 			if (!this.#ready(page.id, pack) || !this.#objects.ready(pack, idx)) continue;
 			jobs.push(job(page, pack));
 		}
-		const { generation } = this.#streams;
+		const { generation } = this.#pool.attributes;
 		for (const page of this.#plan.cut) {
 			const { id, unit } = page;
 			const loaded = this.#held.get(id);
@@ -194,7 +184,7 @@ export class Feed {
 		if (this.#stale) return;
 		const { start, abort } = this.#scheduler.next();
 		for (const batch of abort) this.#batches.get(batch)?.abort();
-		const { wanted, generation } = this.#streams;
+		const { wanted, generation } = this.#pool.attributes;
 		for (const batch of start) {
 			const controller = new AbortController();
 			this.#batches.set(batch, controller);

@@ -30,8 +30,7 @@ export function widen(type: Attribute['type'], value: number): number {
 export class AttributeRegistry {
 	#extension: Extension;
 	#declared: Readonly<Record<string, Attribute>> = {};
-	/** ids by name, kept while the registry lives so a stream used again keeps its id */
-	#ids = new Map<string, number>();
+	/** names by id, kept while the registry lives so a stream used again keeps its id */
 	#names: string[] = [];
 	/** the hooks reading each id, and whether any of them required it */
 	#uses = new Map<number, { count: number; required: boolean }>();
@@ -63,13 +62,12 @@ export class AttributeRegistry {
 	/** the engine id of stream name for a hook that reads it; -1 when the open world does not declare it */
 	use(name: string, required: boolean): number {
 		if (!this.#declared[name]) return -1;
-		let id = this.#ids.get(name);
-		if (id === undefined) {
+		let id = this.#names.indexOf(name);
+		if (id < 0) {
 			if (this.#names.length >= ATTRIBUTE_STREAMS) {
 				throw new Error(`An engine reads ${ATTRIBUTE_STREAMS} attribute streams at most.`);
 			}
 			id = this.#names.push(name) - 1;
-			this.#ids.set(name, id);
 			this.#writeDefault(id);
 		}
 		const use = this.#uses.get(id);

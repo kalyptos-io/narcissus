@@ -1,7 +1,7 @@
 // one frame on the gpu: cull, project, sort, raster, posts, present
 
 import { CLUSTER } from '../../format/index.ts';
-import { FRAME_UNIFORM_BYTES, LOW_PASS, PLUGIN_VEC4S, WORK } from './layout.ts';
+import { FRAME_UNIFORM_BYTES, LOW_PASS, PLUGIN_VEC4S, RECORD_WORDS, WORK } from './layout.ts';
 import { multiply } from '../math/mat4.ts';
 import type { Frame, Post, PostPass, Shade } from '../plugin.ts';
 import { frameBuffers, type FrameBuffers } from './buffers.ts';
@@ -33,8 +33,6 @@ export interface GpuStats {
 /** sample records a frame holds at least while a hook may ask for one, and the room over the last ask */
 const RECORDS = 1024;
 const HEADROOM = 1.5;
-/** u32 words of sample.wgsl's record */
-const RECORD_WORDS = 20;
 
 const PASSES = ['cull', 'project', 'sort', 'raster', 'heights', 'post'];
 // float offsets of FrameUniforms fields in common.wgsl
@@ -154,11 +152,15 @@ export class Renderer {
 
 	/** each hook's streams resolved again, in the world the registry now declares */
 	restream(): void {
+		let changed = false;
 		for (const entry of this.#shades) {
 			this.#release(entry.streams);
-			entry.streams = streams(entry.shade, this.#pool.attributes);
+			const next = streams(entry.shade, this.#pool.attributes);
+			// a hook's streams are one a use, so equal joins are equal ids
+			changed ||= next?.join() !== entry.streams?.join();
+			entry.streams = next;
 		}
-		this.#hooks();
+		if (changed) this.#hooks();
 	}
 
 	post(pass: Post): () => void {
@@ -221,7 +223,7 @@ export class Renderer {
 		this.#cull.encode(encoder, timing.writes('cull'));
 		this.#project.encode(encoder, this.#visible, timing.writes('project'));
 		this.#sort.encode(encoder, this.#pool.listed * CLUSTER, this.#drawn, timing.writes('sort'));
-		this.#raster.encode(encoder, colour, depth, sky, timing.writes('raster'));
+		this.#raster.encode(encoder, colour, depth, sky, this.#records > 0, timing.writes('raster'));
 		const tops = heights.map(({ x, y, cells, resolve }, k) => ({
 			resolve,
 			read: this.#heights.encode(encoder, x, y, cells, k ? undefined : timing.writes('heights'))

@@ -2,7 +2,7 @@ import type { AttributeUse, Shade } from '../plugin.ts';
 import type { AttributeRegistry, Declared, StreamType } from '../stream/attributes.ts';
 import attributes from './attributes.wgsl?raw';
 import clip from './clip.wgsl?raw';
-import { bufferGroup, bufferLayout, type FrameBuffers } from './buffers.ts';
+import { bufferLayout, liveGroup, type FrameBuffers } from './buffers.ts';
 import common from './common.wgsl?raw';
 import coverage from './coverage.wgsl?raw';
 import masks from './masks.wgsl?raw';
@@ -12,10 +12,6 @@ import records from './records.wgsl?raw';
 import sample from './sample.wgsl?raw';
 import splat from './splat.wgsl?raw';
 import type { Pool } from './pool.ts';
-
-/** what every pass that runs hooks includes before its own source; the shade's passes add ATTRIBUTES */
-export const HOOKED = [common, records, coverage, sample];
-export const ATTRIBUTES = attributes;
 
 /**
  * a shade hook as the passes run it: its first uniform slot, and the registry's id of each stream
@@ -29,13 +25,10 @@ export interface Hooked {
 
 export class Project {
 	#device: GPUDevice;
-	#layout: GPUBindGroupLayout;
 	#pipelineLayout: GPUPipelineLayout;
 	#pipeline: GPUComputePipeline | undefined;
 	#hooks: readonly Hooked[] = [];
-	#resources: GPUBuffer[];
-	#group: GPUBindGroup | undefined;
-	#bound: GPUBuffer | undefined;
+	#group: () => GPUBindGroup;
 	#pool: Pool;
 	#work: GPUBuffer;
 	#visible: GPUBuffer;
@@ -58,9 +51,8 @@ export class Project {
 			'uniform',
 			'storage'
 		]);
-		this.#layout = layout;
 		this.#pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [layout] });
-		this.#resources = [
+		const fixed = [
 			buffers.uniforms,
 			buffers.plugins,
 			pool.geometry,
@@ -72,6 +64,7 @@ export class Project {
 			buffers.sort,
 			buffers.visible
 		];
+		this.#group = liveGroup(device, 'project', layout, () => [...fixed, pool.extension.buffer]);
 	}
 
 	/** the next frame's pipeline runs these hooks in order, each reading from its first slot */
@@ -94,25 +87,14 @@ export class Project {
 		);
 		const pass = encoder.beginComputePass({ label: 'project', timestampWrites: timestamps });
 		pass.setPipeline((this.#pipeline ??= this.#build()));
-		pass.setBindGroup(0, this.#bind());
+		pass.setBindGroup(0, this.#group());
 		// chrome validates indirect args on its gpu process's main thread, a cost every frame
 		pass.dispatchWorkgroups(count);
 		pass.end();
 	}
 
-	/** the group over the extension as it stands: a flush may have replaced its buffer */
-	#bind(): GPUBindGroup {
-		const buffer = this.#pool.extension.buffer;
-		if (this.#bound !== buffer) {
-			const resources = [...this.#resources, buffer];
-			this.#group = bufferGroup(this.#device, 'project', this.#layout, resources);
-			this.#bound = buffer;
-		}
-		return this.#group!;
-	}
-
 	#build(): GPUComputePipeline {
-		const code = shaded([...HOOKED, ATTRIBUTES, masks, clip, splat, source], this.#hooks, 'shade');
+		const code = shaded(source, this.#hooks, 'shade');
 		const module = this.#device.createShaderModule({ label: 'project', code });
 		return this.#device.createComputePipeline({
 			label: 'project',
@@ -123,15 +105,12 @@ export class Project {
 }
 
 /**
- * wgsl of parts, the attribute accessors and the hooks, a shade(s) that runs them in order, each
- * from its first slot, and a sample_dispatch(hook, c) that runs the sample hook shade numbered so;
- * a pass that runs only the sample hooks, whose shades never run, reads no attributes
+ * wgsl of the hook library, the attribute accessors and the hooks before a pass's source, a shade(s)
+ * that runs them in order, each from its first slot, and a sample_dispatch(hook, c) that runs the
+ * sample hook shade numbered so; a pass that runs only the sample hooks, whose shades never run,
+ * reads no attributes
  */
-export function shaded(
-	parts: string[],
-	hooks: readonly Hooked[],
-	runs: 'shade' | 'sample'
-): string {
+export function shaded(source: string, hooks: readonly Hooked[], runs: 'shade' | 'sample'): string {
 	const args = ({ shade, slot }: Hooked) => {
 		const slots = Array.from({ length: shade.uniforms }, (_, k) => `plugins[${slot + k}]`);
 		return `array<vec4f, ${shade.uniforms}>(${slots.join(', ')})`;
@@ -149,8 +128,11 @@ export function shaded(
 				]
 			: []
 	);
+	const library = [common, records, coverage, sample];
+	if (runs === 'shade') library.push(attributes, masks, clip, splat);
 	return [
-		...parts,
+		...library,
+		source,
 		...accessors(hooks, runs === 'shade'),
 		...hooks.map(({ shade }) => shade.wgsl),
 		'fn shade(s: ptr<function, Splat>) {',
@@ -183,7 +165,7 @@ const WIDENS: Record<Exclude<StreamType, 'records'>, AttributeUse['type']> = {
 /** whether a hook reads a stream so declared as use says */
 export function fits(use: AttributeUse, declared: Declared): boolean {
 	if (declared.type === 'records' || use.type === 'records') return declared.type === use.type;
-	return WIDENS[declared.type] === use.type && (declared.components ?? 1) === (use.components ?? 1);
+	return WIDENS[declared.type] === use.type && declared.components === (use.components ?? 1);
 }
 
 /** attr_<as>(s) for each name the hooks read, the first hook that names it giving it */
@@ -196,7 +178,7 @@ function accessors(hooks: readonly Hooked[], reads: boolean): string[] {
 	return [...made.values()];
 }
 
-/** a lacking stream reads its type's zero, an empty record; attribute_word gives words widened */
+/** a lacking stream reads its type's zero, an empty record; attribute_words gives words widened */
 function accessor(use: AttributeUse, stream: number | null): string {
 	const head = `fn attr_${use.as}(s: ptr<function, Splat>) ->`;
 	if (use.type === 'records') {
@@ -207,11 +189,9 @@ function accessor(use: AttributeUse, stream: number | null): string {
 	const n = use.components ?? 1;
 	const type = n === 1 ? use.type : `vec${n}<${use.type}>`;
 	if (stream === null) return `${head} ${type} {\n\treturn ${type}();\n}`;
-	const words = Array.from(
-		{ length: n },
-		(_, c) => `bitcast<${use.type}>(attribute_word((*s).page, (*s).row, ${stream}u, ${c}u))`
-	);
-	return `${head} ${type} {\n\treturn ${type}(${words.join(', ')});\n}`;
+	const words = Array.from({ length: n }, (_, c) => `bitcast<${use.type}>(w[${c}])`);
+	const read = `let w = attribute_words((*s).page, (*s).row, ${stream}u);`;
+	return `${head} ${type} {\n\t${read}\n\treturn ${type}(${words.join(', ')});\n}`;
 }
 
 /**

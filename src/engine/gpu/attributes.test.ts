@@ -43,7 +43,7 @@ fn probe(@builtin(global_invocation_id) id: vec3u) {
 	}
 	let q = queries[id.x];
 	if (q.w < ${WORD}u) {
-		out[id.x] = vec2u(attribute_word(q.x, q.y, q.z, q.w), 0u);
+		out[id.x] = vec2u(attribute_words(q.x, q.y, q.z)[q.w], 0u);
 		return;
 	}
 	let r = attribute_record(q.x, q.y, q.z);

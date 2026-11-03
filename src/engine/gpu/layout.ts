@@ -31,6 +31,8 @@ export const CLUSTER_WORDS = 12;
 export const FRAME_UNIFORM_BYTES = 368;
 /** u32 words of common.wgsl's Projected */
 export const PROJECTED_WORDS = 6;
+/** u32 words of sample.wgsl's record */
+export const RECORD_WORDS = 20;
 /** engine attribute stream ids at most; the extension's first 4 words a stream hold their defaults */
 export const ATTRIBUTE_STREAMS = 64;
 /** Page.attributes when the page has no attribute directory */

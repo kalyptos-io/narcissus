@@ -25,15 +25,17 @@ describe('Extension', () => {
 		const extension = new Extension(device, 4);
 		const first = extension.alloc(4);
 		extension.write(first, Uint32Array.of(1, 2, 3, 4));
-		expect(extension.flush()).toBe(false);
+		extension.flush();
 		const old = extension.buffer;
 		const second = extension.alloc(5);
 		extension.write(second, Uint32Array.of(5, 6, 7, 8, 9));
-		expect(extension.flush()).toBe(true);
-		expect(extension.buffer).not.toBe(old);
-		expect(extension.bytes).toBe(4 * 9);
+		extension.flush();
+		const grown = extension.buffer;
+		expect(grown).not.toBe(old);
+		expect(grown.size).toBe(4 * 9);
 		expect([...(await words(device, extension))]).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
-		expect(extension.flush()).toBe(false);
+		extension.flush();
+		expect(extension.buffer).toBe(grown);
 		extension.destroy();
 	});
 

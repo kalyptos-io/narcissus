@@ -4,11 +4,9 @@ import { Missing, type Fetch } from '../../ports.ts';
 import {
 	parseUnitPath,
 	unitPath,
-	ATR_CHUNK_BYTES,
-	ATR_MAGIC,
-	ATR_TRAILER,
 	BASE_PLANES,
 	C0,
+	ENCODING,
 	LEAF,
 	PACK_TRAILER,
 	PAGE_HEADER,
@@ -20,7 +18,13 @@ import {
 	type PageRow,
 	type UnitKey
 } from '../../format/index.ts';
-import { contentName, encodeIdx, encodePage, mulberry32 } from '../../format/encode.ts';
+import {
+	contentName,
+	encodeAtrTables,
+	encodeIdx,
+	encodePage,
+	mulberry32
+} from '../../format/encode.ts';
 
 interface Page {
 	g: number;
@@ -272,29 +276,18 @@ const QUADRANTS = (() => {
 	return out;
 })();
 
-/** the tables and trailer of a unit's .atr: one chunk a page, in pack order */
+/** the tables and trailer of a unit's .atr: one plain chunk a page, in pack order */
 function atrTables(key: UnitKey): Uint8Array {
 	const pages = pagesOf(key);
-	const name = text.encode(QUADRANT);
-	const out = new Uint8Array(4 + 1 + name.length + pages.length * ATR_CHUNK_BYTES + ATR_TRAILER);
-	const view = new DataView(out.buffer);
-	view.setUint16(0, 1, true);
-	out[4] = name.length;
-	out.set(name, 5);
-	let at = 5 + name.length;
-	for (let r = 0; r < pages.length; r++, at += ATR_CHUNK_BYTES) {
-		view.setUint32(at + 4, r * BLOB, true);
-		view.setUint32(at + 8, PAGE_SPLATS, true);
-		view.setUint32(at + 12, r * CHUNK, true);
-		view.setUint32(at + 16, CHUNK, true);
-	}
-	const pack = nameOf(key, 'pack');
-	for (let b = 0; b < 8; b++) out[at + b] = parseInt(pack.slice(2 * b, 2 * b + 2), 16);
-	view.setUint32(at + 8, pages.length * CHUNK, true);
-	view.setUint32(at + 12, pages.length, true);
-	for (let c = 0; c < 4; c++) out[at + 16 + c] = ATR_MAGIC.charCodeAt(c);
-	view.setUint16(at + 20, VERSION, true);
-	return out;
+	const chunks = pages.map((_, r) => ({
+		stream: 0,
+		encoding: ENCODING.plain,
+		offset: r * BLOB,
+		rows: PAGE_SPLATS,
+		at: r * CHUNK,
+		length: CHUNK
+	}));
+	return encodeAtrTables(nameOf(key, 'pack'), [QUADRANT], chunks, pages.length * CHUNK);
 }
 
 /** bytes range of a unit's .atr, whole without one */

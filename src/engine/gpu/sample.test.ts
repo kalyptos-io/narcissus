@@ -1,30 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { CLUSTER, decodePage } from '../../format/index.ts';
 import { encodePage } from '../../format/encode.ts';
-import { planes } from '../math/frustum.ts';
-import { multiply, perspective, view } from '../math/mat4.ts';
-import type { Frame, Shade } from '../plugin.ts';
+import type { Shade } from '../plugin.ts';
 import { AttributeRegistry } from '../stream/attributes.ts';
 import type { Extension } from './extension.ts';
-import { frameBuffers } from './buffers.ts';
-import { FRAME_UNIFORM_BYTES, LOW_PASS, PLUGIN_VEC4S, PROJECTED_WORDS, WORK } from './layout.ts';
-import clip from './clip.wgsl?raw';
-import masks from './masks.wgsl?raw';
-import { Pick } from './pick.ts';
-import { Pool } from './pool.ts';
-import { ATTRIBUTES, fits, HOOKED, Project, shaded, streams, type Hooked } from './project.ts';
+import { PLUGIN_VEC4S, PROJECTED_WORDS, RECORD_WORDS, WORK } from './layout.ts';
+import { fits, shaded, streams, type Hooked } from './project.ts';
 import projectSource from './project.wgsl?raw';
-import { Raster } from './raster.ts';
 import rasterSource from './raster.wgsl?raw';
-import { Sort } from './sort.ts';
-import splat from './splat.wgsl?raw';
 import { readBuffer, testDevice } from './test-device.ts';
+import { scene, SIZE, texels, writeUniforms } from './test-scene.ts';
 
-const SIZE = 64;
-const NEAR = 0.5;
-const FAR = 300;
-const EYE: [number, number, number] = [8, 0, 1.5];
-const RECORD_WORDS = 20;
 const SOURCE = { pack: 'u/0/0/0.0123456789abcdef.pack', blob: 120 };
 
 /** discs facing south, the camera's way, grey (0.5), 1 m across and solid unless given */
@@ -68,23 +54,9 @@ fn ${name}_sample(c: Sample, u: array<vec4f, 1>) -> Sampled {
 const IDENTITY = 'return Sampled(vec4f(c.colour * c.alpha, c.alpha), 7u);';
 
 async function setup(discs: Parameters<typeof page>[0]) {
-	const device = await testDevice();
-	const slots = 4 * CLUSTER;
-	const pool = new Pool(device, slots);
-	const buffers = frameBuffers(device, slots, pool.slots);
-	const project = new Project(device, pool, buffers);
-	const sort = new Sort(device, buffers);
-	const raster = new Raster(device, buffers, sort, pool, 'rgba32float');
-	const pick = new Pick(device, pool, buffers);
-	pool.add(1, page(discs), [0, 0], () => false, 0, SOURCE);
-	pool.upload(Infinity);
+	const { device, pool, buffers, project, sort, raster, pick, target, camera, destroy } =
+		await scene(page(discs), SOURCE);
 	pool.draw([{ id: 1, factors: 0xffffffff }]);
-	const target = device.createTexture({
-		size: [SIZE, SIZE],
-		format: 'rgba32float',
-		usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC
-	});
-	const camera = frame();
 	let hooks: Hooked[] = [];
 
 	/** a frame through hooks with room for records, its pixels and work counts */
@@ -94,10 +66,7 @@ async function setup(discs: Parameters<typeof page>[0]) {
 		const at = pool.extension.frame(records * RECORD_WORDS);
 		pool.draw([{ id: 1, factors: 0xffffffff }]);
 		pool.extension.flush();
-		writeUniforms(device, buffers.uniforms, camera, {
-			records: [at, records],
-			tables: [pool.tables.directory, pool.tables.count]
-		});
+		writeUniforms(device, buffers.uniforms, camera, pool, [at, records]);
 		device.queue.writeBuffer(buffers.plugins, 0, values ?? new Float32Array(PLUGIN_VEC4S * 4));
 		const header = new Uint32Array(WORK.list);
 		header[WORK.visible] = pool.listed;
@@ -106,68 +75,14 @@ async function setup(discs: Parameters<typeof page>[0]) {
 		encoder.copyBufferToBuffer(pool.list, 0, buffers.work, WORK.list * 4, pool.listed * 4);
 		project.encode(encoder, pool.listed);
 		sort.encode(encoder, pool.listed * CLUSTER, 0);
-		raster.encode(encoder, target.createView(), null, [0, 0, 0]);
+		const sampled = shades.some((shade) => shade.sample);
+		raster.encode(encoder, target.createView(), null, [0, 0, 0], sampled);
 		device.queue.submit([encoder.finish()]);
 		const work = new Uint32Array(await readBuffer(device, buffers.work, 0, WORK.list * 4));
 		return { pixels: await texels(device, target), work };
 	};
 
-	const destroy = () => {
-		target.destroy();
-		pick.destroy();
-		raster.destroy();
-		sort.destroy();
-		buffers.destroy();
-		pool.destroy();
-	};
 	return { device, pool, buffers, render, pick, camera, destroy };
-}
-
-/** the camera at EYE, south of the discs, looking north */
-function frame(): Frame {
-	return {
-		time: 0,
-		width: SIZE,
-		height: SIZE,
-		view: view(new Float32Array(16), EYE, 0, 0),
-		proj: perspective(new Float32Array(16), Math.PI / 3, 1, NEAR, FAR),
-		near: NEAR,
-		far: FAR,
-		camera: Float32Array.from(EYE),
-		origin: [0, 0, 0]
-	};
-}
-
-/** FrameUniforms of the camera, with the extension words given */
-function writeUniforms(
-	device: GPUDevice,
-	buffer: GPUBuffer,
-	{ view: v, proj: p }: Frame,
-	extension: { records: [number, number]; tables: [number, number] }
-): void {
-	const u = new Float32Array(FRAME_UNIFORM_BYTES / 4);
-	u.set(v, 0);
-	u.set(p, 16);
-	multiply(u.subarray(32, 48), p, v);
-	planes(u.subarray(48, 72), u.subarray(32, 48));
-	u.set(EYE, 72);
-	u.set([SIZE, SIZE, (p[0] * SIZE) / 2, (p[5] * SIZE) / 2, NEAR, FAR, LOW_PASS], 76);
-	new Uint32Array(u.buffer).set([...extension.tables, ...extension.records], 84);
-	device.queue.writeBuffer(buffer, 0, u);
-}
-
-/** rgba of every texel, row by row from the top-left */
-async function texels(device: GPUDevice, texture: GPUTexture): Promise<Float32Array> {
-	const buffer = device.createBuffer({
-		size: SIZE * SIZE * 16,
-		usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
-	});
-	const encoder = device.createCommandEncoder();
-	encoder.copyTextureToBuffer({ texture }, { buffer, bytesPerRow: SIZE * 16 }, [SIZE, SIZE]);
-	device.queue.submit([encoder.finish()]);
-	const data = new Float32Array(await readBuffer(device, buffer));
-	buffer.destroy();
-	return data;
 }
 
 const largest = (a: Float32Array, b: Float32Array) =>
@@ -389,9 +304,9 @@ fn reader(s: ptr<function, Splat>, u: array<vec4f, 1>) {
 		);
 		const both: Hooked[] = [hooked, { shade: clipped, slot: 1, streams: [] }];
 		const modules = [
-			shaded([...HOOKED, ATTRIBUTES, masks, clip, splat, projectSource], both, 'shade'),
+			shaded(projectSource, both, 'shade'),
 			// no attribute reads: the raster runs only sample hooks
-			shaded([...HOOKED, rasterSource], both, 'sample')
+			shaded(rasterSource, both, 'sample')
 		];
 		for (const code of modules) {
 			const info = await device.createShaderModule({ code }).getCompilationInfo();

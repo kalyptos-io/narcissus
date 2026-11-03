@@ -1,7 +1,7 @@
 // one storage buffer of u32 words for what extends the passes: attribute streams, plugin tables
 // and each frame's sample records; first-fit blocks that grow the buffer at flush
 
-interface Block {
+export interface Block {
 	at: number;
 	words: number;
 }
@@ -9,8 +9,6 @@ interface Block {
 export class Extension {
 	#buffer: GPUBuffer;
 	#device: GPUDevice;
-	/** words the buffer holds */
-	#size: number;
 	/** words below which every block lies */
 	#top = 0;
 	/** free blocks below top, by offset, none adjacent */
@@ -22,18 +20,12 @@ export class Extension {
 
 	constructor(device: GPUDevice, words: number) {
 		this.#device = device;
-		this.#size = Math.max(1, words);
-		this.#buffer = this.#make(this.#size);
+		this.#buffer = this.#make(Math.max(1, words));
 	}
 
 	/** replaced on grow */
 	get buffer(): GPUBuffer {
 		return this.#buffer;
-	}
-
-	/** bytes of the buffer */
-	get bytes(): number {
-		return this.#buffer.size;
 	}
 
 	/** word offset of a block of words, at least one, in the static region */
@@ -80,36 +72,36 @@ export class Extension {
 		if (words.length) this.#writes.push({ at, words });
 	}
 
-	/** this frame's region of words; its offset holds while the frame asks for no more */
-	frame(words: number): number {
-		if (!this.#frame || this.#frame.words < words) {
-			if (this.#frame) this.free(this.#frame.at);
-			const size = Math.max(words, 2 * (this.#frame?.words ?? 0));
-			this.#frame = { at: this.alloc(size), words: size };
-		}
-		return this.#frame.at;
+	/** block while it holds words, else a new one of at least twice its words in its place */
+	fit(block: Block | null, words: number): Block {
+		if (block && block.words >= words) return block;
+		if (block) this.free(block.at);
+		const size = Math.max(words, 2 * (block?.words ?? 0));
+		return { at: this.alloc(size), words: size };
 	}
 
-	/** grows the buffer to hold every block, then uploads the writes; true when it replaced the buffer */
-	flush(): boolean {
-		let grown = false;
-		if (this.#top > this.#size) {
+	/** this frame's region of words; its offset holds while the frame asks for no more */
+	frame(words: number): number {
+		return (this.#frame = this.fit(this.#frame, words)).at;
+	}
+
+	/** grows the buffer to hold every block, then uploads the writes */
+	flush(): void {
+		const held = this.#buffer.size / 4;
+		if (this.#top > held) {
 			const limit = this.#device.limits.maxStorageBufferBindingSize / 4;
 			if (this.#top > limit) throw new Error(`the extension buffer needs ${4 * this.#top} bytes`);
-			const size = Math.min(limit, Math.max(this.#top, 2 * this.#size));
+			const size = Math.min(limit, Math.max(this.#top, 2 * held));
 			const buffer = this.#make(size);
 			const encoder = this.#device.createCommandEncoder({ label: 'extension grow' });
 			encoder.copyBufferToBuffer(this.#buffer, 0, buffer, 0, this.#buffer.size);
 			this.#device.queue.submit([encoder.finish()]);
 			this.#buffer.destroy();
 			this.#buffer = buffer;
-			this.#size = size;
-			grown = true;
 		}
 		const queue = this.#device.queue;
 		for (const { at, words } of this.#writes) queue.writeBuffer(this.#buffer, at * 4, words);
 		this.#writes = [];
-		return grown;
 	}
 
 	destroy(): void {

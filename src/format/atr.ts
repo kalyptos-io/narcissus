@@ -1,5 +1,6 @@
 // a unit's attribute streams: the .atr's tables and trailer, and its chunks read or laid out for the gpu
 
+import { hashAt } from './idx.ts';
 import type { Atr, AtrChunk, Attribute, Scalar } from './types.ts';
 import {
 	ATR_CHUNK_BYTES,
@@ -36,10 +37,6 @@ const utf8 = new TextDecoder('utf-8', { fatal: true });
 
 const view = (bytes: Uint8Array) => new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 
-function hex(bytes: Uint8Array): string {
-	return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
 /**
  * the pack hash, the tables' byte offset and the chunk count from the last ATR_TRAILER bytes of an
  * .atr of size bytes; throws naming the fault
@@ -63,7 +60,7 @@ export function atrTrailer(
 	if (tables + 4 + chunks * ATR_CHUNK_BYTES > size - ATR_TRAILER) {
 		throw new Error('has tables that do not fit before its trailer');
 	}
-	return { pack: hex(trailer.subarray(0, 8)), tables, chunks };
+	return { pack: hashAt(v, 0), tables, chunks };
 }
 
 /** the tables of an .atr of size bytes from tail, its last bytes from its tables on; throws naming the fault */

@@ -158,12 +158,12 @@ async function pageAttributes(
 	const wanted = atr.chunks.filter(
 		(chunk) => offsets.has(chunk.offset) && byName.has(atr.streams[chunk.stream])
 	);
-	const bodies = await chunkBodies(sources, file.path, wanted, signal);
+	const deflated = await chunkBodies(sources, file.path, wanted, signal);
+	const bodies = await Promise.all(deflated.map((body) => inflate(body)));
 	const pages = new Map<number, { rows: number; required: boolean; attribute: PageAttribute }[]>();
 	for (const [k, chunk] of wanted.entries()) {
 		const { id, required, attribute } = byName.get(atr.streams[chunk.stream])!;
-		const body = await inflate(bodies[k]);
-		const words = chunkWords(body, chunk, attribute);
+		const words = chunkWords(bodies[k], chunk, attribute);
 		const list = pages.get(chunk.offset) ?? [];
 		list.push({ rows: chunk.rows, required, attribute: { stream: id, ...words } });
 		pages.set(chunk.offset, list);
@@ -176,17 +176,11 @@ async function atrTables(sources: Sources, { path, size }: UnitFile): Promise<At
 	const key = `${path}#tail`;
 	const hit = await sources.cache.get(key);
 	if (hit) return parseAtr(hit, size);
-	const read = async (start: number, end: number) => {
-		const bytes = await sources.fetch(sources.base + path, [start, end]);
-		if (bytes.length !== end - start)
-			throw new Error(`${path}: ${bytes.length} bytes for ${start}-${end}`);
-		return bytes;
-	};
 	const from = Math.max(0, size - TAIL);
-	let tail = await read(from, size);
+	let tail = await range(sources, path, from, size);
 	const { tables } = atrTrailer(tail.subarray(tail.length - ATR_TRAILER), size);
 	if (tables < from) {
-		const head = await read(tables, from);
+		const head = await range(sources, path, tables, from);
 		const joined = new Uint8Array(head.length + tail.length);
 		joined.set(head);
 		joined.set(tail, head.length);
@@ -199,7 +193,7 @@ async function atrTables(sources: Sources, { path, size }: UnitFile): Promise<At
 	return atr;
 }
 
-/** the deflated chunks, from the cache when all hit, else by a range request a run of near ones */
+/** the deflated chunks, from the cache when all hit, else by a range request a run of near ones, the runs at once */
 async function chunkBodies(
 	sources: Sources,
 	path: string,
@@ -212,6 +206,7 @@ async function chunkBodies(
 	if (hits.every((hit) => hit !== undefined)) return hits as Uint8Array[];
 	const order = chunks.map((_, k) => k).sort((a, b) => chunks[a].at - chunks[b].at);
 	const bodies: Uint8Array[] = [];
+	const runs: Promise<void>[] = [];
 	for (let r = 0; r < order.length;) {
 		let end = r + 1;
 		let last = chunks[order[r]].at + chunks[order[r]].length;
@@ -220,17 +215,34 @@ async function chunkBodies(
 			end++;
 		}
 		const start = chunks[order[r]].at;
-		const bytes = await sources.fetch(sources.base + path, [start, last], signal);
-		if (bytes.length !== last - start)
-			throw new Error(`${path}: ${bytes.length} bytes for ${start}-${last}`);
-		for (; r < end; r++) {
-			const k = order[r];
-			const { at, length } = chunks[k];
-			bodies[k] = hits[k] ?? bytes.slice(at - start, at - start + length);
-			if (!hits[k]) void sources.cache.put(keys[k], bodies[k]);
-		}
+		const run = order.slice(r, end);
+		runs.push(
+			range(sources, path, start, last, signal).then((bytes) => {
+				for (const k of run) {
+					const { at, length } = chunks[k];
+					bodies[k] = hits[k] ?? bytes.slice(at - start, at - start + length);
+					if (!hits[k]) void sources.cache.put(keys[k], bodies[k]);
+				}
+			})
+		);
+		r = end;
 	}
+	await Promise.all(runs);
 	return bodies;
+}
+
+/** bytes start to end of path, which must give them all */
+async function range(
+	sources: Sources,
+	path: string,
+	start: number,
+	end: number,
+	signal?: AbortSignal
+): Promise<Uint8Array> {
+	const bytes = await sources.fetch(sources.base + path, [start, end], signal);
+	if (bytes.length !== end - start)
+		throw new Error(`${path}: ${bytes.length} bytes for ${start}-${end}`);
+	return bytes;
 }
 
 async function whole(sources: Sources, path: string): Promise<Uint8Array> {
@@ -247,10 +259,7 @@ async function pageBlobs(sources: Sources, batch: Batch, signal?: AbortSignal) {
 	const hits = await Promise.all(keys.map((key) => sources.cache.get(key)));
 	signal?.throwIfAborted();
 	if (hits.every((hit) => hit !== undefined)) return hits as Uint8Array[];
-	const bytes = await sources.fetch(sources.base + batch.pack, [batch.start, batch.end], signal);
-	if (bytes.length !== batch.end - batch.start) {
-		throw new Error(`${batch.pack}: ${bytes.length} bytes for ${batch.start}-${batch.end}`);
-	}
+	const bytes = await range(sources, batch.pack, batch.start, batch.end, signal);
 	return batch.pages.map((job, k) => {
 		const blob = bytes.slice(job.offset - batch.start, job.offset - batch.start + job.length);
 		if (!hits[k]) void sources.cache.put(keys[k], blob);

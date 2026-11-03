@@ -70,7 +70,7 @@ async function draw(withDepth: boolean) {
 	const colour = target(COLOUR_FORMAT);
 	const depth = withDepth ? target(DEPTH_FORMAT) : null;
 	const encoder = device.createCommandEncoder();
-	raster.encode(encoder, colour.createView(), depth?.createView() ?? null, SKY);
+	raster.encode(encoder, colour.createView(), depth?.createView() ?? null, SKY, false);
 	device.queue.submit([encoder.finish()]);
 	const result = {
 		colour: await texels(device, colour),

@@ -16,7 +16,7 @@ import {
 
 const NONE = '0000000000000000';
 
-function hashAt(view: DataView, offset: number): string {
+export function hashAt(view: DataView, offset: number): string {
 	let hex = '';
 	for (let b = 0; b < 8; b++) {
 		const byte = view.getUint8(offset + b);

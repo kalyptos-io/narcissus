@@ -2,7 +2,7 @@
 
 import { IN, OUT, relate, type Prism } from '../math/prism.ts';
 import type { Colour } from '../types.ts';
-import type { Extension } from './extension.ts';
+import type { Block, Extension } from './extension.ts';
 import { pack4x8unorm } from './layout.ts';
 
 /** u32 words of a record in masks.wgsl */
@@ -39,9 +39,8 @@ const EVERYWHERE = [-Infinity, -Infinity, Infinity, Infinity] as const;
 
 export class Masks {
 	#extension: Extension;
-	/** the extension words the records, runs and lists take, and how many they may */
-	#at = 0;
-	#words = 0;
+	/** the extension words the records, runs and lists take */
+	#block: Block | null = null;
 	#masks = new Map<number, Held>();
 	#next = 0;
 	#origin: readonly [number, number, number] = [0, 0, 0];
@@ -117,7 +116,7 @@ export class Masks {
 	}
 
 	/** words before the lists: the records and their runs, each its count then its vertices */
-	get listBase(): number {
+	#listBase(): number {
 		let words = this.#masks.size * MASK_WORDS;
 		for (const { runs } of this.#masks.values()) for (const run of runs) words += 1 + run.length;
 		return words;
@@ -125,14 +124,9 @@ export class Masks {
 
 	/** the extension word the lists start at once listed entries follow the records */
 	lists(listed: number): number {
-		const base = this.listBase;
-		const words = base + listed;
-		if (words > this.#words) {
-			if (this.#words) this.#extension.free(this.#at);
-			this.#words = 2 ** Math.ceil(Math.log2(words));
-			this.#at = this.#extension.alloc(this.#words);
-		}
-		return this.#at + base;
+		const base = this.#listBase();
+		this.#block = this.#extension.fit(this.#block, base + listed);
+		return this.#block.at + base;
 	}
 
 	/**
@@ -141,8 +135,10 @@ export class Masks {
 	 */
 	write(lists: number[] = this.#lists): void {
 		this.#lists = lists;
-		const first = this.lists(lists.length) - this.listBase;
-		const words = new Uint32Array(this.listBase + lists.length);
+		const base = this.#listBase();
+		this.#block = this.#extension.fit(this.#block, base + lists.length);
+		const first = this.#block.at;
+		const words = new Uint32Array(base + lists.length);
 		const floats = new Float32Array(words.buffer);
 		const [ox, oy, oz] = this.#origin;
 		const record = new Map<number, number>();

@@ -124,18 +124,8 @@ async function checkUnit(
 	try {
 		report.files++;
 		report.bytes += idx.packSize;
-		const whole = deep ? await source(base + pack, null) : null;
-		if (whole && whole.length !== idx.packSize) {
-			throw new Error(`holds ${whole.length} bytes, its .idx gives ${idx.packSize}`);
-		}
+		const { whole, read } = await reader(source, base + pack, idx.packSize, deep);
 		if (whole && contentHash(whole) !== idx.pack) fault(pack, 'does not have the hash in its name');
-		const read = async (start: number, end: number) => {
-			const part = whole ? whole.subarray(start, end) : await source(base + pack, [start, end]);
-			if (part.length !== end - start) {
-				throw new Error(`gives ${part.length} bytes for ${start}-${end}`);
-			}
-			return part;
-		};
 		table = await packRows(read, idx.packSize);
 		const pages = new Map(table.map((row) => [`${row.g}/${row.i}/${row.j}`, row]));
 		for (const row of idx.rows) {
@@ -155,6 +145,21 @@ async function checkUnit(
 	if (idx.atr) await checkAtr(source, base, idx, table, attributes, deep, report);
 }
 
+/** ranges of the file at url of size bytes, from the whole of it when deep; throws on a short file */
+async function reader(source: Fetch, url: string, size: number, deep: boolean) {
+	const whole = deep ? await source(url, null) : null;
+	if (whole && whole.length !== size) {
+		throw new Error(`holds ${whole.length} bytes, its .idx gives ${size}`);
+	}
+	const read = async (start: number, end: number) => {
+		const part = whole ? whole.subarray(start, end) : await source(url, [start, end]);
+		if (part.length !== end - start)
+			throw new Error(`gives ${part.length} bytes for ${start}-${end}`);
+		return part;
+	};
+	return { whole, read };
+}
+
 /** an .atr against its unit's pack table, when it read, and the streams world.json declares */
 async function checkAtr(
 	source: Fetch,
@@ -171,18 +176,8 @@ async function checkAtr(
 	report.files++;
 	report.bytes += size;
 	try {
-		const whole = deep ? await source(base + path, null) : null;
-		if (whole && whole.length !== size) {
-			throw new Error(`holds ${whole.length} bytes, its .idx gives ${size}`);
-		}
+		const { whole, read } = await reader(source, base + path, size, deep);
 		if (whole && contentHash(whole) !== idx.atr) fault('does not have the hash in its name');
-		const read = async (start: number, end: number) => {
-			const part = whole ? whole.subarray(start, end) : await source(base + path, [start, end]);
-			if (part.length !== end - start) {
-				throw new Error(`gives ${part.length} bytes for ${start}-${end}`);
-			}
-			return part;
-		};
 		const { tables } = atrTrailer(await read(size - ATR_TRAILER, size), size);
 		const atr = parseAtr(await read(tables, size), size);
 		if (atr.pack !== idx.pack) fault(`describes pack ${atr.pack}, not ${idx.pack}`);

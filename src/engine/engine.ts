@@ -762,7 +762,7 @@ class GpuEngine implements Engine {
 			this.requestFrame();
 		};
 		const objects = new Objects(this.#objects, loader.ids.bind(loader), arrive);
-		return new Feed(tree, loader, objects, this.#pool.attributes, this.#pool, arrive, this.#reopen);
+		return new Feed(tree, loader, objects, this.#pool, arrive, this.#reopen);
 	}
 
 	/** a release replaced the world: open its world.json again at the same camera */

@@ -4,13 +4,10 @@
 import type { Frame } from '../plugin.ts';
 import { planes } from '../math/frustum.ts';
 import { multiply } from '../math/mat4.ts';
-import { bufferGroup, bufferLayout, type FrameBuffers } from './buffers.ts';
-import clip from './clip.wgsl?raw';
-import masks from './masks.wgsl?raw';
+import { bufferLayout, liveGroup, type FrameBuffers } from './buffers.ts';
 import source from './pick.wgsl?raw';
 import type { PageSource, Pool } from './pool.ts';
-import { ATTRIBUTES, HOOKED, shaded, type Hooked } from './project.ts';
-import splat from './splat.wgsl?raw';
+import { shaded, type Hooked } from './project.ts';
 
 /** workgroups of a pick, pick.wgsl's PICK_GROUPS */
 const GROUPS = 256;
@@ -40,13 +37,12 @@ export interface Found {
 	/** what the shade, or the sample hook there, gave the splat */
 	token: number;
 	/** the splat's row in its page, null for a layer's */
-	row: { pack: string; blob: number; row: number } | null;
+	row: (PageSource & { row: number }) | null;
 }
 
 export class Pick {
 	#device: GPUDevice;
 	#pool: Pool;
-	#layout: GPUBindGroupLayout;
 	#pipelineLayout: GPUPipelineLayout;
 	#pipeline: GPUComputePipeline | undefined;
 	#hooks: readonly Hooked[] = [];
@@ -54,16 +50,14 @@ export class Pick {
 	#planes = new Float32Array(24);
 	#values = new Float32Array((PROBES_HEAD_BYTES + PROBES * PROBE_BYTES) / 4);
 	#probes: GPUBuffer;
-	#resources: GPUBuffer[];
 	#entries = 0;
 	#hits!: GPUBuffer;
-	#group: GPUBindGroup | undefined;
-	#bound: GPUBuffer | undefined;
+	#group: () => GPUBindGroup;
 
 	constructor(device: GPUDevice, pool: Pool, buffers: FrameBuffers) {
 		this.#device = device;
 		this.#pool = pool;
-		this.#layout = bufferLayout(device, 'pick', GPUShaderStage.COMPUTE, [
+		const layout = bufferLayout(device, 'pick', GPUShaderStage.COMPUTE, [
 			'uniform',
 			'uniform',
 			'read-only-storage',
@@ -75,7 +69,7 @@ export class Pick {
 			'storage',
 			'read-only-storage'
 		]);
-		this.#pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [this.#layout] });
+		this.#pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [layout] });
 		// picks in flight share these: the queue runs each pick's writes after the last one's pass
 		this.#probes = device.createBuffer({
 			label: 'pick probes',
@@ -83,8 +77,13 @@ export class Pick {
 			usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
 		});
 		const { uniforms, plugins, work } = buffers;
-		const resources = [uniforms, plugins, pool.geometry, pool.colour, pool.pages, pool.clusters];
-		this.#resources = [...resources, work, this.#probes];
+		const { geometry, colour, pages, clusters } = pool;
+		const fixed = [uniforms, plugins, geometry, colour, pages, clusters, work, this.#probes];
+		this.#group = liveGroup(device, 'pick', layout, () => [
+			...fixed,
+			this.#hits,
+			pool.extension.buffer
+		]);
 		this.#grow(ENTRIES);
 	}
 
@@ -144,7 +143,7 @@ export class Pick {
 		const sources = pool.sources();
 		const encoder = device.createCommandEncoder({ label: 'pick' });
 		const pass = encoder.beginComputePass({ label: 'pick' });
-		pass.setBindGroup(0, this.#bind());
+		pass.setBindGroup(0, this.#group());
 		pass.setPipeline((this.#pipeline ??= this.#build()));
 		pass.dispatchWorkgroups(GROUPS);
 		pass.end();
@@ -178,7 +177,6 @@ export class Pick {
 			size: HEAD_BYTES + entries * ENTRY_BYTES,
 			usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
 		});
-		this.#bound = undefined;
 		// picks submitted on the old one still copy out of it: destroy waits on them
 		old?.destroy();
 	}
@@ -197,19 +195,8 @@ export class Pick {
 		return this.#planes.subarray(0, 16);
 	}
 
-	/** the group over the hits and the extension as they stand */
-	#bind(): GPUBindGroup {
-		const buffer = this.#pool.extension.buffer;
-		if (this.#bound !== buffer) {
-			const resources = [...this.#resources, this.#hits, buffer];
-			this.#group = bufferGroup(this.#device, 'pick', this.#layout, resources);
-			this.#bound = buffer;
-		}
-		return this.#group!;
-	}
-
 	#build(): GPUComputePipeline {
-		const code = shaded([...HOOKED, ATTRIBUTES, masks, clip, splat, source], this.#hooks, 'shade');
+		const code = shaded(source, this.#hooks, 'shade');
 		const module = this.#device.createShaderModule({ label: 'pick', code });
 		return this.#device.createComputePipeline({
 			label: 'pick',

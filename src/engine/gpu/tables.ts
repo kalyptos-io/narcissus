@@ -2,16 +2,14 @@
 // table() reads, two words an id: the table's first word and its length
 
 import type { Table } from '../plugin.ts';
-import type { Extension } from './extension.ts';
+import type { Block, Extension } from './extension.ts';
 
 export class Tables {
 	#extension: Extension;
 	/** by id, its first word and length; 0 and 0 for a free id */
 	#entries: number[] = [];
 	#free: number[] = [];
-	/** the directory's first word, and the ids it has room for */
-	#directory = 0;
-	#room = 0;
+	#directory: Block | null = null;
 
 	constructor(extension: Extension) {
 		this.#extension = extension;
@@ -19,7 +17,7 @@ export class Tables {
 
 	/** the directory's first extension word */
 	get directory(): number {
-		return this.#directory;
+		return this.#directory?.at ?? 0;
 	}
 
 	/** ids the directory holds; table() reads 0 for any past them */
@@ -61,13 +59,12 @@ export class Tables {
 		this.#entries[2 * id] = first;
 		this.#entries[2 * id + 1] = words;
 		const extension = this.#extension;
-		if (this.count <= this.#room) {
-			extension.write(this.#directory + 2 * id, new Uint32Array([first, words]));
+		const directory = extension.fit(this.#directory, 2 * this.count);
+		if (directory === this.#directory) {
+			extension.write(directory.at + 2 * id, new Uint32Array([first, words]));
 			return;
 		}
-		if (this.#room) extension.free(this.#directory);
-		this.#room = 2 ** Math.ceil(Math.log2(this.count));
-		this.#directory = extension.alloc(2 * this.#room);
-		extension.write(this.#directory, Uint32Array.from(this.#entries));
+		this.#directory = directory;
+		extension.write(directory.at, Uint32Array.from(this.#entries));
 	}
 }

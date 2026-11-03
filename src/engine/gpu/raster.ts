@@ -1,8 +1,8 @@
 import { WORK } from './layout.ts';
-import { bufferGroup, type FrameBuffers } from './buffers.ts';
+import { liveGroup, type FrameBuffers } from './buffers.ts';
 import source from './raster.wgsl?raw';
 import type { Pool } from './pool.ts';
-import { HOOKED, shaded, type Hooked } from './project.ts';
+import { shaded, type Hooked } from './project.ts';
 import type { Sort } from './sort.ts';
 
 /** cleared to the sky, so blending leaves the finished image and needs no alpha; half rgba16float's bandwidth */
@@ -15,20 +15,17 @@ const OVER: GPUBlendComponent = { srcFactor: 'one', dstFactor: 'one-minus-src-al
 /** sorted splats as instanced quads, premultiplied, back to front, the sampled through their hooks */
 export class Raster {
 	#device: GPUDevice;
-	#pool: Pool;
 	#format: GPUTextureFormat;
 	#work: GPUBuffer;
 	#sorted: GPUBuffer;
 	/** samples over the coverage estimate, copied into the work buffer after the pass */
 	#over: GPUBuffer;
-	#layout: GPUBindGroupLayout;
 	#pipelineLayout: GPUPipelineLayout;
 	#hooks: readonly Hooked[] = [];
+	#module: GPUShaderModule | undefined;
 	/** by their vertex entry point less vs */
 	#pipelines = new Map<string, GPURenderPipeline>();
-	#resources: GPUBuffer[];
-	#group: GPUBindGroup | undefined;
-	#bound: GPUBuffer | undefined;
+	#group: () => GPUBindGroup;
 
 	/** format is the colour target's: COLOUR_FORMAT, a float one in tests */
 	constructor(
@@ -39,7 +36,6 @@ export class Raster {
 		format: GPUTextureFormat
 	) {
 		this.#device = device;
-		this.#pool = pool;
 		this.#format = format;
 		this.#work = buffers.work;
 		this.#sorted = device.createBuffer({
@@ -66,7 +62,7 @@ export class Raster {
 			[FRAGMENT, 'read-only-storage'],
 			[FRAGMENT, 'storage']
 		];
-		this.#layout = device.createBindGroupLayout({
+		const layout = device.createBindGroupLayout({
 			label: 'raster',
 			entries: stages.map(([visibility, type], binding) => ({
 				binding,
@@ -74,23 +70,33 @@ export class Raster {
 				buffer: { type }
 			}))
 		});
-		this.#pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [this.#layout] });
+		this.#pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [layout] });
 		const { uniforms, projected, plugins } = buffers;
-		this.#resources = [uniforms, projected, buffers.sort, this.#sorted, plugins];
+		const fixed = [uniforms, projected, buffers.sort, this.#sorted, plugins];
+		this.#group = liveGroup(device, 'raster', layout, () => [
+			...fixed,
+			pool.extension.buffer,
+			this.#over
+		]);
 	}
 
 	/** the next frame draws sampled splats through these hooks, as project numbers them */
 	hooks(hooks: readonly Hooked[]): void {
 		this.#hooks = hooks;
+		this.#module = undefined;
 		this.#pipelines.clear();
 	}
 
-	/** clears colour to the sky; depth, when given, gets the nearest splat's log-depth span from near to far, 1 where none drew */
+	/**
+	 * clears colour to the sky; depth, when given, gets the nearest splat's log-depth span from near
+	 * to far, 1 where none drew; sampled where the frame holds records, which project may tag splats with
+	 */
 	encode(
 		encoder: GPUCommandEncoder,
 		colour: GPUTextureView,
 		depth: GPUTextureView | null,
 		sky: readonly [number, number, number],
+		sampled: boolean,
 		timestamps?: GPURenderPassTimestampWrites
 	): void {
 		encoder.clearBuffer(this.#over);
@@ -104,13 +110,11 @@ export class Raster {
 				: undefined,
 			timestampWrites: timestamps
 		});
-		// a sample hook, or a clip, may tag splats
-		const tags = this.#pool.clips.count > 0 || this.#hooks.some(({ shade }) => shade.sample);
-		const name = `${tags ? 'Sampled' : ''}${depth ? 'Depth' : 'Colour'}`;
+		const name = `${sampled ? 'Sampled' : ''}${depth ? 'Depth' : 'Colour'}`;
 		let pipeline = this.#pipelines.get(name);
 		if (!pipeline) this.#pipelines.set(name, (pipeline = this.#pipeline(name)));
 		pass.setPipeline(pipeline);
-		pass.setBindGroup(0, this.#bind());
+		pass.setBindGroup(0, this.#group());
 		pass.drawIndirect(this.#work, WORK.drawArgs * 4);
 		pass.end();
 		encoder.copyBufferToBuffer(this.#over, 0, this.#work, WORK.rasterOver * 4, 4);
@@ -121,22 +125,13 @@ export class Raster {
 		this.#over.destroy();
 	}
 
-	/** the group over the extension as it stands: a flush may have replaced its buffer */
-	#bind(): GPUBindGroup {
-		const buffer = this.#pool.extension.buffer;
-		if (this.#bound !== buffer) {
-			const resources = [...this.#resources, buffer, this.#over];
-			this.#group = bufferGroup(this.#device, 'raster', this.#layout, resources);
-			this.#bound = buffer;
-		}
-		return this.#group!;
-	}
-
 	/** name is its vertex entry point less vs */
 	#pipeline(name: string): GPURenderPipeline {
 		const device = this.#device;
-		const code = shaded([...HOOKED, source], this.#hooks, 'sample');
-		const module = device.createShaderModule({ label: 'raster', code });
+		const module = (this.#module ??= device.createShaderModule({
+			label: 'raster',
+			code: shaded(source, this.#hooks, 'sample')
+		}));
 		return device.createRenderPipeline({
 			label: `raster ${name}`,
 			layout: this.#pipelineLayout,

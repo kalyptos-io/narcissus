@@ -73,3 +73,22 @@ export function bufferGroup(
 		entries: buffers.map((buffer, binding) => ({ binding, resource: { buffer } }))
 	});
 }
+
+/** a bufferGroup over buffers() as they stand, made again when one is replaced, as the extension's on grow */
+export function liveGroup(
+	device: GPUDevice,
+	label: string,
+	layout: GPUBindGroupLayout,
+	buffers: () => GPUBuffer[]
+): () => GPUBindGroup {
+	let bound: GPUBuffer[] = [];
+	let group: GPUBindGroup | undefined;
+	return () => {
+		const now = buffers();
+		if (!group || now.some((buffer, k) => buffer !== bound[k])) {
+			group = bufferGroup(device, label, layout, now);
+			bound = now;
+		}
+		return group;
+	};
+}

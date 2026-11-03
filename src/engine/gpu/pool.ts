@@ -61,6 +61,8 @@ interface Entry {
 	pickable: boolean;
 	/** extension word of its attribute directory, ATTRIBUTE_NONE for none */
 	directory: number;
+	/** null for a layer's page */
+	source: PageSource | null;
 }
 
 /** word ranges of a cpu mirror changed since the last flush */
@@ -123,8 +125,6 @@ export class Pool {
 	// slots below this are occupied
 	#firstFree = 0;
 	#tables: number[];
-	/** by page-table slot, null for a layer's page or a free slot */
-	#sources: (PageSource | null)[];
 	#origin: [number, number, number] = [0, 0, 0];
 	// mirrors of pages and clusters, flushed once a draw: a write per change floods the gpu process
 	#table: Uint32Array<ArrayBuffer>;
@@ -158,7 +158,6 @@ export class Pool {
 		this.#taken = new Uint8Array(slots);
 		this.#free = slots;
 		this.#tables = Array.from({ length: slots }, (_, k) => slots - 1 - k);
-		this.#sources = new Array<PageSource | null>(slots).fill(null);
 		this.#table = new Uint32Array(slots * PAGE_WORDS);
 		this.#tableFloats = new Float32Array(this.#table.buffer);
 		this.#clusterWords = new Uint32Array(slots * CLUSTER_WORDS);
@@ -225,18 +224,20 @@ export class Pool {
 			factors: 0,
 			layer,
 			pickable: true,
-			directory: ATTRIBUTE_NONE
+			directory: ATTRIBUTE_NONE,
+			source
 		};
 		this.#entries.set(id, entry);
-		this.#sources[entry.table] = source;
 		this.#touch(entry);
 		this.#queue.add(id);
 		return true;
 	}
 
-	/** the source of the page in each page-table slot as they stand */
+	/** the source of the page in each page-table slot as they stand, null for a free slot */
 	sources(): (PageSource | null)[] {
-		return this.#sources.slice();
+		const sources = new Array<PageSource | null>(this.slots).fill(null);
+		for (const entry of this.#entries.values()) sources[entry.table] = entry.source;
+		return sources;
 	}
 
 	remove(id: number): void {
@@ -254,7 +255,6 @@ export class Pool {
 		this.#firstFree = Math.min(this.#firstFree, entry.slots[0]);
 		this.#free += entry.slots.length;
 		this.#tables.push(entry.table);
-		this.#sources[entry.table] = null;
 		if (entry.directory !== ATTRIBUTE_NONE) this.extension.free(entry.directory);
 		// the gpu list may name its clusters until the next draw
 		if (entry.page === null && entry.factors !== 0) this.#setFactors(entry, 0);
@@ -454,7 +454,6 @@ export class Pool {
 		hidden.set(this.#hidden);
 		this.#hidden = hidden;
 		for (let s = before; s < slots; s++) this.#masked.push(NONE);
-		for (let s = before; s < slots; s++) this.#sources.push(null);
 	}
 
 	destroy(): void {

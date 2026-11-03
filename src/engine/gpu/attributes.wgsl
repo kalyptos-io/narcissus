@@ -3,7 +3,7 @@
 // directory is its stream count, then two words a stream: the word offset of its values and its
 // descriptor; layouts in format/spec.ts
 
-// extension words 4 s to 4 s + 3 hold stream s's default, widened as attribute_word gives it, for
+// extension words 4 s to 4 s + 3 hold stream s's default, widened as attribute_words gives it, for
 // the ATTRIBUTE_STREAMS of layout.ts
 const ATTRIBUTE_RECORDS: u32 = 9u;
 const ENCODING_DICTIONARY: u32 = 1u;
@@ -71,33 +71,42 @@ fn attribute_find(at: u32, m: u32, row: u32) -> u32 {
 	return m;
 }
 
-// component of row's value of a fixed stream on page, widened to 32 bits; the default without one
-fn attribute_word(page: u32, row: u32, stream: u32, component: u32) -> u32 {
+// row's value of a fixed stream on page, each component widened to 32 bits; the default without one
+fn attribute_words(page: u32, row: u32, stream: u32) -> vec4u {
 	let entry = attribute_entry(page, stream);
 	let kind = extractBits(entry.y, 2u, 4u);
-	let absent = extension[4u * stream + component];
+	var words = vec4u(
+		extension[4u * stream],
+		extension[4u * stream + 1u],
+		extension[4u * stream + 2u],
+		extension[4u * stream + 3u]
+	);
 	if (kind == 0u || kind == ATTRIBUTE_RECORDS) {
-		return absent;
+		return words;
 	}
 	let components = extractBits(entry.y, 6u, 3u);
 	let count = entry.y >> 9u;
+	var values = entry.x;
+	var first = row * components;
 	switch extractBits(entry.y, 0u, 2u) {
 		case ENCODING_DICTIONARY: {
 			let indices = entry.x + (count * components * attribute_bytes(kind) + 3u) / 4u;
-			let index = attribute_scalar(indices, row, select(1u, 2u, count > 256u));
-			return attribute_scalar(entry.x, index * components + component, kind);
+			first = attribute_scalar(indices, row, select(1u, 2u, count > 256u)) * components;
 		}
 		case ENCODING_SPARSE: {
 			let k = attribute_find(entry.x, count, row);
 			if (k == count) {
-				return absent;
+				return words;
 			}
-			return attribute_scalar(entry.x + count, k * components + component, kind);
+			values = entry.x + count;
+			first = k * components;
 		}
-		default: {
-			return attribute_scalar(entry.x, row * components + component, kind);
-		}
+		default: {}
 	}
+	for (var c = 0u; c < components; c++) {
+		words[c] = attribute_scalar(values, first + c, kind);
+	}
+	return words;
 }
 
 // row's record of a records stream on page, empty without one

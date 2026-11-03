@@ -68,6 +68,8 @@ class FakePool {
 	/** id to the unit corner it came with */
 	held = new Map<number, readonly [number, number]>();
 	queued = 0;
+	/** the streams hooks read, as AttributeRegistry gives them */
+	attributes = { wanted: [] as Stream[], generation: 0 };
 	#capacity: number;
 
 	constructor(capacity: number) {
@@ -143,8 +145,8 @@ function setup(options: Partial<FeedOptions> = {}, capacity = Infinity, atr = fa
 	const stale = vi.fn();
 	const typed = { loader: loader as unknown as Loader, pool: pool as unknown as Pool };
 	const objects = new Objects({}, vi.fn(), vi.fn());
-	const streams = { wanted: [] as Stream[], generation: 0 };
-	const feed = new Feed(tree, typed.loader, objects, streams, typed.pool, arrive, stale, {
+	const streams = pool.attributes;
+	const feed = new Feed(tree, typed.loader, objects, typed.pool, arrive, stale, {
 		...FEED,
 		...options
 	});
