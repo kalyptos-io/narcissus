@@ -1,8 +1,8 @@
-// masks on the gpu: prisms that act on splats by centre, in group 1 of the passes that test them
+// masks on the gpu: prisms that act on splats by centre, in the extension of the passes that test them
 
 import { IN, OUT, relate, type Prism } from '../math/prism.ts';
 import type { Colour } from '../types.ts';
-import { bufferGroup, bufferLayout } from './buffers.ts';
+import type { Extension } from './extension.ts';
 import { pack4x8unorm } from './layout.ts';
 
 /** u32 words of a record in masks.wgsl */
@@ -38,11 +38,10 @@ interface Held extends Spec {
 const EVERYWHERE = [-Infinity, -Infinity, Infinity, Infinity] as const;
 
 export class Masks {
-	/** layout of group 1 in the passes that call masks.wgsl's masked() */
-	readonly layout: GPUBindGroupLayout;
-	#device: GPUDevice;
-	#buffer: GPUBuffer;
-	#group: GPUBindGroup | null = null;
+	#extension: Extension;
+	/** the extension words the records, runs and lists take, and how many they may */
+	#at = 0;
+	#words = 0;
 	#masks = new Map<number, Held>();
 	#next = 0;
 	#origin: readonly [number, number, number] = [0, 0, 0];
@@ -50,14 +49,8 @@ export class Masks {
 	#lists: number[] = [];
 	#grid: Grid | null = null;
 
-	constructor(device: GPUDevice) {
-		this.#device = device;
-		this.layout = bufferLayout(device, 'masks', GPUShaderStage.COMPUTE, ['read-only-storage']);
-		this.#buffer = this.#make(64);
-	}
-
-	get group(): GPUBindGroup {
-		return (this.#group ??= bufferGroup(this.#device, 'masks', this.layout, [this.#buffer]));
+	constructor(extension: Extension) {
+		this.#extension = extension;
 	}
 
 	get size(): number {
@@ -130,9 +123,25 @@ export class Masks {
 		return words;
 	}
 
-	/** the records, runs and lists, as relate's entries, from listBase on; the last lists when left out */
+	/** the extension word the lists start at once listed entries follow the records */
+	lists(listed: number): number {
+		const base = this.listBase;
+		const words = base + listed;
+		if (words > this.#words) {
+			if (this.#words) this.#extension.free(this.#at);
+			this.#words = 2 ** Math.ceil(Math.log2(words));
+			this.#at = this.#extension.alloc(this.#words);
+		}
+		return this.#at + base;
+	}
+
+	/**
+	 * the records, runs and lists, as relate's entries, into the extension, every word offset in them
+	 * the extension's; the last lists when left out
+	 */
 	write(lists: number[] = this.#lists): void {
 		this.#lists = lists;
+		const first = this.lists(lists.length) - this.listBase;
 		const words = new Uint32Array(this.listBase + lists.length);
 		const floats = new Float32Array(words.buffer);
 		const [ox, oy, oz] = this.#origin;
@@ -145,7 +154,7 @@ export class Masks {
 			floats.set([bounds[0] - ox, bounds[1] - oy, bounds[2] - ox, bounds[3] - oy], w);
 			floats[w + 4] = Number.isFinite(z[0]) ? z[0] - oz : -FAR;
 			floats[w + 5] = Number.isFinite(z[1]) ? z[1] - oz : FAR;
-			words[w + 6] = at;
+			words[w + 6] = first + at;
 			floats[w + 8] = opacity;
 			words[w + 9] = pack4x8unorm(tint);
 			words[w + 10] = outside ? 1 : 0;
@@ -153,23 +162,14 @@ export class Masks {
 				words[at++] = run.length / 2;
 				for (let k = 0; k < run.length; k++) floats[at++] = run[k] - (k % 2 ? oy : ox);
 			}
-			words[w + 7] = at - words[w + 6];
-			record.set(id, r++);
+			words[w + 7] = first + at - words[w + 6];
+			record.set(id, first + MASK_WORDS * r++);
 		}
 		for (let k = 0; k < lists.length; k++) {
 			const entry = lists[k];
-			words[at + k] = (record.get(entry >> 1) ?? 0) | (entry & 1 ? INSIDE : 0);
+			words[at + k] = (record.get(entry >> 1) ?? first) | (entry & 1 ? INSIDE : 0);
 		}
-		if (words.byteLength > this.#buffer.size) {
-			this.#buffer.destroy();
-			this.#buffer = this.#make(words.byteLength);
-			this.#group = null;
-		}
-		if (words.length) this.#device.queue.writeBuffer(this.#buffer, 0, words);
-	}
-
-	destroy(): void {
-		this.#buffer.destroy();
+		if (words.length) this.#extension.write(first, words);
 	}
 
 	#hold(id: number, spec: Spec, enabled: boolean): void {
@@ -184,14 +184,6 @@ export class Masks {
 		const area = outside ? EVERYWHERE : bounds;
 		this.#masks.set(id, { ...spec, enabled, bounds, area, runs: runsOf(edges) });
 		this.#grid = null;
-	}
-
-	#make(bytes: number): GPUBuffer {
-		return this.#device.createBuffer({
-			label: 'masks',
-			size: Math.max(256, 2 ** Math.ceil(Math.log2(bytes))),
-			usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
-		});
 	}
 }
 

@@ -7,8 +7,11 @@ import {
 	PARAMS,
 	type DecodedPage
 } from '../../format/index.ts';
+import { AttributeRegistry } from './attributes.ts';
+import { Extension } from './extension.ts';
 import { baseOf, CLUSTER_WORDS, PAGE_WORDS, slots } from './layout.ts';
 import { Masks, type Spec } from './masks.ts';
+import { Tables } from './tables.ts';
 import type { Drawn } from '../types.ts';
 
 /** u32 words of Page.factors, Page.layer and Page.turn */
@@ -21,8 +24,16 @@ const PICKLESS = 0x80000000;
 const MASK_LIST = 7;
 const MASK_COUNT = 11;
 const NONE: readonly number[] = [];
+/** extension words at first; it grows as it fills */
+const EXTENSION_WORDS = 1024;
 /** a word gap below which two changed ranges of a table go up as one write */
 const MERGE_WORDS = 1024;
+
+/** where a page of the world lies: its unit's pack path, as its .idx names it, and its blob offset there */
+export interface PageSource {
+	pack: string;
+	blob: number;
+}
 
 interface Entry {
 	id: number;
@@ -87,7 +98,11 @@ export class Pool {
 	listed = 0;
 	/** splats */
 	capacity: number;
+	/** u32 words of the masks, tables and attribute streams, then each frame's sample records */
+	readonly extension: Extension;
 	readonly masks: Masks;
+	readonly tables: Tables;
+	readonly attributes = new AttributeRegistry();
 
 	#device: GPUDevice;
 	#entries = new Map<number, Entry>();
@@ -100,6 +115,8 @@ export class Pool {
 	// slots below this are occupied
 	#firstFree = 0;
 	#tables: number[];
+	/** by page-table slot, null for a layer's page or a free slot */
+	#sources: (PageSource | null)[];
 	#origin: [number, number, number] = [0, 0, 0];
 	// mirrors of pages and clusters, flushed once a draw: a write per change floods the gpu process
 	#table: Uint32Array<ArrayBuffer>;
@@ -121,13 +138,16 @@ export class Pool {
 
 	constructor(device: GPUDevice, capacity: number) {
 		this.capacity = capacity;
-		this.masks = new Masks(device);
+		this.extension = new Extension(device, EXTENSION_WORDS);
+		this.masks = new Masks(this.extension);
+		this.tables = new Tables(this.extension);
 		this.#device = device;
 		const slots = this.slots;
 		this.#allocate();
 		this.#taken = new Uint8Array(slots);
 		this.#free = slots;
 		this.#tables = Array.from({ length: slots }, (_, k) => slots - 1 - k);
+		this.#sources = new Array<PageSource | null>(slots).fill(null);
 		this.#table = new Uint32Array(slots * PAGE_WORDS);
 		this.#tableFloats = new Float32Array(this.#table.buffer);
 		this.#clusterWords = new Uint32Array(slots * CLUSTER_WORDS);
@@ -143,7 +163,7 @@ export class Pool {
 	}
 
 	get bytes(): number {
-		return this.#buffers().reduce((sum, b) => sum + b.size, 0);
+		return this.#buffers().reduce((sum, b) => sum + b.size, this.extension.buffer.size);
 	}
 
 	/** uploaded and drawable */
@@ -165,14 +185,16 @@ export class Pool {
 
 	/**
 	 * queues page id of the unit with south-west corner (e, n), evicting the least recently drawn
-	 * pages keep rejects; false when it cannot fit even then. a page of a layer other than 0 is pinned
+	 * pages keep rejects; false when it cannot fit even then. a page of a layer other than 0 is pinned;
+	 * source is where a world page lies
 	 */
 	add(
 		id: number,
 		page: DecodedPage,
 		unit: readonly [number, number],
 		keep: (id: number) => boolean,
-		layer = 0
+		layer = 0,
+		source: PageSource | null = null
 	): boolean {
 		if (this.#entries.has(id)) return true;
 		// at least one slot, so page-table slots never run out before cluster slots
@@ -194,9 +216,15 @@ export class Pool {
 			pickable: true
 		};
 		this.#entries.set(id, entry);
+		this.#sources[entry.table] = source;
 		this.#touch(entry);
 		this.#queue.add(id);
 		return true;
+	}
+
+	/** the source of the page in each page-table slot as they stand */
+	sources(): (PageSource | null)[] {
+		return this.#sources.slice();
 	}
 
 	remove(id: number): void {
@@ -214,6 +242,7 @@ export class Pool {
 		this.#firstFree = Math.min(this.#firstFree, entry.slots[0]);
 		this.#free += entry.slots.length;
 		this.#tables.push(entry.table);
+		this.#sources[entry.table] = null;
 		// the gpu list may name its clusters until the next draw
 		if (entry.page === null && entry.factors !== 0) this.#setFactors(entry, 0);
 	}
@@ -310,6 +339,7 @@ export class Pool {
 		else if (this.#effectsChanged) this.masks.write();
 		this.#effectsChanged = false;
 		const queue = this.#device.queue;
+		this.extension.flush();
 		this.#tableDirty.flush(queue, this.pages, this.#table);
 		this.#clusterDirty.flush(queue, this.clusters, this.#clusterWords);
 		if (changed && listed) queue.writeBuffer(this.list, 0, this.#list, 0, listed);
@@ -398,11 +428,12 @@ export class Pool {
 		hidden.set(this.#hidden);
 		this.#hidden = hidden;
 		for (let s = before; s < slots; s++) this.#masked.push(NONE);
+		for (let s = before; s < slots; s++) this.#sources.push(null);
 	}
 
 	destroy(): void {
 		for (const b of this.#buffers()) b.destroy();
-		this.masks.destroy();
+		this.extension.destroy();
 	}
 
 	#buffers(): GPUBuffer[] {
@@ -631,7 +662,7 @@ export class Pool {
 		this.#maskedChanged = false;
 		const words = this.#clusterWords;
 		const lists: number[] = [];
-		let at = this.masks.listBase;
+		let at = this.masks.lists(this.#masked.reduce((sum, masked) => sum + masked.length, 0));
 		for (let slot = 0; slot < this.#masked.length; slot++) {
 			const masked = this.#masked[slot];
 			const w = slot * CLUSTER_WORDS;

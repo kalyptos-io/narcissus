@@ -28,7 +28,7 @@ export function pack4x8unorm(rgba: readonly number[]): number {
 export const PAGE_WORDS = 40;
 export const CLUSTER_WORDS = 12;
 /** bytes of common.wgsl's FrameUniforms */
-export const FRAME_UNIFORM_BYTES = 336;
+export const FRAME_UNIFORM_BYTES = 352;
 /** u32 words of common.wgsl's Projected */
 export const PROJECTED_WORDS = 6;
 /** vec4f slots shared by shade hooks */
@@ -37,6 +37,9 @@ export const PLUGIN_VEC4S = 16;
 /** u32 word offsets in the work buffer; visible cluster ids start at WORK.list */
 export const WORK = {
 	visible: 0,
+	sampled: 1,
+	over: 2,
+	rasterOver: 3,
 	projected: 4,
 	drawArgs: 8,
 	list: 16

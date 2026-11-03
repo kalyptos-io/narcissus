@@ -52,6 +52,10 @@ export interface Stats {
 	passes: Record<string, number>;
 	/** splats drawn after culling, last measured frame */
 	drawn: number;
+	/** of drawn, those a shade asked to sample that drew without, the frame's records full; the next frame has room */
+	unsampled: number;
+	/** samples over the coverage estimate (docs/plugins.md), last measured frame */
+	coverageOver: number;
 	/** splats of the cut inside the frustum */
 	planned: number;
 	/** of planned, the splats not resident yet */

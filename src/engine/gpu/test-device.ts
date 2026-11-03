@@ -15,8 +15,12 @@ export function testDevice(): Promise<GPUDevice> {
 	shared ??= (async () => {
 		const adapter = await gpu.requestAdapter();
 		if (!adapter) throw new Error('No GPU adapter for the kernel tests.');
+		// float32-blendable lets a test raster into rgba32float
+		const features = (['timestamp-query', 'float32-blendable'] as const).filter((f) =>
+			adapter.features.has(f)
+		);
 		return adapter.requestDevice({
-			requiredFeatures: adapter.features.has('timestamp-query') ? ['timestamp-query'] : [],
+			requiredFeatures: features,
 			requiredLimits: {
 				maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
 				maxBufferSize: adapter.limits.maxBufferSize
