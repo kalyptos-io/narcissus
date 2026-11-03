@@ -1,5 +1,5 @@
 // sorted splats as screen quads, premultiplied over what lies behind them; the Sampled entry points,
-// used while a sample hook is installed, draw a tagged splat through its hook
+// used while a sample hook or a clip is installed, draw a tagged splat through its hook and its clip
 
 // word offsets of the sorted keys and values in the sort buffer
 struct Sorted {

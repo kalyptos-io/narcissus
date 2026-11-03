@@ -31,11 +31,14 @@ struct FrameUniforms {
 	lowPass: f32,
 	// drawn cluster ids in the pool's list
 	clusters: u32,
-	// extension words: the table directory and the ids it holds, the sample records and how many fit
+	// extension words: the table directory and the ids it holds, the sample records and how many fit,
+	// the clip planes and how many
 	tables: u32,
 	tableCount: u32,
 	records: u32,
 	recordCount: u32,
+	clips: u32,
+	clipCount: u32,
 }
 
 // one resident page; dc and sh ranges are after the colour correction

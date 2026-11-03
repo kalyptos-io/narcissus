@@ -24,8 +24,8 @@ export class Raster {
 	#layout: GPUBindGroupLayout;
 	#pipelineLayout: GPUPipelineLayout;
 	#hooks: readonly Hooked[] = [];
-	#colour: GPURenderPipeline | undefined;
-	#depth: GPURenderPipeline | undefined;
+	/** by their vertex entry point less vs */
+	#pipelines = new Map<string, GPURenderPipeline>();
 	#resources: GPUBuffer[];
 	#group: GPUBindGroup | undefined;
 	#bound: GPUBuffer | undefined;
@@ -82,7 +82,7 @@ export class Raster {
 	/** the next frame draws sampled splats through these hooks, as project numbers them */
 	hooks(hooks: readonly Hooked[]): void {
 		this.#hooks = hooks;
-		this.#colour = this.#depth = undefined;
+		this.#pipelines.clear();
 	}
 
 	/** clears colour to the sky; depth, when given, gets the nearest splat's log-depth span from near to far, 1 where none drew */
@@ -104,9 +104,11 @@ export class Raster {
 				: undefined,
 			timestampWrites: timestamps
 		});
-		const pipeline = depth
-			? (this.#depth ??= this.#pipeline('Depth'))
-			: (this.#colour ??= this.#pipeline('Colour'));
+		// a sample hook, or a clip, may tag splats
+		const tags = this.#pool.clips.count > 0 || this.#hooks.some(({ shade }) => shade.sample);
+		const name = `${tags ? 'Sampled' : ''}${depth ? 'Depth' : 'Colour'}`;
+		let pipeline = this.#pipelines.get(name);
+		if (!pipeline) this.#pipelines.set(name, (pipeline = this.#pipeline(name)));
 		pass.setPipeline(pipeline);
 		pass.setBindGroup(0, this.#bind());
 		pass.drawIndirect(this.#work, WORK.drawArgs * 4);
@@ -130,26 +132,25 @@ export class Raster {
 		return this.#group!;
 	}
 
-	#pipeline(variant: 'Colour' | 'Depth'): GPURenderPipeline {
+	/** name is its vertex entry point less vs */
+	#pipeline(name: string): GPURenderPipeline {
 		const device = this.#device;
 		const code = shaded([...HOOKED, source], this.#hooks, 'sample');
 		const module = device.createShaderModule({ label: 'raster', code });
-		const sampled = this.#hooks.some(({ shade }) => shade.sample) ? 'Sampled' : '';
 		return device.createRenderPipeline({
-			label: `raster ${variant}`,
+			label: `raster ${name}`,
 			layout: this.#pipelineLayout,
-			vertex: { module, entryPoint: `vs${sampled}${variant}` },
+			vertex: { module, entryPoint: `vs${name}` },
 			fragment: {
 				module,
-				entryPoint: `fs${sampled}`,
+				entryPoint: name.startsWith('Sampled') ? 'fsSampled' : 'fs',
 				targets: [{ format: this.#format, blend: { color: OVER, alpha: OVER } }]
 			},
 			primitive: { topology: 'triangle-strip' },
 			// drawn back to front, the last write is the nearest
-			depthStencil:
-				variant === 'Depth'
-					? { format: DEPTH_FORMAT, depthWriteEnabled: true, depthCompare: 'always' }
-					: undefined
+			depthStencil: name.endsWith('Depth')
+				? { format: DEPTH_FORMAT, depthWriteEnabled: true, depthCompare: 'always' }
+				: undefined
 		});
 	}
 }

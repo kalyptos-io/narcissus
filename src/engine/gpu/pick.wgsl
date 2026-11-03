@@ -112,18 +112,22 @@ fn give(cluster: Cluster, t: u32) {
 	if (!decode(cluster, t, &s, &g)) {
 		return;
 	}
-	shade(&s);
 	let page = pages[cluster.page];
+	var clip: Clip;
+	if (!clip_splat(uniforms.clips, uniforms.clipCount, s, g, page.turn, &clip)) {
+		return;
+	}
+	shade(&s);
 	var d: Drawn;
 	if (!drawn(s, g, page.turn, &d)) {
 		return;
 	}
 	// a sampled splat's hook sees its record as the raster reads it
-	let sampled = sample_hook != 0u;
+	let sampled = sample_hook != 0u || clip.count > 0u;
 	var record: array<u32, RECORD_WORDS>;
 	if (sampled) {
 		let viewPos = (uniforms.view * vec4f(s.position, 1.0)).xyz;
-		record = sample_record(s, coverage_of(g, page.turn, s.scale, viewPos));
+		record = sample_record(s, coverage_of(g, page.turn, s.scale, viewPos), clip);
 	}
 	let normal = face(s, g, page.turn);
 	let layer = page.layer & ~PICKLESS;
@@ -134,7 +138,7 @@ fn give(cluster: Cluster, t: u32) {
 		if (sampled && a > 0.0) {
 			let out = sample_dispatch(record[7] & 0xffffu, sample_of(record, pixel - d.centre, a));
 			a = select(0.0, out.colour.a, out.colour.a >= 1.0 / 255.0);
-			token = out.token;
+			token = select(token, out.token, sample_hook != 0u);
 		}
 		if (a == 0.0) {
 			continue;

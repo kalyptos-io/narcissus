@@ -1,6 +1,7 @@
 import type { AttributeUse, Shade } from '../plugin.ts';
 import type { AttributeRegistry, Declared, StreamType } from '../stream/attributes.ts';
 import attributes from './attributes.wgsl?raw';
+import clip from './clip.wgsl?raw';
 import { bufferGroup, bufferLayout, type FrameBuffers } from './buffers.ts';
 import common from './common.wgsl?raw';
 import coverage from './coverage.wgsl?raw';
@@ -111,7 +112,7 @@ export class Project {
 	}
 
 	#build(): GPUComputePipeline {
-		const code = shaded([...HOOKED, ATTRIBUTES, masks, splat, source], this.#hooks, 'shade');
+		const code = shaded([...HOOKED, ATTRIBUTES, masks, clip, splat, source], this.#hooks, 'shade');
 		const module = this.#device.createShaderModule({ label: 'project', code });
 		return this.#device.createComputePipeline({
 			label: 'project',

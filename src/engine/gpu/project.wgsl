@@ -19,33 +19,47 @@ var<workgroup> asked: atomic<u32>;
 // the cluster's first projected splat and first sample record
 var<workgroup> base: vec2u;
 
+// what a shown splat wants of the frame's sample records
+const RECORD_NONE: u32 = 0u;
+const RECORD_CENTRED: u32 = 1u;
+const RECORD_CUT: u32 = 2u;
+
 fn coverage_over() {
 	atomicAdd(&work[WORK_OVER], 1u);
 }
 
-// false when splat t of the cluster cannot show; else its Projected and sort key, and its sample
-// record when its shade asked for one
+// false when splat t of the cluster cannot show, tested against clips of the frame's planes; else
+// its Projected and sort key, and its sample record when its shade asked for one or it crosses a
+// plane, *wants then RECORD_CENTRED, or RECORD_CUT where a plane it crosses cuts its centre
 fn shown(
 	cluster: Cluster,
 	t: u32,
+	clips: u32,
 	dest: ptr<function, Projected>,
 	key: ptr<function, u32>,
-	record: ptr<function, array<u32, RECORD_WORDS>>
+	record: ptr<function, array<u32, RECORD_WORDS>>,
+	wants: ptr<function, u32>
 ) -> bool {
 	var s: Splat;
 	var g: vec4u;
 	if (!decode(cluster, t, &s, &g)) {
 		return false;
 	}
-	shade(&s);
 	let turned = pages[cluster.page].turn;
+	var clip: Clip;
+	if (!clip_splat(uniforms.clips, clips, s, g, turned, &clip)) {
+		return false;
+	}
+	shade(&s);
 	var d: Drawn;
 	if (!drawn(s, g, turned, &d)) {
 		return false;
 	}
-	if (sample_hook != 0u) {
+	if (sample_hook != 0u || clip.count > 0u) {
 		let viewPos = (uniforms.view * vec4f(s.position, 1.0)).xyz;
-		*record = sample_record(s, coverage_of(g, turned, s.scale, viewPos));
+		*record = sample_record(s, coverage_of(g, turned, s.scale, viewPos), clip);
+		let cut = (clip.count > 0u && clip.planes[0].w < 0.0) || (clip.count > 1u && clip.planes[1].w < 0.0);
+		*wants = select(RECORD_CENTRED, RECORD_CUT, cut);
 	}
 	*dest = Projected(
 		d.centre,
@@ -65,14 +79,21 @@ fn project(
 ) {
 	for (var index = wid.y * groups.x + wid.x; index < visible; index += groups.x * groups.y) {
 		let cluster = clusters[atomicLoad(&work[WORK_LIST + index])];
+		let page = pages[cluster.page];
+		let lo = page.origin + cluster.boxMin;
+		let hi = page.origin + cluster.boxMax;
+		// a cluster every plane keeps whole tests none of its splats
+		let across = clip_box(uniforms.clips, uniforms.clipCount, lo, hi, clip_reach(page)) != CLIP_IN;
+		let clips = select(0u, uniforms.clipCount, across);
 		var splat: Projected;
 		var key = 0u;
 		var keep = false;
 		var record: array<u32, RECORD_WORDS>;
+		var wants = RECORD_NONE;
 		if (t < cluster.count) {
-			keep = shown(cluster, t, &splat, &key, &record);
+			keep = shown(cluster, t, clips, &splat, &key, &record, &wants);
 		}
-		let sampled = keep && sample_hook != 0u;
+		let sampled = keep && wants != RECORD_NONE;
 
 		// one global atomic per cluster for each count
 		var rank = 0u;
@@ -96,7 +117,7 @@ fn project(
 		let r = first.y + asking;
 		let capacity = arrayLength(&projected);
 		if (keep && i < capacity) {
-			// past the records the frame holds, the splat draws unsampled
+			// past the frame's records the splat draws unsampled, or not at all where a plane cuts its centre
 			if (sampled && r < uniforms.recordCount) {
 				let at = uniforms.records + r * RECORD_WORDS;
 				for (var k = 0u; k < RECORD_WORDS; k++) {
@@ -104,6 +125,8 @@ fn project(
 				}
 				let opacity = unpack2x16float(splat.colour.y).y;
 				splat.colour = vec2u(r, pack2x16float(vec2f(0.0, -opacity)));
+			} else if (wants == RECORD_CUT) {
+				splat.colour.y = pack2x16float(vec2f(unpack2x16float(splat.colour.y).x, 0.0));
 			}
 			projected[i] = splat;
 			sort[i] = key;

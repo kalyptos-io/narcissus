@@ -8,6 +8,7 @@ import { AttributeRegistry } from '../stream/attributes.ts';
 import type { Extension } from './extension.ts';
 import { frameBuffers } from './buffers.ts';
 import { FRAME_UNIFORM_BYTES, LOW_PASS, PLUGIN_VEC4S, PROJECTED_WORDS, WORK } from './layout.ts';
+import clip from './clip.wgsl?raw';
 import masks from './masks.wgsl?raw';
 import { Pick } from './pick.ts';
 import { Pool } from './pool.ts';
@@ -23,7 +24,7 @@ const SIZE = 64;
 const NEAR = 0.5;
 const FAR = 300;
 const EYE: [number, number, number] = [8, 0, 1.5];
-const RECORD_WORDS = 16;
+const RECORD_WORDS = 20;
 const SOURCE = { pack: 'u/0/0/0.0123456789abcdef.pack', blob: 120 };
 
 /** discs facing south, the camera's way, grey (0.5), 1 m across and solid unless given */
@@ -365,7 +366,7 @@ fn reader(s: ptr<function, Splat>, u: array<vec4f, 1>) {
 		);
 		const both: Hooked[] = [hooked, { shade: clipped, slot: 1, streams: [] }];
 		const modules = [
-			shaded([...HOOKED, ATTRIBUTES, masks, splat, projectSource], both, 'shade'),
+			shaded([...HOOKED, ATTRIBUTES, masks, clip, splat, projectSource], both, 'shade'),
 			// no attribute reads: the raster runs only sample hooks
 			shaded([...HOOKED, rasterSource], both, 'sample')
 		];

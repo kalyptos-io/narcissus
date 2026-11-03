@@ -1,4 +1,5 @@
 import { bufferGroup, bufferLayout } from './buffers.ts';
+import clip from './clip.wgsl?raw';
 import common from './common.wgsl?raw';
 import masks from './masks.wgsl?raw';
 import source from './heights.wgsl?raw';
@@ -21,7 +22,7 @@ function unordered(keys: Uint32Array): Float32Array {
 	return new Float32Array(bits.buffer);
 }
 
-/** the top of the pool's listed solid splats over a square window of 1 m cells */
+/** the top of the pool's listed solid splats whose centres the clips keep, over a square window of 1 m cells */
 export class Heights {
 	#device: GPUDevice;
 	#pool: Pool;
@@ -40,7 +41,7 @@ export class Heights {
 			'storage',
 			'read-only-storage'
 		]);
-		const code = `${common}\n${masks}\n${source}`;
+		const code = `${common}\n${masks}\n${clip}\n${source}`;
 		const module = device.createShaderModule({ label: 'heights', code });
 		this.#pipeline = device.createComputePipeline({
 			label: 'heights',
@@ -83,6 +84,7 @@ export class Heights {
 		const values = new ArrayBuffer(AREA_BYTES);
 		new Float32Array(values).set([x, y, 0, 0, OPACITY, SCALE]);
 		new Uint32Array(values).set([cells, listed], 2);
+		new Uint32Array(values).set([pool.clips.at, pool.clips.count], 6);
 		device.queue.writeBuffer(area, 0, values);
 		const { pages, clusters, list, geometry, extension } = pool;
 		const resources = [area, pages, clusters, list, geometry, tops, extension.buffer];

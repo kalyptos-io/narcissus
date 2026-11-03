@@ -23,7 +23,7 @@ export interface GpuStats {
 	passes: Record<string, number>;
 	/** splats projected, last frame read back */
 	drawn: number;
-	/** of them, those whose shade asked for a sample and that drew without, the frame's records full */
+	/** of them, those whose shade or a clip asked for a sample and that drew without, the frame's records full */
 	unsampled: number;
 	/** samples over the coverage estimate, as drawn() */
 	coverageOver: number;
@@ -34,7 +34,7 @@ export interface GpuStats {
 const RECORDS = 1024;
 const HEADROOM = 1.5;
 /** u32 words of sample.wgsl's record */
-const RECORD_WORDS = 16;
+const RECORD_WORDS = 20;
 
 const PASSES = ['cull', 'project', 'sort', 'raster', 'heights', 'post'];
 // float offsets of FrameUniforms fields in common.wgsl
@@ -54,7 +54,9 @@ const U = {
 	tables: 84,
 	tableCount: 85,
 	records: 86,
-	recordCount: 87
+	recordCount: 87,
+	clips: 88,
+	clipCount: 89
 };
 
 type TargetName = 'colour' | 'depth' | 'ping' | 'pong';
@@ -338,10 +340,11 @@ export class Renderer {
 		u[U.far] = frame.far;
 		u[U.lowPass] = LOW_PASS;
 		this.#uniformWords[U.clusters] = this.#pool.listed;
-		const { extension, tables } = this.#pool;
-		// a hook asks for records only from the rows of drawn clusters
+		const { extension, tables, clips } = this.#pool;
+		// a hook or a clip asks for records only from the rows of drawn clusters
 		const most = Math.min(this.#pool.listed * CLUSTER, this.#buffers.capacity);
-		const asks = this.#shades.some(({ shade, streams }) => shade.sample && streams);
+		const asks =
+			clips.count > 0 || this.#shades.some(({ shade, streams }) => shade.sample && streams);
 		const wanted = Math.max(RECORDS, this.#asked * HEADROOM);
 		this.#records = asks ? Math.min(most, 2 ** Math.ceil(Math.log2(wanted))) : 0;
 		this.#uniformWords[U.records] = extension.frame(this.#records * RECORD_WORDS);
@@ -349,6 +352,8 @@ export class Renderer {
 		extension.flush();
 		this.#uniformWords[U.tables] = tables.directory;
 		this.#uniformWords[U.tableCount] = tables.count;
+		this.#uniformWords[U.clips] = clips.at;
+		this.#uniformWords[U.clipCount] = clips.count;
 		this.#device.queue.writeBuffer(this.#buffers.uniforms, 0, u);
 
 		for (const { shade, slot } of this.#shades) {

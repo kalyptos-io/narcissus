@@ -5,6 +5,8 @@
 @group(0) @binding(2) var<storage, read> clusters: array<Cluster>;
 @group(0) @binding(3) var<storage, read> list: array<u32>;
 @group(0) @binding(4) var<storage, read_write> work: array<atomic<u32>>;
+// where clip.wgsl reads the planes
+@group(0) @binding(5) var<storage, read> extension: array<u32>;
 
 // false only when the box lies wholly outside one plane
 fn inside(lo: vec3f, hi: vec3f) -> bool {
@@ -26,7 +28,9 @@ fn cull(@builtin(global_invocation_id) id: vec3u) {
 	let slot = list[id.x];
 	let cluster = clusters[slot];
 	let page = pages[cluster.page];
-	if (!inside(page.origin + cluster.boxMin, page.origin + cluster.boxMax)) {
+	let lo = page.origin + cluster.boxMin;
+	let hi = page.origin + cluster.boxMax;
+	if (!inside(lo, hi) || clip_box(uniforms.clips, uniforms.clipCount, lo, hi, clip_reach(page)) == CLIP_OUT) {
 		return;
 	}
 	atomicStore(&work[WORK_LIST + atomicAdd(&work[WORK_VISIBLE], 1u)], slot);

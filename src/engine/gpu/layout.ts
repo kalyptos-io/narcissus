@@ -28,7 +28,7 @@ export function pack4x8unorm(rgba: readonly number[]): number {
 export const PAGE_WORDS = 40;
 export const CLUSTER_WORDS = 12;
 /** bytes of common.wgsl's FrameUniforms */
-export const FRAME_UNIFORM_BYTES = 352;
+export const FRAME_UNIFORM_BYTES = 368;
 /** u32 words of common.wgsl's Projected */
 export const PROJECTED_WORDS = 6;
 /** engine attribute stream ids at most; the extension's first 4 words a stream hold their defaults */

@@ -1,5 +1,6 @@
-// a pool splat decoded, its screen covariance and how the frame draws it, shared by project and
-// pick; each declares the uniforms, geometry, colours and pages bindings these read
+// a pool splat decoded, what the clips leave of it, its screen covariance and how the frame draws
+// it, shared by project and pick; each declares the uniforms, geometry, colours and pages bindings
+// these read, and includes clip.wgsl
 
 // ndc reach past the frustum, so splats centred just outside still cover the edge
 const GUARD: f32 = 1.3;
@@ -45,6 +46,37 @@ fn decode(cluster: Cluster, t: u32, s: ptr<function, Splat>, g: ptr<function, ve
 	d.colour = d.colour * (1.0 - effect.tint.a) + effect.tint.rgb;
 	d.depth = -(uniforms.view * vec4f(d.position, 1.0)).z;
 	*s = d;
+	return true;
+}
+
+// false where one of count planes from extension word at keeps none of splat s, its record g, of a
+// page turned by; else clip holds the planes it crosses in its source coordinates. a splat crossing
+// more than a Clip holds is cut by its centre on the rest
+fn clip_splat(at: u32, count: u32, s: Splat, g: vec4u, by: vec2f, clip: ptr<function, Clip>) -> bool {
+	(*clip).count = 0u;
+	if (count == 0u) {
+		return true;
+	}
+	let r = rotate(rotation(g));
+	let m = mat3x3f(turn(r[0], by) * s.scale.x, turn(r[1], by) * s.scale.y, turn(r[2], by) * s.scale.z);
+	for (var k = 0u; k < count; k++) {
+		let plane = clip_plane(at, k);
+		// the plane's normal in sigmas along each source axis
+		let n = plane.xyz * m;
+		let sigma = length(n);
+		let d = dot(plane.xyz, s.position) + plane.w;
+		if (d < -CLIP_REACH * sigma) {
+			return false;
+		}
+		if (d < CLIP_REACH * sigma) {
+			if ((*clip).count < 2u) {
+				(*clip).planes[(*clip).count] = vec4f(n, d) / sigma;
+				(*clip).count++;
+			} else if (d < 0.0) {
+				return false;
+			}
+		}
+	}
 	return true;
 }
 

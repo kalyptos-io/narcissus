@@ -2,8 +2,9 @@
 // plugins, pages and extension bindings these read
 
 // u32 words of a sample record: coverage b as f16 pairs by column, r g and b opacity as f16 pairs,
-// page, row, the hook below coverage low as f16, then the shade's data
-const RECORD_WORDS: u32 = 16u;
+// page, row, the hook below coverage low as f16, the shade's data, then the clip's two planes as f16
+// pairs, x y then z w, a normal of 0 for none
+const RECORD_WORDS: u32 = 20u;
 
 struct Sample {
 	// the pixel's centre less the splat's centre, in pixels, y up
@@ -11,11 +12,14 @@ struct Sample {
 	// the splat's colour (not premultiplied) and opacity after shade
 	colour: vec3f,
 	opacity: f32,
-	// the splat's gaussian falloff at offset, times opacity: what the raster would draw as alpha
+	// the splat's gaussian falloff at offset, times opacity, times the mass its clip keeps there:
+	// what the raster would draw as alpha
 	alpha: f32,
 	// what the shade passed to sample_request
 	data: array<u32, 8>,
 	coverage: Coverage,
+	// the clip planes the splat crosses, for clip_polygon()
+	clip: Clip,
 	page: u32,
 	row: u32,
 }
@@ -48,8 +52,9 @@ fn sample_request(s: ptr<function, Splat>, data: array<u32, 8>) {
 	}
 }
 
-// the record of a splat whose shade asked, quantised as the raster reads it
-fn sample_record(s: Splat, c: Coverage) -> array<u32, RECORD_WORDS> {
+// the record of a splat whose shade asked or that crosses a clip plane, quantised as the raster
+// reads it
+fn sample_record(s: Splat, c: Coverage, clip: Clip) -> array<u32, RECORD_WORDS> {
 	var r: array<u32, RECORD_WORDS>;
 	r[0] = pack2x16float(c.b[0]);
 	r[1] = pack2x16float(c.b[1]);
@@ -61,6 +66,10 @@ fn sample_record(s: Splat, c: Coverage) -> array<u32, RECORD_WORDS> {
 	r[7] = (pack2x16float(vec2f(0.0, c.low)) & 0xffff0000u) | sample_hook;
 	for (var k = 0u; k < 8u; k++) {
 		r[8u + k] = sample_data[k];
+	}
+	for (var k = 0u; k < clip.count; k++) {
+		r[16u + 2u * k] = pack2x16float(clip.planes[k].xy);
+		r[17u + 2u * k] = pack2x16float(clip.planes[k].zw);
 	}
 	return r;
 }
@@ -80,5 +89,15 @@ fn sample_of(r: array<u32, RECORD_WORDS>, offset: vec2f, alpha: f32) -> Sample {
 	c.coverage = Coverage(b, unpack2x16float(r[7]).y);
 	c.page = r[5];
 	c.row = r[6];
+	for (var k = 0u; k < 2u; k++) {
+		let plane = vec4f(unpack2x16float(r[16u + 2u * k]), unpack2x16float(r[17u + 2u * k]));
+		if (any(plane.xyz != vec3f(0.0))) {
+			c.clip.planes[c.clip.count] = plane;
+			c.clip.count++;
+		}
+	}
+	if (c.clip.count > 0u) {
+		c.alpha *= clip_mass(posterior(c.coverage, offset), c.clip);
+	}
 	return c;
 }

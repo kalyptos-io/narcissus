@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { bufferLayout } from './buffers.ts';
+import clip from './clip.wgsl?raw';
 import common from './common.wgsl?raw';
 import coverage from './coverage.wgsl?raw';
 import { FRAME_UNIFORM_BYTES, LOW_PASS } from './layout.ts';
@@ -80,7 +81,7 @@ async function run(
 		'storage'
 	]);
 	device.pushErrorScope('validation');
-	const head = kernel.splat ? [common, masks, splat, SPLAT_BINDINGS] : [common, rotations];
+	const head = kernel.splat ? [common, masks, clip, splat, SPLAT_BINDINGS] : [common, rotations];
 	const module = device.createShaderModule({
 		code: [...head, coverage, harness(kernel.stride, kernel.out, kernel.body)].join('\n')
 	});

@@ -5,6 +5,7 @@ import type { Frame } from '../plugin.ts';
 import { planes } from '../math/frustum.ts';
 import { multiply } from '../math/mat4.ts';
 import { bufferGroup, bufferLayout, type FrameBuffers } from './buffers.ts';
+import clip from './clip.wgsl?raw';
 import masks from './masks.wgsl?raw';
 import source from './pick.wgsl?raw';
 import type { PageSource, Pool } from './pool.ts';
@@ -208,7 +209,7 @@ export class Pick {
 	}
 
 	#build(): GPUComputePipeline {
-		const code = shaded([...HOOKED, ATTRIBUTES, masks, splat, source], this.#hooks, 'shade');
+		const code = shaded([...HOOKED, ATTRIBUTES, masks, clip, splat, source], this.#hooks, 'shade');
 		const module = this.#device.createShaderModule({ label: 'pick', code });
 		return this.#device.createComputePipeline({
 			label: 'pick',

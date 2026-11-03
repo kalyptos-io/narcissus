@@ -10,6 +10,9 @@ struct Area {
 	// least opacity and largest scale in metres of a splat that counts
 	opacity: f32,
 	scale: f32,
+	// extension word of the clip planes, and how many; a splat counts where they keep its centre
+	clips: u32,
+	clipCount: u32,
 }
 
 @group(0) @binding(0) var<uniform> area: Area;
@@ -18,7 +21,7 @@ struct Area {
 @group(0) @binding(3) var<storage, read> list: array<u32>;
 @group(0) @binding(4) var<storage, read> geometry: array<vec4u>;
 @group(0) @binding(5) var<storage, read_write> tops: array<atomic<u32>>;
-// where masks.wgsl reads its records
+// where masks.wgsl reads its records and clip.wgsl its planes
 @group(0) @binding(6) var<storage, read> extension: array<u32>;
 
 // order-preserving bits of z, never 0, which marks an empty cell
@@ -52,7 +55,7 @@ fn heights(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) t
 			continue;
 		}
 		let p = position(page, g);
-		if (opacity * masked(cluster, p).opacity < area.opacity) {
+		if (opacity * masked(cluster, p).opacity < area.opacity || !clip_keeps(area.clips, area.clipCount, p)) {
 			continue;
 		}
 		let cell = floor(p.xy - area.corner);

@@ -9,6 +9,14 @@ export type Ring = readonly (readonly [e: number, n: number])[];
 /** rgba, each 0 to 1 */
 export type Colour = readonly [r: number, g: number, b: number, a: number];
 
+/** a half-space of the world: what lies where a e + b n + c h + d >= 0 */
+export type Plane = readonly [a: number, b: number, c: number, d: number];
+
+/** a convex region of the world, within every plane */
+export interface Clip {
+	planes: readonly Plane[];
+}
+
 /** a page to draw and its quadrant opacities, 0-255, quadrant k at bits 8k */
 export interface Drawn {
 	id: number;

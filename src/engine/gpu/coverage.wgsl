@@ -20,6 +20,13 @@ struct Posterior2 {
 	cov: mat2x2f,
 }
 
+// the clip planes a splat crosses, in its source coordinates: kept where dot(xyz, z) + w >= 0, xyz
+// unit, w in sigmas; those past count are unused
+struct Clip {
+	planes: array<vec4f, 2>,
+	count: u32,
+}
+
 // whitened half-side polygon() clips to: the tail it drops is at most 4 Φ(-3.73) = 3.8e-4
 const COVERAGE_SIDE: f32 = 3.73;
 // halvings polygon() spends past its vertex intervals
@@ -76,6 +83,81 @@ fn halfspace(p: Posterior, n: vec3f, d: f32) -> f32 {
 
 fn halfplane(p: Posterior2, n: vec2f, d: f32) -> f32 {
 	return coverage_side(dot(n, p.mean) + d, dot(n, p.cov * n));
+}
+
+// mass every plane of clip keeps: one plane's signed distance is gaussian, two planes' a quadrant
+// of a 2d gaussian
+fn clip_mass(p: Posterior, clip: Clip) -> f32 {
+	if (clip.count == 0u) {
+		return 1.0;
+	}
+	let n0 = clip.planes[0].xyz;
+	let s0 = dot(n0, p.mean) + clip.planes[0].w;
+	let v0 = dot(n0, p.cov * n0);
+	if (clip.count == 1u) {
+		return coverage_side(s0, v0);
+	}
+	let n1 = clip.planes[1].xyz;
+	let s1 = dot(n1, p.mean) + clip.planes[1].w;
+	let v1 = dot(n1, p.cov * n1);
+	let c = dot(n0, p.cov * n1);
+	// its open sides 8 sigmas out, past the square polygon() clips to
+	let far = max(vec2f(s0, s1), vec2f(0.0)) + 8.0 * sqrt(vec2f(v0, v1));
+	var v: array<vec2f, 12>;
+	v[1] = vec2f(far.x, 0.0);
+	v[2] = far;
+	v[3] = vec2f(0.0, far.y);
+	return polygon(Posterior2(vec2f(s0, s1), mat2x2f(v0, c, c, v1)), v, 4u);
+}
+
+// v[0..count) cut to where each plane of clip keeps as the marginal over axes a and b sees it: where
+// the plane's signed distance, given those axes, has a mean kept; exact when the plane's normal lies
+// in those axes. at most count + clip.count vertices
+fn clip_polygon(
+	p: Posterior,
+	a: u32,
+	b: u32,
+	clip: Clip,
+	v: ptr<function, array<vec2f, 12>>,
+	count: u32
+) -> u32 {
+	let saa = p.cov[a][a];
+	let sab = p.cov[a][b];
+	let sbb = p.cov[b][b];
+	let det = saa * sbb - sab * sab;
+	let mean = vec2f(p.mean[a], p.mean[b]);
+	var n = count;
+	for (var k = 0u; k < clip.count; k++) {
+		let plane = clip.planes[k];
+		let q = p.cov * plane.xyz;
+		// the regression of the signed distance on the two axes, times det
+		let g = vec2f(sbb * q[a] - sab * q[b], saa * q[b] - sab * q[a]);
+		let h = det * (dot(plane.xyz, p.mean) + plane.w) - dot(g, mean);
+		n = coverage_cut(v, n, g, h);
+	}
+	return n;
+}
+
+// sutherland-hodgman: v[0..n) kept where dot(g, q) + h >= 0
+fn coverage_cut(v: ptr<function, array<vec2f, 12>>, n: u32, g: vec2f, h: f32) -> u32 {
+	var out: array<vec2f, 12>;
+	var m = 0u;
+	for (var i = 0u; i < n; i++) {
+		let p = (*v)[i];
+		let q = (*v)[select(i + 1u, 0u, i + 1u == n)];
+		let fp = dot(g, p) + h;
+		let fq = dot(g, q) + h;
+		if (fp >= 0.0) {
+			out[m] = p;
+			m++;
+		}
+		if ((fp >= 0.0) != (fq >= 0.0)) {
+			out[m] = mix(p, q, fp / (fp - fq));
+			m++;
+		}
+	}
+	*v = out;
+	return m;
 }
 
 // mass of N(s, v) at or above 0

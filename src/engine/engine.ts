@@ -28,7 +28,7 @@ import { Feed } from './stream/feed.ts';
 import { http } from '../adapters/http.ts';
 import { Loader } from './stream/loader.ts';
 import { Objects } from './stream/objects.ts';
-import type { Camera, Drawn, Point, Progress, Settings, Stats } from './types.ts';
+import type { Camera, Clip, Drawn, Point, Progress, Settings, Stats } from './types.ts';
 import { Tree } from './world/tree.ts';
 
 export interface EngineOptions {
@@ -80,6 +80,12 @@ export interface Engine {
 	 */
 	addLayer(options: LayerOptions): Promise<Layer>;
 	addMask(mask: MaskOptions): Mask;
+	/**
+	 * from the next frame draws, picks and measures only what lies within every plane of the clip, and
+	 * of every other, of the world and of layers; returns its remover. a plane that is not finite or
+	 * has no normal throws a RangeError
+	 */
+	addClip(clip: Clip): () => void;
 	/** a polyline in world coordinates over the splats; one point draws a dot */
 	addLine(points: readonly Point[], style?: LineStyle): Line;
 	addMarker(point: Point, style?: MarkerStyle): Marker;
@@ -482,6 +488,17 @@ class GpuEngine implements Engine {
 			this.requestFrame();
 		};
 		return createMask(this.#pool, options, this.#layers, remask);
+	}
+
+	addClip(clip: Clip): () => void {
+		if (this.#destroyed) throw new Error(DESTROYED);
+		const clips = this.#pool.clips;
+		const id = clips.add(clip.planes);
+		this.requestFrame();
+		return () => {
+			clips.delete(id);
+			this.requestFrame();
+		};
 	}
 
 	addLine(points: readonly Point[], style?: LineStyle): Line {

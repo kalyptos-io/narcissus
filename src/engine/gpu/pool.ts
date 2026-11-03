@@ -10,6 +10,7 @@ import {
 	type PageAttribute
 } from '../../format/index.ts';
 import { AttributeRegistry } from '../stream/attributes.ts';
+import { Clips } from './clips.ts';
 import { Extension } from './extension.ts';
 import { ATTRIBUTE_NONE, baseOf, CLUSTER_WORDS, PAGE_WORDS, slots } from './layout.ts';
 import { Masks, type Spec } from './masks.ts';
@@ -103,10 +104,11 @@ export class Pool {
 	listed = 0;
 	/** splats */
 	capacity: number;
-	/** u32 words of the masks, tables and attribute streams, then each frame's sample records */
+	/** u32 words of the masks, tables, clips and attribute streams, then each frame's sample records */
 	readonly extension: Extension;
 	readonly masks: Masks;
 	readonly tables: Tables;
+	readonly clips: Clips;
 	/** the attribute streams the hooks read */
 	readonly attributes: AttributeRegistry;
 
@@ -149,6 +151,7 @@ export class Pool {
 		this.attributes = new AttributeRegistry(this.extension);
 		this.masks = new Masks(this.extension);
 		this.tables = new Tables(this.extension);
+		this.clips = new Clips(this.extension);
 		this.#device = device;
 		const slots = this.slots;
 		this.#allocate();
@@ -375,6 +378,7 @@ export class Pool {
 		this.#tableDirty.clear();
 		this.masks.setOrigin(this.#origin);
 		if (this.masks.size) this.masks.write();
+		this.clips.setOrigin(this.#origin);
 	}
 
 	/** a new mask; it acts from the next draw */
