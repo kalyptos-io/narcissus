@@ -23,7 +23,8 @@ const rotations = common.includes('fn rotate(')
 const SPLAT_BINDINGS = `
 @group(0) @binding(4) var<storage, read> geometry: array<vec4u>;
 @group(0) @binding(5) var<storage, read> colours: array<u32>;
-@group(0) @binding(6) var<storage, read> pages: array<Page>;`;
+@group(0) @binding(6) var<storage, read> pages: array<Page>;
+@group(0) @binding(7) var<storage, read> extension: array<u32>;`;
 
 // u32 words in, f32 out; a body reads word k of its case as c(k) or w(k) and writes put(k, x)
 const harness = (stride: number, out: number, body: string) => `
