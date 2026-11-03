@@ -27,7 +27,7 @@ export class Project {
 	#device: GPUDevice;
 	#pipelineLayout: GPUPipelineLayout;
 	#pipeline: GPUComputePipeline | undefined;
-	#hooks: readonly Hooked[] = [];
+	#code = shaded(source, [], 'shade');
 	#group: () => GPUBindGroup;
 	#pool: Pool;
 	#work: GPUBuffer;
@@ -69,7 +69,9 @@ export class Project {
 
 	/** the next frame's pipeline runs these hooks in order, each reading from its first slot */
 	hooks(hooks: readonly Hooked[]): void {
-		this.#hooks = hooks;
+		const code = shaded(source, hooks, 'shade');
+		if (code === this.#code) return;
+		this.#code = code;
 		this.#pipeline = undefined;
 	}
 
@@ -94,8 +96,7 @@ export class Project {
 	}
 
 	#build(): GPUComputePipeline {
-		const code = shaded(source, this.#hooks, 'shade');
-		const module = this.#device.createShaderModule({ label: 'project', code });
+		const module = this.#device.createShaderModule({ label: 'project', code: this.#code });
 		return this.#device.createComputePipeline({
 			label: 'project',
 			layout: this.#pipelineLayout,
@@ -107,10 +108,12 @@ export class Project {
 /**
  * wgsl of the hook library, the attribute accessors and the hooks before a pass's source, a shade(s)
  * that runs them in order, each from its first slot, and a sample_dispatch(hook, c) that runs the
- * sample hook shade numbered so; a pass that runs only the sample hooks, whose shades never run,
- * reads no attributes
+ * sample hook shade numbered so; a pass that runs only the sample hooks gets theirs alone, numbered
+ * as shade() numbers them, with no shade() and no attribute reads
  */
 export function shaded(source: string, hooks: readonly Hooked[], runs: 'shade' | 'sample'): string {
+	const shades = runs === 'shade';
+	const included = shades ? hooks : hooks.filter(({ shade }) => shade.sample);
 	const args = ({ shade, slot }: Hooked) => {
 		const slots = Array.from({ length: shade.uniforms }, (_, k) => `plugins[${slot + k}]`);
 		return `array<vec4f, ${shade.uniforms}>(${slots.join(', ')})`;
@@ -128,17 +131,18 @@ export function shaded(source: string, hooks: readonly Hooked[], runs: 'shade' |
 				]
 			: []
 	);
-	const library = [common, records, coverage, sample];
-	if (runs === 'shade') library.push(attributes, masks, clip, splat);
 	return [
-		...library,
+		common,
+		records,
+		coverage,
+		sample,
+		...(shades ? [attributes, masks, clip, splat] : []),
 		source,
-		...accessors(hooks, runs === 'shade'),
-		...hooks.map(({ shade }) => shade.wgsl),
-		'fn shade(s: ptr<function, Splat>) {',
-		'\tsample_hook = 0u;',
-		...calls,
-		'}',
+		...accessors(included, shades),
+		...included.map(({ shade }) => shade.wgsl),
+		...(shades
+			? ['fn shade(s: ptr<function, Splat>) {', '\tsample_hook = 0u;', ...calls, '}']
+			: []),
 		'fn sample_dispatch(hook: u32, c: Sample) -> Sampled {',
 		'\tswitch hook {',
 		...cases,

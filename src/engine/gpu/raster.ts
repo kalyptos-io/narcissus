@@ -21,7 +21,7 @@ export class Raster {
 	/** samples over the coverage estimate, copied into the work buffer after the pass */
 	#over: GPUBuffer;
 	#pipelineLayout: GPUPipelineLayout;
-	#hooks: readonly Hooked[] = [];
+	#code = shaded(source, [], 'sample');
 	#module: GPUShaderModule | undefined;
 	/** by their vertex entry point less vs */
 	#pipelines = new Map<string, GPURenderPipeline>();
@@ -82,7 +82,9 @@ export class Raster {
 
 	/** the next frame draws sampled splats through these hooks, as project numbers them */
 	hooks(hooks: readonly Hooked[]): void {
-		this.#hooks = hooks;
+		const code = shaded(source, hooks, 'sample');
+		if (code === this.#code) return;
+		this.#code = code;
 		this.#module = undefined;
 		this.#pipelines.clear();
 	}
@@ -130,7 +132,7 @@ export class Raster {
 		const device = this.#device;
 		const module = (this.#module ??= device.createShaderModule({
 			label: 'raster',
-			code: shaded(source, this.#hooks, 'sample')
+			code: this.#code
 		}));
 		return device.createRenderPipeline({
 			label: `raster ${name}`,

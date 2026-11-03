@@ -45,7 +45,7 @@ export class Pick {
 	#pool: Pool;
 	#pipelineLayout: GPUPipelineLayout;
 	#pipeline: GPUComputePipeline | undefined;
-	#hooks: readonly Hooked[] = [];
+	#code = shaded(source, [], 'shade');
 	#viewProj = new Float32Array(16);
 	#planes = new Float32Array(24);
 	#values = new Float32Array((PROBES_HEAD_BYTES + PROBES * PROBE_BYTES) / 4);
@@ -89,7 +89,9 @@ export class Pick {
 
 	/** the next pick runs these hooks, as project does */
 	hooks(hooks: readonly Hooked[]): void {
-		this.#hooks = hooks;
+		const code = shaded(source, hooks, 'shade');
+		if (code === this.#code) return;
+		this.#code = code;
 		this.#pipeline = undefined;
 	}
 
@@ -196,8 +198,7 @@ export class Pick {
 	}
 
 	#build(): GPUComputePipeline {
-		const code = shaded(source, this.#hooks, 'shade');
-		const module = this.#device.createShaderModule({ label: 'pick', code });
+		const module = this.#device.createShaderModule({ label: 'pick', code: this.#code });
 		return this.#device.createComputePipeline({
 			label: 'pick',
 			layout: this.#pipelineLayout,

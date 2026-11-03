@@ -152,15 +152,11 @@ export class Renderer {
 
 	/** each hook's streams resolved again, in the world the registry now declares */
 	restream(): void {
-		let changed = false;
 		for (const entry of this.#shades) {
 			this.#release(entry.streams);
-			const next = streams(entry.shade, this.#pool.attributes);
-			// a hook's streams are one a use, so equal joins are equal ids
-			changed ||= next?.join() !== entry.streams?.join();
-			entry.streams = next;
+			entry.streams = streams(entry.shade, this.#pool.attributes);
 		}
-		if (changed) this.#hooks();
+		this.#hooks();
 	}
 
 	post(pass: Post): () => void {

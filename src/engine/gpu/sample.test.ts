@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { CLUSTER, decodePage } from '../../format/index.ts';
 import { encodePage } from '../../format/encode.ts';
 import type { Shade } from '../plugin.ts';
@@ -52,6 +52,14 @@ fn ${name}_sample(c: Sample, u: array<vec4f, 1>) -> Sampled {
 }
 
 const IDENTITY = 'return Sampled(vec4f(c.colour * c.alpha, c.alpha), 7u);';
+
+/** a shade hook with no sample hook */
+const FOG: Shade = {
+	name: 'fog',
+	uniforms: 1,
+	wgsl: 'fn fog(s: ptr<function, Splat>, u: array<vec4f, 1>) {\n\t(*s).token = 9u;\n}',
+	update: () => {}
+};
 
 async function setup(discs: Parameters<typeof page>[0]) {
 	const { device, pool, buffers, project, sort, raster, pick, target, camera, destroy } =
@@ -265,6 +273,33 @@ fn sourced(s: ptr<function, Splat>, u: array<vec4f, 1>) {
 		const tagged = [0, 1].filter((i) => words[i * PROJECTED_WORDS + 5] & 0x80000000).length;
 		expect(work[WORK.projected]).toBe(2);
 		expect(tagged).toBe(1);
+		destroy();
+	});
+
+	it('reach the raster alone, numbered as shade() numbers them, so others leave its code as it was', () => {
+		const raster = (shades: Shade[]) =>
+			shaded(
+				rasterSource,
+				shades.map((shade, k) => ({ shade, slot: k, streams: [] })),
+				'sample'
+			);
+		const same = hook('same', IDENTITY);
+		expect(raster([FOG, same])).not.toContain(FOG.wgsl);
+		expect(raster([FOG, same])).toContain('case 2u');
+		expect(raster([same, FOG])).toBe(raster([same]));
+	});
+
+	it('keep the raster pipelines while a hook without a sample hook comes and goes', async () => {
+		const { device, render, destroy } = await setup([{ at: [8, 10, 1.5] }]);
+		const same = hook('same', IDENTITY);
+		await render([same]);
+		const made = vi.spyOn(device, 'createShaderModule');
+		await render([same, FOG]);
+		await render([same]);
+		const labels = made.mock.calls.map(([{ label }]) => label);
+		made.mockRestore();
+		expect(labels).not.toContain('raster');
+		expect(labels).toContain('project');
 		destroy();
 	});
 });
