@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { Attribute } from '../../format/index.ts';
 import type { Extension } from '../gpu/extension.ts';
 import { AttributeRegistry, widen } from './attributes.ts';
@@ -13,12 +13,12 @@ const DECLARED: Record<string, Attribute> = {
 function registry() {
 	const writes: { at: number; words: number[] }[] = [];
 	const extension = {
+		alloc: () => 0,
 		write: (at: number, words: Uint32Array) => writes.push({ at, words: Array.from(words) })
 	} as unknown as Extension;
-	const changed = vi.fn();
-	const attributes = new AttributeRegistry(extension, changed);
+	const attributes = new AttributeRegistry(extension);
 	attributes.open(DECLARED);
-	return { attributes, writes, changed };
+	return { attributes, writes };
 }
 
 describe('AttributeRegistry', () => {
@@ -40,27 +40,27 @@ describe('AttributeRegistry', () => {
 	});
 
 	it('wants a stream while a hook reads it, required once any hook required it', () => {
-		const { attributes, changed } = registry();
+		const { attributes } = registry();
 		const id = attributes.use('test.class', false);
 		attributes.use('test.class', true);
 		expect(attributes.wanted).toEqual([
 			{ id, name: 'test.class', required: true, attribute: DECLARED['test.class'] }
 		]);
-		expect([attributes.generation, changed.mock.calls.length]).toEqual([1, 1]);
+		expect(attributes.generation).toBe(1);
 		attributes.release(id);
 		attributes.release(id);
 		expect(attributes.wanted).toEqual([]);
 		attributes.use('test.class', false);
 		expect(attributes.wanted[0].required).toBe(false);
-		expect([attributes.generation, changed.mock.calls.length]).toEqual([2, 2]);
+		expect(attributes.generation).toBe(2);
 	});
 
 	it('gives -1 for a stream the open world does not declare', () => {
-		const { attributes, changed } = registry();
+		const { attributes } = registry();
 		expect(attributes.use('other.thing', true)).toBe(-1);
 		expect(attributes.declared('other.thing')).toBeUndefined();
 		expect(attributes.wanted).toEqual([]);
-		expect(changed).not.toHaveBeenCalled();
+		expect(attributes.generation).toBe(0);
 	});
 
 	it('resolves every id again when another world opens', () => {

@@ -59,7 +59,7 @@ You can set every option, and `enabled`. `engine.heights()` obeys masks; `engine
 
 ## Picking
 
-`engine.pick(x, y)` takes canvas CSS pixels. It resolves with `null` over nothing, else with a `Hit` on the surface that the last frame drew there, after masks: its world `point`, the surface `normal` toward the camera, the `layer` hit, `null` for the world, and the `object` hit, 0 for none.
+`engine.pick(x, y)` takes canvas CSS pixels. It resolves with `null` over nothing, else with a `Hit` on the surface that the last frame drew there, after masks: its world `point`, the surface `normal` toward the camera, the `layer` hit, `null` for the world, the `object` hit, 0 for none, and the `token` and `row` of [plugins.md](plugins.md).
 
 A pick renders no frame. It answers about one frame later, or a frame later still when the pixel holds many splats. You can pick at each pointer move. `engine.pickMany(points)` resolves with a `Hit` or `null` for each pixel, in order, at about the cost of one pick for up to 64 pixels.
 

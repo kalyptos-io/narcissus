@@ -5,6 +5,12 @@ import type { Attribute } from '../../format/index.ts';
 import type { Extension } from '../gpu/extension.ts';
 import { ATTRIBUTE_STREAMS } from '../gpu/layout.ts';
 
+/** a stream's type as world.json declares it */
+export type StreamType = Attribute['type'];
+
+/** a stream's type and components as world.json declares them; components 0 for records */
+export type Declared = Pick<Attribute, 'type' | 'components'>;
+
 /** a stream some hook reads, as a stream worker gets it */
 export interface Wanted {
 	id: number;
@@ -23,7 +29,6 @@ export function widen(type: Attribute['type'], value: number): number {
 
 export class AttributeRegistry {
 	#extension: Extension;
-	#onChange: () => void;
 	#declared: Readonly<Record<string, Attribute>> = {};
 	/** ids by name, kept while the registry lives so a stream used again keeps its id */
 	#ids = new Map<string, number>();
@@ -32,10 +37,12 @@ export class AttributeRegistry {
 	#uses = new Map<number, { count: number; required: boolean }>();
 	#generation = 0;
 
-	/** onChange runs when the wanted streams grow, so resident pages fetch what they lack */
-	constructor(extension: Extension, onChange: () => void) {
+	/** first on its extension: the defaults take its words from 0, where attributes.wgsl reads them */
+	constructor(extension: Extension) {
+		if (extension.alloc(4 * ATTRIBUTE_STREAMS) !== 0) {
+			throw new Error('The attribute defaults must start the extension.');
+		}
 		this.#extension = extension;
-		this.#onChange = onChange;
 	}
 
 	/**
@@ -48,7 +55,7 @@ export class AttributeRegistry {
 	}
 
 	/** the open world's scalar type and components of stream name; undefined when it does not declare it */
-	declared(name: string): Pick<Attribute, 'type' | 'components'> | undefined {
+	declared(name: string): Declared | undefined {
 		const a = this.#declared[name];
 		return a && { type: a.type, components: a.components };
 	}
@@ -73,7 +80,6 @@ export class AttributeRegistry {
 		} else {
 			this.#uses.set(id, { count: 1, required });
 			this.#generation++;
-			this.#onChange();
 		}
 		return id;
 	}
@@ -93,7 +99,10 @@ export class AttributeRegistry {
 		return wanted;
 	}
 
-	/** grows each time a stream comes to be read; a page loaded before it may lack its chunk */
+	/**
+	 * grows each time a stream comes to be read; a page loaded before it may lack its chunk, and the
+	 * feed fetches it again on the next frame
+	 */
 	get generation(): number {
 		return this.#generation;
 	}

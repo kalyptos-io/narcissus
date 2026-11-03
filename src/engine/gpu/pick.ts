@@ -1,15 +1,14 @@
 // the surface under pixels as the last frame showed it: where the splats it drew over each,
 // blended front to back, first reach half
 
-import type { Frame, Shade } from '../plugin.ts';
+import type { Frame } from '../plugin.ts';
 import { planes } from '../math/frustum.ts';
 import { multiply } from '../math/mat4.ts';
 import { bufferGroup, bufferLayout, type FrameBuffers } from './buffers.ts';
-import common from './common.wgsl?raw';
 import masks from './masks.wgsl?raw';
 import source from './pick.wgsl?raw';
-import type { Pool } from './pool.ts';
-import { shaded } from './project.ts';
+import type { PageSource, Pool } from './pool.ts';
+import { ATTRIBUTES, HOOKED, shaded, type Hooked } from './project.ts';
 import splat from './splat.wgsl?raw';
 
 /** workgroups of a pick, pick.wgsl's PICK_GROUPS */
@@ -37,6 +36,10 @@ export interface Found {
 	object: number;
 	/** the splat's thinnest axis, toward the camera */
 	normal: [number, number, number];
+	/** what the shade, or the sample hook there, gave the splat */
+	token: number;
+	/** the splat's row in its page, null for a layer's */
+	row: { pack: string; blob: number; row: number } | null;
 }
 
 export class Pick {
@@ -45,7 +48,7 @@ export class Pick {
 	#layout: GPUBindGroupLayout;
 	#pipelineLayout: GPUPipelineLayout;
 	#pipeline: GPUComputePipeline | undefined;
-	#shades: { shade: Shade; slot: number }[] = [];
+	#hooks: readonly Hooked[] = [];
 	#viewProj = new Float32Array(16);
 	#planes = new Float32Array(24);
 	#values = new Float32Array((PROBES_HEAD_BYTES + PROBES * PROBE_BYTES) / 4);
@@ -53,7 +56,8 @@ export class Pick {
 	#resources: GPUBuffer[];
 	#entries = 0;
 	#hits!: GPUBuffer;
-	#group!: GPUBindGroup;
+	#group: GPUBindGroup | undefined;
+	#bound: GPUBuffer | undefined;
 
 	constructor(device: GPUDevice, pool: Pool, buffers: FrameBuffers) {
 		this.#device = device;
@@ -67,11 +71,10 @@ export class Pick {
 			'read-only-storage',
 			'read-only-storage',
 			'read-only-storage',
-			'storage'
+			'storage',
+			'read-only-storage'
 		]);
-		this.#pipelineLayout = device.createPipelineLayout({
-			bindGroupLayouts: [this.#layout, pool.masks.layout]
-		});
+		this.#pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [this.#layout] });
 		// picks in flight share these: the queue runs each pick's writes after the last one's pass
 		this.#probes = device.createBuffer({
 			label: 'pick probes',
@@ -85,8 +88,8 @@ export class Pick {
 	}
 
 	/** the next pick runs these hooks, as project does */
-	hooks(shades: { shade: Shade; slot: number }[]): void {
-		this.#shades = shades;
+	hooks(hooks: readonly Hooked[]): void {
+		this.#hooks = hooks;
 		this.#pipeline = undefined;
 	}
 
@@ -136,10 +139,11 @@ export class Pick {
 		device.queue.writeBuffer(this.#probes, 0, values.buffer, 0, used);
 		device.queue.writeBuffer(this.#hits, 0, CLEAR);
 
+		// the pages as the gpu reads them now: the pool may evict some before the answer
+		const sources = pool.sources();
 		const encoder = device.createCommandEncoder({ label: 'pick' });
 		const pass = encoder.beginComputePass({ label: 'pick' });
-		pass.setBindGroup(0, this.#group);
-		pass.setBindGroup(1, pool.masks.group);
+		pass.setBindGroup(0, this.#bind());
 		pass.setPipeline((this.#pipeline ??= this.#build()));
 		pass.dispatchWorkgroups(GROUPS);
 		pass.end();
@@ -157,7 +161,7 @@ export class Pick {
 					}
 					const floats = new Float32Array(read, HEAD_BYTES);
 					const words = new Uint32Array(read, HEAD_BYTES);
-					return surfaces(floats, words, count, pixels.length);
+					return surfaces(floats, words, count, pixels.length, sources);
 				},
 				() => pixels.map(() => null)
 			)
@@ -173,7 +177,7 @@ export class Pick {
 			size: HEAD_BYTES + entries * ENTRY_BYTES,
 			usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
 		});
-		this.#group = bufferGroup(this.#device, 'pick', this.#layout, [...this.#resources, this.#hits]);
+		this.#bound = undefined;
 		// picks submitted on the old one still copy out of it: destroy waits on them
 		old?.destroy();
 	}
@@ -192,8 +196,19 @@ export class Pick {
 		return this.#planes.subarray(0, 16);
 	}
 
+	/** the group over the hits and the extension as they stand */
+	#bind(): GPUBindGroup {
+		const buffer = this.#pool.extension.buffer;
+		if (this.#bound !== buffer) {
+			const resources = [...this.#resources, this.#hits, buffer];
+			this.#group = bufferGroup(this.#device, 'pick', this.#layout, resources);
+			this.#bound = buffer;
+		}
+		return this.#group!;
+	}
+
 	#build(): GPUComputePipeline {
-		const code = shaded([common, masks, splat, source], this.#shades);
+		const code = shaded([...HOOKED, ATTRIBUTES, masks, splat, source], this.#hooks, 'shade');
 		const module = this.#device.createShaderModule({ label: 'pick', code });
 		return this.#device.createComputePipeline({
 			label: 'pick',
@@ -208,7 +223,8 @@ function surfaces(
 	floats: Float32Array,
 	words: Uint32Array,
 	count: number,
-	probes: number
+	probes: number,
+	sources: readonly (PageSource | null)[]
 ): (Found | null)[] {
 	const stride = ENTRY_BYTES / 4;
 	const under: number[][] = Array.from({ length: probes }, () => []);
@@ -219,13 +235,17 @@ function surfaces(
 		for (const k of entries) {
 			const at = k * stride;
 			through *= 1 - floats[at + 5];
-			if (through <= 1 - SURFACE)
+			if (through <= 1 - SURFACE) {
+				const source = sources[words[at + 10]];
 				return {
 					depth: floats[at + 4],
 					layer: words[at + 6],
 					object: words[at + 7],
-					normal: [floats[at], floats[at + 1], floats[at + 2]]
+					normal: [floats[at], floats[at + 1], floats[at + 2]],
+					token: words[at + 9],
+					row: source ? { ...source, row: words[at + 11] } : null
 				};
+			}
 		}
 		return null;
 	});

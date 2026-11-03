@@ -24,7 +24,6 @@ import { FADE_CAP, Fader } from './plan/draw.ts';
 import type { Fetch } from '../ports.ts';
 import type { Frame, Host, Plugin, Post, Shade } from './plugin.ts';
 import { percentile, pixelRatio, Quality } from './quality.ts';
-import { AttributeRegistry } from './stream/attributes.ts';
 import { Feed } from './stream/feed.ts';
 import { http } from '../adapters/http.ts';
 import { Loader } from './stream/loader.ts';
@@ -55,6 +54,10 @@ export interface Hit {
 	layer: Layer | null;
 	/** the splat's object as the host's .ids gives it, 0 for none */
 	object: number;
+	/** what the shade hooks, or the sample hook at the pixel, gave the splat; 0 by default */
+	token: number;
+	/** the splat: its unit's pack path as its .idx names it, its page's blob offset there and its row; null for a layer's */
+	row: { pack: string; blob: number; row: number } | null;
 }
 
 export interface StepReport {
@@ -292,8 +295,6 @@ class GpuEngine implements Engine {
 	#settings: Settings;
 	#quality: Quality;
 	#pool: Pool;
-	/** the attribute streams the hooks read */
-	#attributes: AttributeRegistry;
 	#renderer: Renderer;
 	/** splats one frame may project */
 	#frameCapacity: number;
@@ -387,10 +388,6 @@ class GpuEngine implements Engine {
 		this.#target = [Math.max(1, canvas.width), Math.max(1, canvas.height)];
 		const { pool, frame } = capacities(this.#budget, gpu.device.limits);
 		this.#pool = new Pool(gpu.device, pool);
-		this.#attributes = new AttributeRegistry(this.#pool.extension, () => {
-			this.#arrived = true;
-			this.requestFrame();
-		});
 		const keep = (id: number) => this.#feed?.protects(id) ?? false;
 		this.#layers = new Layers(
 			this.#pool,
@@ -452,7 +449,8 @@ class GpuEngine implements Engine {
 		this.#loader?.destroy();
 		this.#url = worldUrl;
 		this.#objects = objects;
-		this.#attributes.open(world.attributes);
+		// restream below resolves the hooks' streams in this world
+		this.#pool.attributes.open(world.attributes);
 		this.#tree = tree;
 		this.#loader = loader;
 		this.#plan = null;
@@ -460,6 +458,7 @@ class GpuEngine implements Engine {
 		this.#fader = new Fader();
 		// page ids restart with the tree, so the old world's pages must leave the pool
 		this.#pool.clear();
+		this.#renderer.restream();
 		this.#feed = this.#feedFor(tree, loader);
 		this.#dirty = true;
 		this.requestFrame();
@@ -604,6 +603,8 @@ class GpuEngine implements Engine {
 			gpuMs: gpu.gpuMs,
 			passes: gpu.passes,
 			drawn: gpu.drawn,
+			unsampled: gpu.unsampled,
+			coverageOver: gpu.coverageOver,
 			...this.#progressNow(),
 			pages: {
 				resident: Array.from(pool.ids()).length,
@@ -611,7 +612,7 @@ class GpuEngine implements Engine {
 				loading: feed?.loading ?? 0,
 				queued: feed?.queued ?? 0
 			},
-			memory: { pool: pool.bytes, buffers: gpu.bytes, extension: pool.extension.bytes },
+			memory: { pool: pool.bytes, buffers: gpu.bytes },
 			capacity: pool.capacity,
 			budget: this.#budget,
 			scale: this.#quality.scale
@@ -630,7 +631,18 @@ class GpuEngine implements Engine {
 		if (this.#destroyed) return () => {};
 		const host: Host = {
 			shade: (hook) => this.#install(this.#shades, hook, this.#renderer.shade(hook)),
-			post: (pass) => this.#install(this.#posts, pass, this.#renderer.post(pass))
+			post: (pass) => this.#install(this.#posts, pass, this.#renderer.post(pass)),
+			table: (words) => {
+				const table = this.#pool.tables.create(words);
+				return {
+					id: table.id,
+					write: (at, values) => {
+						table.write(at, values);
+						this.requestFrame();
+					},
+					destroy: () => table.destroy()
+				};
+			}
 		};
 		const uninstall = plugin(host);
 		return () => {
@@ -733,7 +745,7 @@ class GpuEngine implements Engine {
 			this.requestFrame();
 		};
 		const objects = new Objects(this.#objects, loader.ids.bind(loader), arrive);
-		return new Feed(tree, loader, objects, this.#attributes, this.#pool, arrive, this.#reopen);
+		return new Feed(tree, loader, objects, this.#pool.attributes, this.#pool, arrive, this.#reopen);
 	}
 
 	/** a release replaced the world: open its world.json again at the same camera */
@@ -991,7 +1003,9 @@ class GpuEngine implements Engine {
 				point: unproject(pixel, size, found.depth, frame.proj, view, frame.origin),
 				normal: found.normal,
 				layer: this.#layers.layerOf(found.layer),
-				object: found.object
+				object: found.object,
+				token: found.token,
+				row: found.row
 			};
 		void this.#renderer.pick(pixels, frame).then((found) => {
 			let at = 0;

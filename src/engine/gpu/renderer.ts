@@ -11,7 +11,7 @@ import { Heights } from './heights.ts';
 import type { Pool } from './pool.ts';
 import type { Fullscreen } from './fullscreen.ts';
 import { present } from './present.ts';
-import { Project } from './project.ts';
+import { Project, streams, type Hooked } from './project.ts';
 import { Overlay, type Capsule } from './overlay.ts';
 import { Pick, type Found } from './pick.ts';
 import { COLOUR_FORMAT, DEPTH_FORMAT, Raster } from './raster.ts';
@@ -23,8 +23,18 @@ export interface GpuStats {
 	passes: Record<string, number>;
 	/** splats projected, last frame read back */
 	drawn: number;
+	/** of them, those whose shade asked for a sample and that drew without, the frame's records full */
+	unsampled: number;
+	/** samples over the coverage estimate, as drawn() */
+	coverageOver: number;
 	bytes: number;
 }
+
+/** sample records a frame holds at least while a hook may ask for one, and the room over the last ask */
+const RECORDS = 1024;
+const HEADROOM = 1.5;
+/** u32 words of sample.wgsl's record */
+const RECORD_WORDS = 16;
 
 const PASSES = ['cull', 'project', 'sort', 'raster', 'heights', 'post'];
 // float offsets of FrameUniforms fields in common.wgsl
@@ -40,7 +50,11 @@ const U = {
 	near: 80,
 	far: 81,
 	lowPass: 82,
-	clusters: 83
+	clusters: 83,
+	tables: 84,
+	tableCount: 85,
+	records: 86,
+	recordCount: 87
 };
 
 type TargetName = 'colour' | 'depth' | 'ping' | 'pong';
@@ -72,7 +86,8 @@ export class Renderer {
 	#uniformWords = new Uint32Array(this.#uniforms.buffer);
 	#viewProj = new Float32Array(16);
 	#plugins = new Float32Array(PLUGIN_VEC4S * 4);
-	#shades: { shade: Shade; slot: number }[] = [];
+	/** streams null where the world lacks one the hook requires, which turns it off */
+	#shades: { shade: Shade; slot: number; streams: Hooked['streams'] | null }[] = [];
 	#posts: { post: Post; pass: PostPass }[] = [];
 	#targets: Partial<Record<TargetName, GPUTexture>> = {};
 	/** one view per target, so bind groups over it last as long as the target */
@@ -83,6 +98,11 @@ export class Renderer {
 	#counting = false;
 	#drawn = 0;
 	#visible = 0;
+	#asked = 0;
+	#unsampled = 0;
+	#coverageOver = 0;
+	/** the sample records this frame holds */
+	#records = 0;
 
 	/**
 	 * capacity is the splats one frame may project; frames write the canvas of context, whose
@@ -98,7 +118,7 @@ export class Renderer {
 		this.#cull = new Cull(device, pool, this.#buffers);
 		this.#project = new Project(device, pool, this.#buffers);
 		this.#sort = new Sort(device, this.#buffers);
-		this.#raster = new Raster(device, this.#buffers, this.#sort);
+		this.#raster = new Raster(device, this.#buffers, this.#sort, pool, COLOUR_FORMAT);
 		this.#heights = new Heights(device, pool);
 		this.#pick = new Pick(device, pool, this.#buffers);
 		this.#overlay = new Overlay(device, gpu.format, this.#buffers.uniforms);
@@ -117,15 +137,26 @@ export class Renderer {
 		if (used + hook.uniforms > PLUGIN_VEC4S) {
 			throw new Error(`Shade hooks may use ${PLUGIN_VEC4S} uniform slots in all.`);
 		}
-		const entry = { shade: hook, slot: 0 };
+		this.#checkAttributes(hook);
+		const entry = { shade: hook, slot: 0, streams: streams(hook, this.#pool.attributes) };
 		this.#shades.push(entry);
 		this.#hooks();
 		return () => {
 			const k = this.#shades.indexOf(entry);
 			if (k < 0) return;
 			this.#shades.splice(k, 1);
+			this.#release(entry.streams);
 			this.#hooks();
 		};
+	}
+
+	/** each hook's streams resolved again, in the world the registry now declares */
+	restream(): void {
+		for (const entry of this.#shades) {
+			this.#release(entry.streams);
+			entry.streams = streams(entry.shade, this.#pool.attributes);
+		}
+		this.#hooks();
 	}
 
 	post(pass: Post): () => void {
@@ -225,7 +256,7 @@ export class Renderer {
 		}
 		device.queue.submit([encoder.finish()]);
 		timing.read();
-		if (count) this.#readCount();
+		if (count) this.#readCount(this.#records);
 		for (const { resolve, read } of tops) void read().then(resolve);
 		return device.queue.onSubmittedWorkDone();
 	}
@@ -241,12 +272,15 @@ export class Renderer {
 			gpuMs: Object.values(passes).reduce((sum, ms) => sum + ms, 0),
 			passes,
 			drawn: this.#drawn,
+			unsampled: this.#unsampled,
+			coverageOver: this.#coverageOver,
 			bytes
 		};
 	}
 
 	destroy(): void {
 		for (const { pass } of this.#posts.splice(0)) pass.destroy();
+		for (const { streams } of this.#shades.splice(0)) this.#release(streams);
 		this.#dropTargets();
 		this.#buffers.destroy();
 		this.#sort.destroy();
@@ -263,8 +297,30 @@ export class Renderer {
 			entry.slot = next;
 			next += entry.shade.uniforms;
 		}
-		this.#project.hooks(this.#shades);
-		this.#pick.hooks(this.#shades);
+		const hooked = this.#shades.filter((entry): entry is Hooked => entry.streams !== null);
+		this.#project.hooks(hooked);
+		this.#pick.hooks(hooked);
+		this.#raster.hooks(hooked);
+	}
+
+	#release(streams: Hooked['streams'] | null): void {
+		for (const stream of streams ?? []) if (stream !== null) this.#pool.attributes.release(stream);
+	}
+
+	/** throws where hook names an accessor badly, or as an installed hook names another */
+	#checkAttributes(hook: Shade): void {
+		const named = new Map<string, string>();
+		for (const { shade } of this.#shades)
+			for (const use of shade.attributes ?? []) named.set(use.as, JSON.stringify(use));
+		for (const use of hook.attributes ?? []) {
+			if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(use.as)) {
+				throw new RangeError(`attr_${use.as} is not a WGSL identifier.`);
+			}
+			const other = named.get(use.as);
+			if (other !== undefined && other !== JSON.stringify(use)) {
+				throw new Error(`attr_${use.as} is read as another stream by an installed hook.`);
+			}
+		}
 	}
 
 	#upload(frame: Frame, planes: Float32Array): void {
@@ -282,6 +338,17 @@ export class Renderer {
 		u[U.far] = frame.far;
 		u[U.lowPass] = LOW_PASS;
 		this.#uniformWords[U.clusters] = this.#pool.listed;
+		const { extension, tables } = this.#pool;
+		// a hook asks for records only from the rows of drawn clusters
+		const most = Math.min(this.#pool.listed * CLUSTER, this.#buffers.capacity);
+		const asks = this.#shades.some(({ shade, streams }) => shade.sample && streams);
+		const wanted = Math.max(RECORDS, this.#asked * HEADROOM);
+		this.#records = asks ? Math.min(most, 2 ** Math.ceil(Math.log2(wanted))) : 0;
+		this.#uniformWords[U.records] = extension.frame(this.#records * RECORD_WORDS);
+		this.#uniformWords[U.recordCount] = this.#records;
+		extension.flush();
+		this.#uniformWords[U.tables] = tables.directory;
+		this.#uniformWords[U.tableCount] = tables.count;
 		this.#device.queue.writeBuffer(this.#buffers.uniforms, 0, u);
 
 		for (const { shade, slot } of this.#shades) {
@@ -326,7 +393,8 @@ export class Renderer {
 		this.#targets = {};
 	}
 
-	#readCount(): void {
+	/** the counts of a frame that held records */
+	#readCount(records: number): void {
 		this.#counting = true;
 		const buffer = this.#count;
 		// the map rejects once destroyed or the device is lost
@@ -336,6 +404,9 @@ export class Renderer {
 				const counts = new Uint32Array(buffer.getMappedRange());
 				this.#visible = counts[WORK.visible];
 				this.#drawn = Math.min(counts[WORK.projected], this.#buffers.capacity);
+				this.#asked = counts[WORK.sampled];
+				this.#unsampled = Math.max(0, this.#asked - records);
+				this.#coverageOver = counts[WORK.over] + counts[WORK.rasterOver];
 				buffer.unmap();
 			})
 			.catch(() => {})

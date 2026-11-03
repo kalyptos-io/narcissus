@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { relate } from '../math/prism.ts';
+import { Extension } from './extension.ts';
 import { Masks, type Spec } from './masks.ts';
 import { testDevice } from './test-device.ts';
 import { rect } from './test-mask.ts';
@@ -10,7 +11,8 @@ const square = (x: number, y: number, side: number, z: [number, number] = [-5, 5
 
 describe('Masks', () => {
 	it('relates a box to the masks it meets as a scan of every mask does, small and wide alike', async () => {
-		const masks = new Masks(await testDevice());
+		const extension = new Extension(await testDevice(), 64);
+		const masks = new Masks(extension);
 		let seed = 7;
 		const random = () => ((seed = (seed * 16807) % 2147483647) / 2147483647) * 200 - 100;
 		const squares: Spec[] = [];
@@ -46,11 +48,12 @@ describe('Masks', () => {
 					scanned.filter(([, r]) => r === 2).map(([id]) => id)
 				);
 		}
-		masks.destroy();
+		extension.destroy();
 	});
 
 	it('lists a fading mask over a box it holds, and an outside one over every box beyond it', async () => {
-		const masks = new Masks(await testDevice());
+		const extension = new Extension(await testDevice(), 64);
+		const masks = new Masks(extension);
 		const hide = masks.add(rect(0, 0, 10, 10, { z: [-5, 5], outside: true }));
 		const fade = masks.add(rect(2, 2, 4, 4, { z: [-5, 5], opacity: 0.5 }));
 		const far = masks.add(rect(500, 500, 502, 502, { z: [-5, 5], opacity: 0.5 }));
@@ -71,6 +74,6 @@ describe('Masks', () => {
 		masks.enable(hide, true);
 		masks.set(hide, rect(0, 0, 10, 10, { z: [-5, 5], outside: true, opacity: 0.5 }));
 		expect(relation(1, 1, 10)).toEqual([2 * hide, 2 * fade]);
-		masks.destroy();
+		extension.destroy();
 	});
 });

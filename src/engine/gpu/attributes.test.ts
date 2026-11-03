@@ -18,6 +18,7 @@ import attributes from './attributes.wgsl?raw';
 import { bufferLayout } from './buffers.ts';
 import { CLUSTER_WORDS } from './layout.ts';
 import common from './common.wgsl?raw';
+import records from './records.wgsl?raw';
 import { widen } from '../stream/attributes.ts';
 import { Pool } from './pool.ts';
 import { readBuffer, testDevice } from './test-device.ts';
@@ -191,7 +192,9 @@ describe('attributes.wgsl', () => {
 			'read-only-storage',
 			'storage'
 		]);
-		const module = device.createShaderModule({ code: `${common}\n${attributes}\n${KERNEL}` });
+		const module = device.createShaderModule({
+			code: `${common}\n${records}\n${attributes}\n${KERNEL}`
+		});
 		const pipeline = device.createComputePipeline({
 			layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
 			compute: { module, entryPoint: 'probe' }

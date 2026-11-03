@@ -218,8 +218,10 @@ export class Feed {
 			this.#onArrive();
 			return;
 		}
-		this.#objects.write(unitPath(unit, unit.idx.pack, 'pack'), row.offset, page);
-		if (this.#pool.add(id, page, [unit.e, unit.n], this.protects)) {
+		const pack = unitPath(unit, unit.idx.pack, 'pack');
+		this.#objects.write(pack, row.offset, page);
+		const source = { pack, blob: row.offset };
+		if (this.#pool.add(id, page, [unit.e, unit.n], this.protects, 0, source)) {
 			this.#held.set(id, generation);
 			if (this.#refused.delete(id)) this.#unwake(id);
 		} else {

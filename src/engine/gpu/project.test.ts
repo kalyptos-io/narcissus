@@ -452,7 +452,7 @@ describe('Project', () => {
 	it('culls every splat when a shade hook zeroes the opacity', async () => {
 		const context = await setup();
 		const fade: Shade = { name: 'fade', uniforms: 1, wgsl: FADE, update() {} };
-		context.project.hooks([{ shade: fade, slot: 3 }]);
+		context.project.hooks([{ shade: fade, slot: 3, streams: [] }]);
 		const values = new Float32Array(PLUGIN_VEC4S * 4).fill(1);
 		values[3 * 4] = 0;
 		context.device.queue.writeBuffer(context.buffers.plugins, 0, values);

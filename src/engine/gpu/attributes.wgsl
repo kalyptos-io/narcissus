@@ -1,17 +1,13 @@
-// the attribute streams of resident pages, from the extension buffer; the pass declares
-// extension: array<u32> and pages: array<Page>. a page's directory is its stream count, then two
-// words a stream: the word offset of its values and its descriptor; layouts in format/spec.ts
+// the attribute streams of resident pages, from the extension buffer, after records.wgsl; the pass
+// declares extension: array<u32> and pages: array<Page>, so project and pick run it. a page's
+// directory is its stream count, then two words a stream: the word offset of its values and its
+// descriptor; layouts in format/spec.ts
 
 // extension words 4 s to 4 s + 3 hold stream s's default, widened as attribute_word gives it, for
 // the ATTRIBUTE_STREAMS of layout.ts
 const ATTRIBUTE_RECORDS: u32 = 9u;
 const ENCODING_DICTIONARY: u32 = 1u;
 const ENCODING_SPARSE: u32 = 2u;
-
-struct Record {
-	at: u32,
-	words: u32,
-}
 
 // the values' word offset and the descriptor of stream on page, zero when the page has none
 fn attribute_entry(page: u32, stream: u32) -> vec2u {
@@ -122,16 +118,4 @@ fn attribute_record(page: u32, row: u32, stream: u32) -> Record {
 	}
 	let start = extension[offsets + k];
 	return Record(offsets + count + 1u + start, extension[offsets + k + 1u] - start);
-}
-
-// word i of a record, 0 past its end
-fn record_u32(r: Record, i: u32) -> u32 {
-	if (i >= r.words) {
-		return 0u;
-	}
-	return extension[r.at + i];
-}
-
-fn record_f16x2(r: Record, i: u32) -> vec2f {
-	return unpack2x16float(record_u32(r, i));
 }

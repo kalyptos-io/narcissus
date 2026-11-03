@@ -9,38 +9,6 @@ fn code(word: u32, bit: u32) -> f32 {
 	return f32(extractBits(i32(word), bit, 8u)) / 127.0;
 }
 
-// smallest three: w x y z with the largest at the stored index
-fn rotation(g: vec4u) -> vec4f {
-	let v = (vec3f(fraction(g.z, 0u), fraction(g.z, 8u), fraction(g.z, 16u)) - 0.5) * sqrt(2.0);
-	let big = sqrt(max(0.0, 1.0 - dot(v, v)));
-	switch extractBits(g.y, 24u, 8u) {
-		case 0u: {
-			return normalize(vec4f(big, v));
-		}
-		case 1u: {
-			return normalize(vec4f(v.x, big, v.yz));
-		}
-		case 2u: {
-			return normalize(vec4f(v.xy, big, v.z));
-		}
-		default: {
-			return normalize(vec4f(v, big));
-		}
-	}
-}
-
-fn rotate(q: vec4f) -> mat3x3f {
-	let w = q.x;
-	let x = q.y;
-	let y = q.z;
-	let z = q.w;
-	return mat3x3f(
-		1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y + w * z), 2.0 * (x * z - w * y),
-		2.0 * (x * y - w * z), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z + w * x),
-		2.0 * (x * z + w * y), 2.0 * (y * z - w * x), 1.0 - 2.0 * (x * x + y * y)
-	);
-}
-
 // splat t of a cluster in the floating-origin frame as its masks leave it, its record in g; false
 // when a mask hides it
 fn decode(cluster: Cluster, t: u32, s: ptr<function, Splat>, g: ptr<function, vec4u>) -> bool {
@@ -63,6 +31,8 @@ fn decode(cluster: Cluster, t: u32, s: ptr<function, Splat>, g: ptr<function, ve
 	let level = vec3f(fraction((*g).z, 24u), fraction((*g).w, 0u), fraction((*g).w, 8u));
 	d.scale = exp(mix(page.scaleMin, page.scaleMax, level));
 	d.object = (*g).w >> 16u;
+	d.page = cluster.page;
+	d.row = i;
 	let dc = mix(page.dcMin, page.dcMax, vec3f(fraction(w0, 0u), fraction(w0, 8u), fraction(w0, 16u)));
 	// sh[c][m] at 3c + m, gathered per m across the colours
 	let k = page.shScale;
@@ -78,19 +48,12 @@ fn decode(cluster: Cluster, t: u32, s: ptr<function, Splat>, g: ptr<function, ve
 	return true;
 }
 
-// ewa: view-space covariance wm wm^T of the axes turned by, through the pixel jacobian, a b c in px²
+// ewa: the screen covariance B Bᵀ + L of coverage_of, a b c in px²
 fn covariance(g: vec4u, by: vec2f, scale: vec3f, viewPos: vec3f) -> vec3f {
-	let depth = -viewPos.z;
-	let r = rotate(rotation(g));
-	let m = mat3x3f(turn(r[0], by) * scale.x, turn(r[1], by) * scale.y, turn(r[2], by) * scale.z);
-	let w = mat3x3f(uniforms.view[0].xyz, uniforms.view[1].xyz, uniforms.view[2].xyz);
-	let wm = w * m;
-	let focal = uniforms.focal;
-	let j0 = vec3f(focal.x / depth, 0.0, focal.x * viewPos.x / (depth * depth));
-	let j1 = vec3f(0.0, focal.y / depth, focal.y * viewPos.y / (depth * depth));
-	let u = j0 * wm;
-	let v = j1 * wm;
-	return vec3f(dot(u, u) + uniforms.lowPass, dot(u, v), dot(v, v) + uniforms.lowPass);
+	let c = coverage_of(g, by, scale, viewPos);
+	let u = vec3f(c.b[0].x, c.b[1].x, c.b[2].x);
+	let v = vec3f(c.b[0].y, c.b[1].y, c.b[2].y);
+	return vec3f(dot(u, u) + c.low, dot(u, v), dot(v, v) + c.low);
 }
 
 // a splat as the frame draws it: its view depth, its centre in pixels from the bottom-left, and

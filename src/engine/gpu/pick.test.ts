@@ -244,7 +244,7 @@ describe('Pick', () => {
 			wgsl: 'fn hide(s: ptr<function, Splat>, u: array<vec4f, 1>) { if ((*s).object == 7u) { (*s).opacity = 0.0; } }',
 			update: () => {}
 		};
-		pick.hooks([{ shade: hide, slot: 0 }]);
+		pick.hooks([{ shade: hide, slot: 0, streams: [] }]);
 		expect(await centre()).toMatchObject({ depth: expect.closeTo(20, 2), object: 9 });
 		pool.destroy();
 		buffers.destroy();

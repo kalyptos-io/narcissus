@@ -192,6 +192,7 @@
 					"encoding": 1,
 					"offset": 0,
 					"rows": 29,
+					"body": "1b2546fa0389ca5c",
 					"values": [
 						17,
 						65535,
@@ -229,6 +230,7 @@
 					"encoding": 0,
 					"offset": 0,
 					"rows": 29,
+					"body": "f2d3dacfaf70b9b8",
 					"values": [
 						0.34375,
 						0.921875,
@@ -295,6 +297,7 @@
 					"encoding": 2,
 					"offset": 0,
 					"rows": 29,
+					"body": "4a274bcdb74335fe",
 					"records": [
 						[],
 						[],
@@ -385,6 +388,7 @@
 					"encoding": 1,
 					"offset": 603,
 					"rows": 55,
+					"body": "009fdd28ce920759",
 					"values": [
 						900,
 						3,
@@ -448,6 +452,7 @@
 					"encoding": 2,
 					"offset": 603,
 					"rows": 55,
+					"body": "840b515c9d0de2da",
 					"records": [
 						[],
 						[],
@@ -593,6 +598,7 @@
 					"encoding": 1,
 					"offset": 1661,
 					"rows": 49,
+					"body": "514491e533aa9f3a",
 					"values": [
 						900,
 						3,
@@ -650,6 +656,7 @@
 					"encoding": 0,
 					"offset": 1661,
 					"rows": 49,
+					"body": "b260f07b1c94ab76",
 					"values": [
 						-1.015625,
 						-0.609375,
@@ -756,6 +763,7 @@
 					"encoding": 2,
 					"offset": 1661,
 					"rows": 49,
+					"body": "70f2f1ea94211a98",
 					"records": [
 						[
 							69,
@@ -891,6 +899,7 @@
 					"encoding": 1,
 					"offset": 2613,
 					"rows": 40,
+					"body": "59da842189a10965",
 					"values": [
 						0,
 						0,
@@ -939,6 +948,7 @@
 					"encoding": 0,
 					"offset": 2613,
 					"rows": 40,
+					"body": "5cdb2144c5a4275b",
 					"values": [
 						-0.40625,
 						1.265625,
@@ -1027,6 +1037,7 @@
 					"encoding": 2,
 					"offset": 2613,
 					"rows": 40,
+					"body": "0a68d655a3acb13f",
 					"records": [
 						[
 							138
@@ -1134,6 +1145,7 @@
 					"encoding": 1,
 					"offset": 0,
 					"rows": 41,
+					"body": "26380fdac137a780",
 					"values": [
 						3,
 						0,
@@ -1183,6 +1195,7 @@
 					"encoding": 0,
 					"offset": 0,
 					"rows": 41,
+					"body": "be3de6acebaf840b",
 					"values": [
 						-1.046875,
 						0.046875,
@@ -1273,6 +1286,7 @@
 					"encoding": 2,
 					"offset": 0,
 					"rows": 41,
+					"body": "ddf59bedc8707fbb",
 					"records": [
 						[
 							6,
@@ -1383,6 +1397,7 @@
 					"encoding": 1,
 					"offset": 807,
 					"rows": 29,
+					"body": "48e3963a9e6c2a0e",
 					"values": [
 						900,
 						3,
@@ -1420,6 +1435,7 @@
 					"encoding": 0,
 					"offset": 807,
 					"rows": 29,
+					"body": "173b7efc5ec383b8",
 					"values": [
 						-0.34375,
 						1.71875,
@@ -1486,6 +1502,7 @@
 					"encoding": 2,
 					"offset": 807,
 					"rows": 29,
+					"body": "605bc72d03884a29",
 					"records": [
 						[],
 						[],
@@ -1573,6 +1590,7 @@
 					"encoding": 1,
 					"offset": 1407,
 					"rows": 55,
+					"body": "acd827e7e8e4488b",
 					"values": [
 						65535,
 						3,
@@ -1636,6 +1654,7 @@
 					"encoding": 0,
 					"offset": 1407,
 					"rows": 55,
+					"body": "437c2ed7f90403ea",
 					"values": [
 						0.65625,
 						0.34375,
@@ -1754,6 +1773,7 @@
 					"encoding": 2,
 					"offset": 1407,
 					"rows": 55,
+					"body": "41f3b6fe7e88fb6c",
 					"records": [
 						[
 							223,
@@ -1978,6 +1998,7 @@
 					"encoding": 1,
 					"offset": 0,
 					"rows": 26,
+					"body": "a01b355805abb476",
 					"values": [
 						900,
 						0,
@@ -2012,6 +2033,7 @@
 					"encoding": 0,
 					"offset": 0,
 					"rows": 26,
+					"body": "d9745bf0c3510c1e",
 					"values": [
 						-0.984375,
 						-1.0625,
@@ -2072,6 +2094,7 @@
 					"encoding": 2,
 					"offset": 0,
 					"rows": 26,
+					"body": "e530e24dcb936455",
 					"records": [
 						[],
 						[
@@ -2147,6 +2170,7 @@
 					"encoding": 1,
 					"offset": 540,
 					"rows": 24,
+					"body": "9dafdc85e881b561",
 					"values": [
 						3,
 						65535,
@@ -2179,6 +2203,7 @@
 					"encoding": 0,
 					"offset": 540,
 					"rows": 24,
+					"body": "63ce16a75417133e",
 					"values": [
 						-1.625,
 						0.578125,
@@ -2235,6 +2260,7 @@
 					"encoding": 2,
 					"offset": 540,
 					"rows": 24,
+					"body": "9246abce33e1349b",
 					"records": [
 						[],
 						[],
@@ -2321,6 +2347,7 @@
 					"encoding": 1,
 					"offset": 1050,
 					"rows": 47,
+					"body": "862d31d781b6d41a",
 					"values": [
 						65535,
 						65535,
@@ -2376,6 +2403,7 @@
 					"encoding": 0,
 					"offset": 1050,
 					"rows": 47,
+					"body": "eaaa56322a2f384a",
 					"values": [
 						-0.328125,
 						1.46875,
@@ -2478,6 +2506,7 @@
 					"encoding": 2,
 					"offset": 1050,
 					"rows": 47,
+					"body": "40a92932f86922c0",
 					"records": [
 						[],
 						[],

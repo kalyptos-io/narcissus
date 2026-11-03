@@ -7,9 +7,7 @@ interface Block {
 }
 
 export class Extension {
-	/** replaced on grow */
-	buffer: GPUBuffer;
-
+	#buffer: GPUBuffer;
 	#device: GPUDevice;
 	/** words the buffer holds */
 	#size: number;
@@ -25,12 +23,17 @@ export class Extension {
 	constructor(device: GPUDevice, words: number) {
 		this.#device = device;
 		this.#size = Math.max(1, words);
-		this.buffer = this.#make(this.#size);
+		this.#buffer = this.#make(this.#size);
+	}
+
+	/** replaced on grow */
+	get buffer(): GPUBuffer {
+		return this.#buffer;
 	}
 
 	/** bytes of the buffer */
 	get bytes(): number {
-		return this.buffer.size;
+		return this.#buffer.size;
 	}
 
 	/** word offset of a block of words, at least one, in the static region */
@@ -96,21 +99,21 @@ export class Extension {
 			const size = Math.min(limit, Math.max(this.#top, 2 * this.#size));
 			const buffer = this.#make(size);
 			const encoder = this.#device.createCommandEncoder({ label: 'extension grow' });
-			encoder.copyBufferToBuffer(this.buffer, 0, buffer, 0, this.buffer.size);
+			encoder.copyBufferToBuffer(this.#buffer, 0, buffer, 0, this.#buffer.size);
 			this.#device.queue.submit([encoder.finish()]);
-			this.buffer.destroy();
-			this.buffer = buffer;
+			this.#buffer.destroy();
+			this.#buffer = buffer;
 			this.#size = size;
 			grown = true;
 		}
 		const queue = this.#device.queue;
-		for (const { at, words } of this.#writes) queue.writeBuffer(this.buffer, at * 4, words);
+		for (const { at, words } of this.#writes) queue.writeBuffer(this.#buffer, at * 4, words);
 		this.#writes = [];
 		return grown;
 	}
 
 	destroy(): void {
-		this.buffer.destroy();
+		this.#buffer.destroy();
 	}
 
 	#make(words: number): GPUBuffer {

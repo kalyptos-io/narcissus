@@ -14,7 +14,10 @@ async function install() {
 			shades.push(hook);
 			return () => (removed = true);
 		},
-		post: () => () => {}
+		post: () => () => {},
+		table: () => {
+			throw new Error('fog takes no table');
+		}
 	};
 	const uninstall = fog([0.5, 0.25, 0.75], 0.25)(host);
 	return { device, shade: shades[0], uninstall, removed: () => removed };
