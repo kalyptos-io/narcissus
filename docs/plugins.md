@@ -72,6 +72,8 @@ Generated accessors, one for each `AttributeUse`:
 
 `fn table(id: u32, i: u32) -> u32` reads word `i` of a host table; 0 past its end. A hook gets a table's `id` through its uniforms.
 
+`fn source(s: ptr<function, Splat>, p: vec3f) -> vec3f` gives a point `p` of the floating-origin frame in the splat's source coordinates (see Coverage): sigmas from its centre along each of its scale axes. A shade turns a region of the world into one its sample hook integrates with it.
+
 A shade asks for per-pixel evaluation with `fn sample_request(s: ptr<function, Splat>, data: array<u32, 8>)`: the splat then draws through the hook's `<name>_sample`, which receives `data`. A splat has at most one sample hook: the first that asks. A sample hook reads no attributes: its shade looks them up and passes them through `data`, a record as its `at` and `words`, which the sample rebuilds with `Record(c.data[0], c.data[1])` for `record_u32` and `record_f16x2`.
 
 ## Sample
@@ -85,12 +87,15 @@ struct Sample {
 	// the splat's colour (not premultiplied) and opacity after shade
 	colour: vec3f,
 	opacity: f32,
-	// the splat's gaussian falloff at offset, times opacity: what the raster would draw as alpha
+	// the splat's gaussian falloff at offset, times opacity, times the mass its clip keeps there:
+	// what the raster would draw as alpha
 	alpha: f32,
 	// what the shade passed to sample_request
 	data: array<u32, 8>,
 	// for posterior(); see Coverage
 	coverage: Coverage,
+	// the clip planes the splat crosses, for clip_polygon(); see Clipping
+	clip: Clip,
 	page: u32,
 	row: u32,
 }
@@ -135,7 +140,33 @@ fn polygon(p: Posterior2, v: array<vec2f, 12>, count: u32) -> f32
 
 ## Clipping
 
-`engine.addClip(clip)` removes what lies outside a set of planes, by each splat's full gaussian half-space coverage, combined with any sample hook's regions in source coordinates. See [embedding.md](embedding.md).
+`engine.addClip({ planes })` ([embedding.md](embedding.md)) keeps, of every splat of the world and of layers, what lies where every plane of every clip keeps it. Against each plane, in sigmas of the splat along the plane's normal:
+
+- A splat more than 3 inside every plane is unchanged.
+- One more than 3 outside a plane is culled, in cull and project, and pick never finds it.
+- One in between crosses the plane. It draws through the sample path, its alpha the posterior mass the planes keep, and carries the planes in its source coordinates to its sample hook as `c.clip`. It carries two at most; a third plane it crosses cuts it by its centre.
+
+```wgsl
+struct Clip {
+	// kept where dot(xyz, z) + w >= 0: xyz unit, w in sigmas; those past count are unused
+	planes: array<vec4f, 2>,
+	count: u32,
+}
+
+// the posterior mass every plane of clip keeps
+fn clip_mass(p: Posterior, clip: Clip) -> f32
+// v[0..count) cut to where each plane keeps, as the marginal over axes a and b sees it;
+// the new count, at most count + clip.count
+fn clip_polygon(p: Posterior, a: u32, b: u32, clip: Clip, v: ptr<function, array<vec2f, 12>>, count: u32) -> u32
+```
+
+`c.alpha` is already clipped, so a hook that draws the splat whole, or recolours it, needs nothing more. A hook that splits the splat into regions cuts each region's polygon with `clip_polygon()` before `polygon()` and normalises the pieces to sum to 1: they are then shares of the light the clip keeps, and `c.alpha` times a share is the mass of the region and the clip together.
+
+- `clip_mass` is exact: one plane gives the normal cdf of its signed distance, and two a quadrant of their joint gaussian, through `polygon()`.
+- `clip_polygon` takes a plane where the plane's signed distance, given the marginal's two axes, has a mean the plane keeps. That is exact when the plane's normal has no part along the third axis, as for every plane across a flat splat whose thin axis is the third. Otherwise it approximates, and the normalisation keeps the result within the mass `clip_mass` gives.
+- A hook's polygon has at most 10 vertices, as each plane adds one.
+
+`engine.heights()` counts a splat only where every plane keeps its centre.
 
 ## Pick
 
@@ -143,4 +174,4 @@ fn polygon(p: Posterior2, v: array<vec2f, 12>, count: u32) -> f32
 
 ## Cost
 
-Rows without a sample request take the projection path as in version 1, and with no sample hook installed the raster draws as in version 1. A sampled row adds a record of 64 bytes for the frame. The records' room is sized before dispatch: 1.5 times what the last measured frame asked, in a power of two, at most the rows of the drawn clusters. A row past it draws unsampled, `engine.stats().unsampled` counts it, and the next frame has room. Attribute streams, tables and sample records count toward the engine's stated memory.
+Rows without a sample request take the projection path as in version 1, and with no sample hook or clip installed the raster draws as in version 1. A sampled row, which a hook asked for or which crosses a clip plane, adds a record of 80 bytes for the frame. The records' room is sized before dispatch: 1.5 times what the last measured frame asked, in a power of two, at most the rows of the drawn clusters. A row past it draws unsampled, or, crossing a plane that cuts its centre, not at all; `engine.stats().unsampled` counts it, and the next frame has room. Attribute streams, tables and sample records count toward the engine's stated memory.

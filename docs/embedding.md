@@ -57,9 +57,18 @@ Rings count by the even-odd rule, so GeoJSON Polygon `coordinates` fit as they a
 
 You can set every option, and `enabled`. `engine.heights()` obeys masks; `engine.ground()` does not.
 
+## Clips
+
+`engine.addClip({ planes })` cuts away everything, of the world and of layers, outside a convex region: where `a e + b n + c h + d >= 0` for each plane `[a, b, c, d]`, in world coordinates. It returns the clip's remover. Several clips may be active; a splat is kept where it lies inside all of them. A plane that is not finite or has no normal throws a `RangeError`. To move a plane, remove its clip and add another; the next frame shows it. [examples/section.html](../examples/section.html) moves one through a part with a slider.
+
+A splat a plane crosses is cut inside itself, by the mass of its gaussian on the kept side, so the cut edge is as sharp as the pixels; a splat wholly outside is culled. `pick()` never reports a surface a clip removed, and `heights()` counts a splat only where every plane keeps its centre. `ground()` and `groundAt()` read the boxes of the index, not the splats, and stay as they are.
+
 ## Picking
 
-`engine.pick(x, y)` takes canvas CSS pixels. It resolves with `null` over nothing, else with a `Hit` on the surface that the last frame drew there, after masks: its world `point`, the surface `normal` toward the camera, the `layer` hit, `null` for the world, the `object` hit, 0 for none, and the `token` and `row` of [plugins.md](plugins.md).
+`engine.pick(x, y)` takes canvas CSS pixels. It resolves with `null` over nothing, else with a `Hit` on the surface that the last frame drew there, after masks and clips: its world `point`, the surface `normal` toward the camera, the `layer` hit, `null` for the world, the `object` hit, 0 for none, the `token` and the `row`:
+
+- `token` is what the shade hooks, or the sample hook at the pixel, gave the surface splat; 0 by default.
+- `row` names the splat: its unit's pack path as its `.idx` names it, its page's blob offset there and its row in the page, which is also the row of its attribute values; `null` for a layer's splat.
 
 A pick renders no frame. It answers about one frame later, or a frame later still when the pixel holds many splats. You can pick at each pointer move. `engine.pickMany(points)` resolves with a `Hit` or `null` for each pixel, in order, at about the cost of one pick for up to 64 pixels.
 
@@ -82,6 +91,25 @@ There is one id for each splat of the pack: the pages in the order of their blob
 - A pack can keep levels that its `.idx` no longer lists, when its unit gained a parent. The ids then cover every page of the pack, in the order of their blobs, and the engine cuts them by the pack's page table.
 - When the file does not load, or `n` differs both from the splats that the unit's `.idx` lists and from those of every page of its pack, the engine ignores the file and writes a warning to the console.
 - `pick()` gives the object in `Hit.object`. A `Shade` hook reads it as `(*s).object`, a `u32`. Layers have object 0.
+
+## Plugins
+
+`engine.use(plugin)` installs a plugin and returns its remover; [plugins.md](plugins.md) is the contract. A plugin's `Shade` runs for every splat, of the world and of layers, in projection and in pick alike.
+
+**Attributes.** A world can carry named attribute streams beside its splats, each declared in `world.json` ([format.md](format.md)). A shade names those it reads in `attributes`, and its WGSL reads each as `attr_<as>(s)`, widened to the `type` it asks for. When the open world lacks a stream, or declares it with another type or count, a hook that marks it `required` is off until a world has it; otherwise every row reads 0, or an empty record. Each `open()` resolves the hooks' streams in the new world. [examples/confidence.html](../examples/confidence.html) colours a world by an f16 stream.
+
+**Tables.** `host.table(words)` gives a table of u32 words that every hook reads as `table(id, i)`. `write(at, words)` changes any part of it from the next frame. [examples/thematic.html](../examples/thematic.html) colours a million objects through one table, from a u32 stream of object ids, and rewrites it whole or one word at a time.
+
+**Sample hooks.** A shade can ask for a splat to be drawn pixel by pixel through its sample hook, which returns the pixel's colour, alpha and token, from the share of the splat's light that comes from regions of the splat's own coordinates. Pick runs the same hook, so its token is where the colour is. `source(s, p)` takes a world point into those coordinates. [examples/decal.html](../examples/decal.html) paints a hexagon across the splats under it, and pick reports it exactly where it shows.
+
+`engine.stats()` reports `unsampled`, the splats that asked for a sample, or that a clip crosses, but drew without, the frame's records full; the next frame has room. `coverageOver` counts the samples whose integration exceeded its error estimate.
+
+**Memory.** These count toward `stats().memory.pool`:
+
+- An attribute stream: for each resident page with a chunk of it, the chunk's inflated bytes, in whole words: plain at its scalar's width, a dictionary its index and entries, a sparse chunk only its listed rows. Only streams an installed hook reads are fetched.
+- A table: 4 bytes a word.
+- While a sample hook or a clip is installed, the frame's sample records: 80 bytes each, room for 1.5 times what the last frame asked, in a power of two, 1,024 at least.
+- A clip: 16 bytes a plane.
 
 ## Lines and markers
 

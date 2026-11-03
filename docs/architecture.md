@@ -34,13 +34,29 @@ The built-in `http` runs in the engine's workers; a `Fetch` from the web page ru
 
 `Cache` runs in the workers; the `cache` option is `'opfs'` (default), `'memory'` or `'none'`.
 
-A `Plugin` gets a `Host` and installs a `Shade`, a WGSL function for each splat, or a `Post`, a full-screen pass after the splats. `engine/plugins/fog.ts` is the shortest `Shade`, and `grade.ts` the shortest `Post`. `engine.use(plugin)` installs one and returns its remover.
+A `Plugin` gets a `Host` and installs a `Shade`, a WGSL function for each splat with an optional sample hook for each of its pixels, or a `Post`, a full-screen pass after the splats. `engine/plugins/fog.ts` is the shortest `Shade`, and `grade.ts` the shortest `Post`. `engine.use(plugin)` installs one and returns its remover.
 
 ## The engine
 
 In `engine/`, `engine.ts` runs the frame loop, `world/` holds the unit tree, `plan/` picks pages, `stream/` loads them, `gpu/` holds the pool and passes, and `plugins/` the plugins. `layer.ts`, `mask.ts` and `overlay.ts` hold the handles of [embedding.md](embedding.md).
 
 Tests of `plan/`, `world/`, `math/` and most of `stream/` run in Node; GPU pass tests run real WGSL through the `webgpu` package.
+
+### The extension
+
+`gpu/extension.ts` is one storage buffer of u32 words for all that extends the passes past the splats: the attribute streams' defaults from word 0, then first-fit blocks for each resident page's attribute directory and its streams as their chunks store them, the plugins' tables and their directory, the masks, the clip planes, and each frame's sample records. The buffer doubles at a flush that needs more, and each pass binds it anew then. Hooks reach it only through what the engine generates or includes: `attr_<as>`, `table()`, the record readers and the coverage library.
+
+A splat whose shade asks for a sample, or that a clip plane crosses, gets a record of 20 words in the frame's region: its coverage, colour, page and row, the hook, the shade's data and the planes. Projection tags the splat with its record, and the raster's fragment stage reads it; pick builds its own from the same inputs.
+
+The passes stay within WebGPU's default of 8 storage buffers per stage; project and pick use all 8, so what they need next goes into the extension.
+
+| pass    | storage buffers                                                            |
+| ------- | -------------------------------------------------------------------------- |
+| cull    | pages, clusters, list, work, extension                                     |
+| project | geometry, colours, pages, clusters, work, projected, sort, extension       |
+| raster  | projected and sort in the vertex stage; extension and over in the fragment |
+| pick    | geometry, colours, pages, clusters, work, probes, hits, extension          |
+| heights | pages, clusters, list, geometry, tops, extension                           |
 
 ## Build
 
