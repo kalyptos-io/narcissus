@@ -65,16 +65,14 @@ WGSL defines `fn <name>(s: ptr<function, Splat>, u: array<vec4f, <uniforms>>)`. 
 
 Generated accessors, one for each `AttributeUse`:
 
-- A fixed stream with one component: `fn attr_<as>(s: ptr<function, Splat>) -> T`, with `T` the use's `type` (narrow types widen). The engine resolves streams on install and each time a world opens.
+- A fixed stream with one component: `fn attr_<as>(s: ptr<function, Splat>) -> T`, with `T` the use's `type` (narrow types widen).
 - With 2 to 4 components: the matching `vec2`-`vec4`.
 - A stream the world lacks reads 0, or an empty record.
 - A `records` stream: `fn attr_<as>(s: ptr<function, Splat>) -> Record`, then `fn record_u32(r: Record, i: u32) -> u32` and `fn record_f16x2(r: Record, i: u32) -> vec2f` read word `i` of the record; `r.words` is its length in whole words, the last padded with 0.
 
 `fn table(id: u32, i: u32) -> u32` reads word `i` of a host table; 0 past its end. A hook gets a table's `id` through its uniforms.
 
-Accessors run in the shade only. A hook looks its attributes up there and passes what the sample needs through `sample_request`'s `data`: for a record, `at` and `words`, rebuilt in the sample as `Record(data[0], data[1])`. `record_u32` and `record_f16x2` work in the sample too.
-
-A shade asks for per-pixel evaluation with `fn sample_request(s: ptr<function, Splat>, data: array<u32, 8>)`: the splat then draws through the hook's `<name>_sample`, which receives `data`. A splat has at most one sample hook: the first that asks.
+A shade asks for per-pixel evaluation with `fn sample_request(s: ptr<function, Splat>, data: array<u32, 8>)`: the splat then draws through the hook's `<name>_sample`, which receives `data`. A splat has at most one sample hook: the first that asks. A sample hook reads no attributes: its shade looks them up and passes them through `data`, a record as its `at` and `words`, which the sample rebuilds with `Record(c.data[0], c.data[1])` for `record_u32` and `record_f16x2`.
 
 ## Sample
 

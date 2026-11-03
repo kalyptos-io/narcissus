@@ -8,7 +8,7 @@ import { bufferGroup, bufferLayout, type FrameBuffers } from './buffers.ts';
 import masks from './masks.wgsl?raw';
 import source from './pick.wgsl?raw';
 import type { PageSource, Pool } from './pool.ts';
-import { HOOKED, shaded, type Hooked } from './project.ts';
+import { ATTRIBUTES, HOOKED, shaded, type Hooked } from './project.ts';
 import splat from './splat.wgsl?raw';
 
 /** workgroups of a pick, pick.wgsl's PICK_GROUPS */
@@ -208,7 +208,7 @@ export class Pick {
 	}
 
 	#build(): GPUComputePipeline {
-		const code = shaded([...HOOKED, masks, splat, source], this.#hooks);
+		const code = shaded([...HOOKED, ATTRIBUTES, masks, splat, source], this.#hooks, 'shade');
 		const module = this.#device.createShaderModule({ label: 'pick', code });
 		return this.#device.createComputePipeline({
 			label: 'pick',

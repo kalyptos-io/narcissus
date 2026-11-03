@@ -48,19 +48,12 @@ fn decode(cluster: Cluster, t: u32, s: ptr<function, Splat>, g: ptr<function, ve
 	return true;
 }
 
-// ewa: view-space covariance wm wm^T of the axes turned by, through the pixel jacobian, a b c in px²
+// ewa: the screen covariance B Bᵀ + L of coverage_of, a b c in px²
 fn covariance(g: vec4u, by: vec2f, scale: vec3f, viewPos: vec3f) -> vec3f {
-	let depth = -viewPos.z;
-	let r = rotate(rotation(g));
-	let m = mat3x3f(turn(r[0], by) * scale.x, turn(r[1], by) * scale.y, turn(r[2], by) * scale.z);
-	let w = mat3x3f(uniforms.view[0].xyz, uniforms.view[1].xyz, uniforms.view[2].xyz);
-	let wm = w * m;
-	let focal = uniforms.focal;
-	let j0 = vec3f(focal.x / depth, 0.0, focal.x * viewPos.x / (depth * depth));
-	let j1 = vec3f(0.0, focal.y / depth, focal.y * viewPos.y / (depth * depth));
-	let u = j0 * wm;
-	let v = j1 * wm;
-	return vec3f(dot(u, u) + uniforms.lowPass, dot(u, v), dot(v, v) + uniforms.lowPass);
+	let c = coverage_of(g, by, scale, viewPos);
+	let u = vec3f(c.b[0].x, c.b[1].x, c.b[2].x);
+	let v = vec3f(c.b[0].y, c.b[1].y, c.b[2].y);
+	return vec3f(dot(u, u) + c.low, dot(u, v), dot(v, v) + c.low);
 }
 
 // a splat as the frame draws it: its view depth, its centre in pixels from the bottom-left, and

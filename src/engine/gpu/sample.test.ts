@@ -10,7 +10,7 @@ import { FRAME_UNIFORM_BYTES, LOW_PASS, PLUGIN_VEC4S, PROJECTED_WORDS, WORK } fr
 import masks from './masks.wgsl?raw';
 import { Pick } from './pick.ts';
 import { Pool } from './pool.ts';
-import { fits, HOOKED, Project, shaded, streams, type Hooked } from './project.ts';
+import { ATTRIBUTES, fits, HOOKED, Project, shaded, streams, type Hooked } from './project.ts';
 import projectSource from './project.wgsl?raw';
 import { Raster } from './raster.ts';
 import rasterSource from './raster.wgsl?raw';
@@ -283,6 +283,32 @@ fn tabled_sample(c: Sample, u: array<vec4f, 1>) -> Sampled {
 		destroy();
 	});
 
+	it('read a record in the sample hook, in the raster and pick, from what the shade passed', async () => {
+		const { pool, render, pick, camera, destroy } = await setup([{ at: [8, 10, 1.5] }]);
+		pool.tables.create(4);
+		// the record is table 0's directory entry: its first word, then its length, 4
+		const recorded: Shade = {
+			name: 'recorded',
+			uniforms: 1,
+			sample: true,
+			wgsl: `
+fn recorded(s: ptr<function, Splat>, u: array<vec4f, 1>) {
+	sample_request(s, array<u32, 8>(uniforms.tables, 2u, 0u, 0u, 0u, 0u, 0u, 0u));
+}
+fn recorded_sample(c: Sample, u: array<vec4f, 1>) -> Sampled {
+	let r = Record(c.data[0], c.data[1]);
+	let grey = f32(record_u32(r, 1u)) / 8.0;
+	return Sampled(vec4f(vec3f(grey) * c.alpha, c.alpha), record_u32(r, 1u) + 100u * record_u32(r, 2u));
+}`,
+			update: () => {}
+		};
+		const plain = (await render([])).pixels;
+		const { pixels } = await render([recorded]);
+		expect(largest(pixels, plain)).toBeLessThanOrEqual(1e-5);
+		expect((await pick.run([[SIZE / 2, SIZE / 2]], camera))[0]?.token).toBe(4);
+		destroy();
+	});
+
 	it('draw a splat unsampled past the records the frame holds, counting every ask', async () => {
 		const discs = [
 			{ at: [7.5, 10, 1.5] as [number, number, number] },
@@ -325,22 +351,22 @@ fn reader(s: ptr<function, Splat>, u: array<vec4f, 1>) {
 	const hooked: Hooked = {
 		shade: reader,
 		slot: 0,
-		streams: [
-			{ id: 0, type: 'u8' },
-			{ id: 1, type: 'i16' },
-			{ id: 2, type: 'f16' },
-			{ id: 3, type: 'f32' },
-			{ id: 4, type: 'records' },
-			null,
-			null
-		]
+		streams: [0, 1, 2, 3, 4, null, null]
 	};
 
 	it('compile in the projection, pick and raster against the attribute stub', async () => {
 		const device = await testDevice();
+		const square =
+			'array<vec2f, 12>(vec2f(-1.0), vec2f(1.0, -1.0), vec2f(1.0), vec2f(-1.0, 1.0), vec2f(), vec2f(), vec2f(), vec2f(), vec2f(), vec2f(), vec2f(), vec2f())';
+		const clipped = hook(
+			'clipped',
+			`let m = polygon(marginal(posterior(c.coverage, c.offset), 0u, 1u), ${square}, 4u);\n\treturn Sampled(vec4f(c.colour, 1.0) * c.alpha * m, 0u);`
+		);
+		const both: Hooked[] = [hooked, { shade: clipped, slot: 1, streams: [] }];
 		const modules = [
-			shaded([...HOOKED, masks, splat, projectSource], [hooked]),
-			shaded([...HOOKED, rasterSource], [hooked])
+			shaded([...HOOKED, ATTRIBUTES, masks, splat, projectSource], both, 'shade'),
+			// no attribute reads: the raster runs only sample hooks
+			shaded([...HOOKED, rasterSource], both, 'sample')
 		];
 		for (const code of modules) {
 			const info = await device.createShaderModule({ code }).getCompilationInfo();

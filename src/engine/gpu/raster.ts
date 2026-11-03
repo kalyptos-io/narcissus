@@ -64,7 +64,6 @@ export class Raster {
 			[VERTEX, 'uniform'],
 			[FRAGMENT, 'uniform'],
 			[FRAGMENT, 'read-only-storage'],
-			[FRAGMENT, 'read-only-storage'],
 			[FRAGMENT, 'storage']
 		];
 		this.#layout = device.createBindGroupLayout({
@@ -77,7 +76,7 @@ export class Raster {
 		});
 		this.#pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [this.#layout] });
 		const { uniforms, projected, plugins } = buffers;
-		this.#resources = [uniforms, projected, buffers.sort, this.#sorted, plugins, pool.pages];
+		this.#resources = [uniforms, projected, buffers.sort, this.#sorted, plugins];
 	}
 
 	/** the next frame draws sampled splats through these hooks, as project numbers them */
@@ -133,7 +132,7 @@ export class Raster {
 
 	#pipeline(variant: 'Colour' | 'Depth'): GPURenderPipeline {
 		const device = this.#device;
-		const code = shaded([...HOOKED, source], this.#hooks);
+		const code = shaded([...HOOKED, source], this.#hooks, 'sample');
 		const module = device.createShaderModule({ label: 'raster', code });
 		const sampled = this.#hooks.some(({ shade }) => shade.sample) ? 'Sampled' : '';
 		return device.createRenderPipeline({

@@ -7,24 +7,23 @@ import coverage from './coverage.wgsl?raw';
 import masks from './masks.wgsl?raw';
 import { WORK } from './layout.ts';
 import source from './project.wgsl?raw';
+import records from './records.wgsl?raw';
 import sample from './sample.wgsl?raw';
 import splat from './splat.wgsl?raw';
 import type { Pool } from './pool.ts';
 
-/** what every pass that runs hooks includes before its own source */
-export const HOOKED = [common, attributes, coverage, sample];
+/** what every pass that runs hooks includes before its own source; the shade's passes add ATTRIBUTES */
+export const HOOKED = [common, records, coverage, sample];
+export const ATTRIBUTES = attributes;
 
-/** a stream a hook reads, as the open world declares it */
-export interface Stream {
-	id: number;
-	type: StreamType;
-}
-
-/** a shade hook as the passes run it: its first uniform slot, its streams by its attributes, null where the world lacks one */
+/**
+ * a shade hook as the passes run it: its first uniform slot, and the registry's id of each stream
+ * its attributes read, null where the world lacks one
+ */
 export interface Hooked {
 	shade: Shade;
 	slot: number;
-	streams: readonly (Stream | null)[];
+	streams: readonly (number | null)[];
 }
 
 export class Project {
@@ -112,7 +111,7 @@ export class Project {
 	}
 
 	#build(): GPUComputePipeline {
-		const code = shaded([...HOOKED, masks, splat, source], this.#hooks);
+		const code = shaded([...HOOKED, ATTRIBUTES, masks, splat, source], this.#hooks, 'shade');
 		const module = this.#device.createShaderModule({ label: 'project', code });
 		return this.#device.createComputePipeline({
 			label: 'project',
@@ -124,9 +123,14 @@ export class Project {
 
 /**
  * wgsl of parts, the attribute accessors and the hooks, a shade(s) that runs them in order, each
- * from its first slot, and a sample_dispatch(hook, c) that runs the sample hook shade numbered so
+ * from its first slot, and a sample_dispatch(hook, c) that runs the sample hook shade numbered so;
+ * a pass that runs only the sample hooks, whose shades never run, reads no attributes
  */
-export function shaded(parts: string[], hooks: readonly Hooked[]): string {
+export function shaded(
+	parts: string[],
+	hooks: readonly Hooked[],
+	runs: 'shade' | 'sample'
+): string {
 	const args = ({ shade, slot }: Hooked) => {
 		const slots = Array.from({ length: shade.uniforms }, (_, k) => `plugins[${slot + k}]`);
 		return `array<vec4f, ${shade.uniforms}>(${slots.join(', ')})`;
@@ -146,7 +150,7 @@ export function shaded(parts: string[], hooks: readonly Hooked[]): string {
 	);
 	return [
 		...parts,
-		...accessors(hooks),
+		...accessors(hooks, runs === 'shade'),
 		...hooks.map(({ shade }) => shade.wgsl),
 		'fn shade(s: ptr<function, Splat>) {',
 		'\tsample_hook = 0u;',
@@ -163,52 +167,48 @@ export function shaded(parts: string[], hooks: readonly Hooked[]): string {
 	].join('\n');
 }
 
-/** what attr_ reads a fixed stream's word as, by the stream's type, and the type it widens to */
-const WIDENS: Record<
-	Exclude<StreamType, 'records'>,
-	[AttributeUse['type'], (w: string) => string]
-> = {
-	u8: ['u32', (w) => w],
-	u16: ['u32', (w) => w],
-	u32: ['u32', (w) => w],
-	i8: ['i32', (w) => `extractBits(bitcast<i32>(${w}), 0u, 8u)`],
-	i16: ['i32', (w) => `extractBits(bitcast<i32>(${w}), 0u, 16u)`],
-	i32: ['i32', (w) => `bitcast<i32>(${w})`],
-	f16: ['f32', (w) => `unpack2x16float(${w}).x`],
-	f32: ['f32', (w) => `bitcast<f32>(${w})`]
+/** the type each fixed stream's type widens to */
+const WIDENS: Record<Exclude<StreamType, 'records'>, AttributeUse['type']> = {
+	u8: 'u32',
+	u16: 'u32',
+	u32: 'u32',
+	i8: 'i32',
+	i16: 'i32',
+	i32: 'i32',
+	f16: 'f32',
+	f32: 'f32'
 };
 
 /** whether a hook reads a stream so declared as use says */
 export function fits(use: AttributeUse, declared: Declared): boolean {
 	if (declared.type === 'records' || use.type === 'records') return declared.type === use.type;
-	return (
-		WIDENS[declared.type][0] === use.type && (declared.components ?? 1) === (use.components ?? 1)
-	);
+	return WIDENS[declared.type] === use.type && (declared.components ?? 1) === (use.components ?? 1);
 }
 
 /** attr_<as>(s) for each name the hooks read, the first hook that names it giving it */
-function accessors(hooks: readonly Hooked[]): string[] {
+function accessors(hooks: readonly Hooked[], reads: boolean): string[] {
 	const made = new Map<string, string>();
 	for (const { shade, streams } of hooks)
 		(shade.attributes ?? []).forEach((use, k) => {
-			if (!made.has(use.as)) made.set(use.as, accessor(use, streams[k]));
+			if (!made.has(use.as)) made.set(use.as, accessor(use, reads ? streams[k] : null));
 		});
 	return [...made.values()];
 }
 
-/** a lacking stream reads its type's zero, an empty record */
-function accessor(use: AttributeUse, stream: Stream | null): string {
+/** a lacking stream reads its type's zero, an empty record; attribute_word gives words widened */
+function accessor(use: AttributeUse, stream: number | null): string {
 	const head = `fn attr_${use.as}(s: ptr<function, Splat>) ->`;
 	if (use.type === 'records') {
-		const read = stream ? `attribute_record((*s).page, (*s).row, ${stream.id}u)` : 'Record(0u, 0u)';
+		const read =
+			stream === null ? 'Record(0u, 0u)' : `attribute_record((*s).page, (*s).row, ${stream}u)`;
 		return `${head} Record {\n\treturn ${read};\n}`;
 	}
 	const n = use.components ?? 1;
 	const type = n === 1 ? use.type : `vec${n}<${use.type}>`;
-	if (!stream || stream.type === 'records') return `${head} ${type} {\n\treturn ${type}();\n}`;
-	const widen = WIDENS[stream.type][1];
-	const words = Array.from({ length: n }, (_, c) =>
-		widen(`attribute_word((*s).page, (*s).row, ${stream.id}u, ${c}u)`)
+	if (stream === null) return `${head} ${type} {\n\treturn ${type}();\n}`;
+	const words = Array.from(
+		{ length: n },
+		(_, c) => `bitcast<${use.type}>(attribute_word((*s).page, (*s).row, ${stream}u, ${c}u))`
 	);
 	return `${head} ${type} {\n\treturn ${type}(${words.join(', ')});\n}`;
 }
@@ -217,16 +217,16 @@ function accessor(use: AttributeUse, stream: Stream | null): string {
  * the streams of a hook's attributes in the registry's open world, each taken there, null where
  * the world lacks it or declares it otherwise; null in all when it lacks one the hook requires
  */
-export function streams(shade: Shade, registry: AttributeRegistry): (Stream | null)[] | null {
-	const taken: (Stream | null)[] = [];
+export function streams(shade: Shade, registry: AttributeRegistry): (number | null)[] | null {
+	const taken: (number | null)[] = [];
 	for (const use of shade.attributes ?? []) {
 		const declared = registry.declared(use.stream);
 		const id = declared && fits(use, declared) ? registry.use(use.stream, !!use.required) : -1;
 		if (id < 0 && use.required) {
-			for (const stream of taken) if (stream) registry.release(stream.id);
+			for (const stream of taken) if (stream !== null) registry.release(stream);
 			return null;
 		}
-		taken.push(id < 0 ? null : { id, type: declared!.type });
+		taken.push(id < 0 ? null : id);
 	}
 	return taken;
 }
