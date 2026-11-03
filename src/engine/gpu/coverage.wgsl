@@ -1,5 +1,6 @@
 // the mass of a splat's gaussian in regions of its source coordinates, given the pixel it is drawn
-// at (docs/plugins.md, Coverage); a pass that includes this defines fn coverage_over()
+// at (docs/plugins.md, Coverage); reads common.wgsl and the pass's uniforms, and the pass defines
+// fn coverage_over()
 
 // z ~ N(0, I) in sigmas along the stored scale axes, drawn at x = b z + e with e ~ N(0, low I)
 struct Coverage {
