@@ -37,13 +37,14 @@ export class Heights {
 			'read-only-storage',
 			'read-only-storage',
 			'read-only-storage',
-			'storage'
+			'storage',
+			'read-only-storage'
 		]);
 		const code = `${common}\n${masks}\n${source}`;
 		const module = device.createShaderModule({ label: 'heights', code });
 		this.#pipeline = device.createComputePipeline({
 			label: 'heights',
-			layout: device.createPipelineLayout({ bindGroupLayouts: [this.#layout, pool.masks.layout] }),
+			layout: device.createPipelineLayout({ bindGroupLayouts: [this.#layout] }),
 			compute: { module, entryPoint: 'heights' }
 		});
 	}
@@ -83,12 +84,12 @@ export class Heights {
 		new Float32Array(values).set([x, y, 0, 0, OPACITY, SCALE]);
 		new Uint32Array(values).set([cells, listed], 2);
 		device.queue.writeBuffer(area, 0, values);
-		const resources = [area, pool.pages, pool.clusters, pool.list, pool.geometry, tops];
+		const { pages, clusters, list, geometry, extension } = pool;
+		const resources = [area, pages, clusters, list, geometry, tops, extension.buffer];
 		const group = bufferGroup(device, 'heights', this.#layout, resources);
 		const pass = encoder.beginComputePass({ label: 'heights', timestampWrites: timestamps });
 		pass.setPipeline(this.#pipeline);
 		pass.setBindGroup(0, group);
-		pass.setBindGroup(1, pool.masks.group);
 		if (listed > 0) pass.dispatchWorkgroups(...groups(listed));
 		pass.end();
 		encoder.copyBufferToBuffer(tops, 0, readback, 0, bytes);

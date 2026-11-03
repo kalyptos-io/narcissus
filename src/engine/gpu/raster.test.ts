@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { CLUSTER } from '../../format/index.ts';
 import { FRAME_UNIFORM_BYTES, PROJECTED_WORDS, WORK } from './layout.ts';
 import { frameBuffers } from './buffers.ts';
+import { Pool } from './pool.ts';
 import { COLOUR_FORMAT, DEPTH_FORMAT, Raster } from './raster.ts';
 import { Sort } from './sort.ts';
 import { readBuffer, testDevice } from './test-device.ts';
@@ -40,7 +42,8 @@ async function draw(withDepth: boolean) {
 	const device = await testDevice();
 	const buffers = frameBuffers(device, 4, 1);
 	const sort = new Sort(device, buffers);
-	const raster = new Raster(device, buffers, sort);
+	const pool = new Pool(device, CLUSTER);
+	const raster = new Raster(device, buffers, sort, pool, COLOUR_FORMAT);
 
 	const uniforms = new Float32Array(FRAME_UNIFORM_BYTES / 4);
 	// viewport, then near and far
@@ -76,6 +79,7 @@ async function draw(withDepth: boolean) {
 	colour.destroy();
 	depth?.destroy();
 	raster.destroy();
+	pool.destroy();
 	sort.destroy();
 	buffers.destroy();
 	return result;

@@ -18,6 +18,8 @@ struct Area {
 @group(0) @binding(3) var<storage, read> list: array<u32>;
 @group(0) @binding(4) var<storage, read> geometry: array<vec4u>;
 @group(0) @binding(5) var<storage, read_write> tops: array<atomic<u32>>;
+// where masks.wgsl reads its records
+@group(0) @binding(6) var<storage, read> extension: array<u32>;
 
 // order-preserving bits of z, never 0, which marks an empty cell
 fn ordered(z: f32) -> u32 {

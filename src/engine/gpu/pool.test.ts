@@ -38,7 +38,7 @@ describe('Pool', () => {
 	it('sizes its buffers from the capacity', async () => {
 		const pool = new Pool(await testDevice(), 4 * CLUSTER);
 		expect(pool.slots).toBe(4);
-		expect(pool.bytes).toBe(4 * CLUSTER * 28 + 4 * (48 + 160 + 4));
+		expect(pool.bytes).toBe(4 * CLUSTER * 28 + 4 * (48 + 160 + 4) + pool.extension.buffer.size);
 		pool.destroy();
 	});
 
@@ -281,7 +281,7 @@ describe('Pool', () => {
 
 		// the writes above are still queued, so the copy must come after them
 		pool.grow(4 * CLUSTER);
-		expect(pool.bytes).toBe(4 * CLUSTER * 28 + 4 * (48 + 160 + 4));
+		expect(pool.bytes).toBe(4 * CLUSTER * 28 + 4 * (48 + 160 + 4) + pool.extension.buffer.size);
 		expect(pool.has(1)).toBe(true);
 		expect(pool.add(2, second, [0, 0], none)).toBe(true);
 		pool.upload(Infinity);

@@ -14,6 +14,9 @@ async function blur(span: (x: number) => number, strength = 1): Promise<number[]
 	const posts: Post[] = [];
 	const host: Host = {
 		shade: () => () => {},
+		table: () => {
+			throw new Error('dof takes no table');
+		},
 		post: (pass) => {
 			posts.push(pass);
 			return () => {};

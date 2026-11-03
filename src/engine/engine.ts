@@ -54,6 +54,10 @@ export interface Hit {
 	layer: Layer | null;
 	/** the splat's object as the host's .ids gives it, 0 for none */
 	object: number;
+	/** what the shade hooks, or the sample hook at the pixel, gave the splat; 0 by default */
+	token: number;
+	/** the splat: its unit's pack path as its .idx names it, its page's blob offset there and its row; null for a layer's */
+	row: { pack: string; blob: number; row: number } | null;
 }
 
 export interface StepReport {
@@ -591,6 +595,8 @@ class GpuEngine implements Engine {
 			gpuMs: gpu.gpuMs,
 			passes: gpu.passes,
 			drawn: gpu.drawn,
+			unsampled: gpu.unsampled,
+			coverageOver: gpu.coverageOver,
 			...this.#progressNow(),
 			pages: {
 				resident: Array.from(pool.ids()).length,
@@ -617,7 +623,18 @@ class GpuEngine implements Engine {
 		if (this.#destroyed) return () => {};
 		const host: Host = {
 			shade: (hook) => this.#install(this.#shades, hook, this.#renderer.shade(hook)),
-			post: (pass) => this.#install(this.#posts, pass, this.#renderer.post(pass))
+			post: (pass) => this.#install(this.#posts, pass, this.#renderer.post(pass)),
+			table: (words) => {
+				const table = this.#pool.tables.create(words);
+				return {
+					id: table.id,
+					write: (at, values) => {
+						table.write(at, values);
+						this.requestFrame();
+					},
+					destroy: () => table.destroy()
+				};
+			}
 		};
 		const uninstall = plugin(host);
 		return () => {
@@ -978,7 +995,9 @@ class GpuEngine implements Engine {
 				point: unproject(pixel, size, found.depth, frame.proj, view, frame.origin),
 				normal: found.normal,
 				layer: this.#layers.layerOf(found.layer),
-				object: found.object
+				object: found.object,
+				token: found.token,
+				row: found.row
 			};
 		void this.#renderer.pick(pixels, frame).then((found) => {
 			let at = 0;

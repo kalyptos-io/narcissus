@@ -9,6 +9,9 @@ describe('grade', () => {
 		const posts: Post[] = [];
 		const host: Host = {
 			shade: () => () => {},
+			table: () => {
+				throw new Error('grade takes no table');
+			},
 			post: (pass) => {
 				posts.push(pass);
 				return () => {};

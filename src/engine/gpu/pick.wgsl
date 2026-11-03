@@ -18,8 +18,8 @@ struct Probes {
 }
 
 // a splat over a probed pixel: its face toward the camera, its view depth, which orders the blend,
-// the view depth where the pixel's ray meets its plane, its alpha at the pixel, its layer, its object
-// and the probe's index
+// the view depth where the pixel's ray meets its plane, its alpha at the pixel, its layer, its object,
+// the probe's index, the token there, its page-table slot and its row
 struct Entry {
 	normal: vec3f,
 	depth: f32,
@@ -28,6 +28,9 @@ struct Entry {
 	layer: u32,
 	object: u32,
 	probe: u32,
+	token: u32,
+	page: u32,
+	row: u32,
 }
 
 // entries past the buffer's length are counted and not kept
@@ -45,6 +48,7 @@ struct Hits {
 @group(0) @binding(6) var<storage, read> work: array<u32>;
 @group(0) @binding(7) var<storage, read> probes: Probes;
 @group(0) @binding(8) var<storage, read_write> hits: Hits;
+@group(0) @binding(9) var<storage, read> extension: array<u32>;
 
 // invocation k tests probe k on the cluster in hand; a loop over all crashes mesa 25.2's lavapipe
 var<workgroup> near: atomic<u32>;
@@ -73,6 +77,9 @@ fn coverage(s: Splat, d: Drawn, pixel: vec2f) -> f32 {
 	let a = s.opacity * exp(-0.5 * dot(uv, uv));
 	return select(0.0, a, a >= 1.0 / 255.0);
 }
+
+// the frame counted the samples over the coverage estimate
+fn coverage_over() {}
 
 // the thinnest axis of a splat of a page turned by, toward the camera
 fn face(s: Splat, g: vec4u, by: vec2f) -> vec3f {
@@ -111,17 +118,31 @@ fn give(cluster: Cluster, t: u32) {
 	if (!drawn(s, g, page.turn, &d)) {
 		return;
 	}
+	// a sampled splat's hook sees its record as the raster reads it
+	let sampled = sample_hook != 0u;
+	var record: array<u32, RECORD_WORDS>;
+	if (sampled) {
+		let viewPos = (uniforms.view * vec4f(s.position, 1.0)).xyz;
+		record = sample_record(s, coverage_of(g, page.turn, s.scale, viewPos));
+	}
 	let normal = face(s, g, page.turn);
 	let layer = page.layer & ~PICKLESS;
 	for (var k = 0u; k < probes.count; k++) {
 		let pixel = probes.items[k].pixel;
-		let a = coverage(s, d, pixel);
+		var a = coverage(s, d, pixel);
+		var token = s.token;
+		if (sampled && a > 0.0) {
+			let out = sample_dispatch(record[7] & 0xffffu, sample_of(record, pixel - d.centre, a));
+			a = select(0.0, out.colour.a, out.colour.a >= 1.0 / 255.0);
+			token = out.token;
+		}
 		if (a == 0.0) {
 			continue;
 		}
 		let slot = atomicAdd(&hits.count, 1u);
 		if (slot < arrayLength(&hits.entries)) {
-			hits.entries[slot] = Entry(normal, d.depth, meets(s, d, normal, pixel), a, layer, s.object, k);
+			let at = meets(s, d, normal, pixel);
+			hits.entries[slot] = Entry(normal, d.depth, at, a, layer, s.object, k, token, s.page, s.row);
 		}
 	}
 }
