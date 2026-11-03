@@ -13,15 +13,24 @@ import { readBuffer, testDevice } from './test-device.ts';
 const TAIL = 4 * ref.cdf(-ref.HALF_SIDE);
 const TARGET = 1 / 255;
 
+// rotation() and rotate() out of splat.wgsl where common.wgsl lacks them: coverage.wgsl reads
+// only common.wgsl and the pass's uniforms
+const rotations = common.includes('fn rotate(')
+	? ''
+	: splat.slice(splat.indexOf('// smallest three'), splat.indexOf('// splat t of a cluster'));
+
+// the bindings splat.wgsl reads, for a kernel that calls covariance()
+const SPLAT_BINDINGS = `
+@group(0) @binding(4) var<storage, read> geometry: array<vec4u>;
+@group(0) @binding(5) var<storage, read> colours: array<u32>;
+@group(0) @binding(6) var<storage, read> pages: array<Page>;`;
+
 // u32 words in, f32 out; a body reads word k of its case as c(k) or w(k) and writes put(k, x)
 const harness = (stride: number, out: number, body: string) => `
 @group(0) @binding(0) var<uniform> uniforms: FrameUniforms;
 @group(0) @binding(1) var<storage, read> cases: array<u32>;
 @group(0) @binding(2) var<storage, read_write> results: array<f32>;
 @group(0) @binding(3) var<storage, read_write> over: atomic<u32>;
-@group(0) @binding(4) var<storage, read> geometry: array<vec4u>;
-@group(0) @binding(5) var<storage, read> colours: array<u32>;
-@group(0) @binding(6) var<storage, read> pages: array<Page>;
 
 fn coverage_over() {
 	atomicAdd(&over, 1u);
@@ -51,6 +60,8 @@ interface Kernel {
 	stride: number;
 	out: number;
 	body: string;
+	/** compiled over splat.wgsl, for covariance() */
+	splat?: boolean;
 }
 
 /** each case's out results and the over-budget count, from one dispatch */
@@ -68,10 +79,9 @@ async function run(
 		'storage'
 	]);
 	device.pushErrorScope('validation');
+	const head = kernel.splat ? [common, masks, splat, SPLAT_BINDINGS] : [common, rotations];
 	const module = device.createShaderModule({
-		code: [common, masks, splat, coverage, harness(kernel.stride, kernel.out, kernel.body)].join(
-			'\n'
-		)
+		code: [...head, coverage, harness(kernel.stride, kernel.out, kernel.body)].join('\n')
 	});
 	const pipeline = device.createComputePipeline({
 		layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
@@ -275,6 +285,7 @@ describe('coverage', () => {
 			{
 				stride: 12,
 				out: 10,
+				splat: true,
 				body: `let g = vec4u(w(0u), w(1u), w(2u), w(3u));
 	let by = vec2f(c(4u), c(5u));
 	let scale = vec3f(c(6u), c(7u), c(8u));
