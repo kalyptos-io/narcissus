@@ -45,12 +45,17 @@ struct Page {
 	dcMax: vec3f,
 	// 0 for the world, else the layer that holds the page; PICKLESS set when pick passes it by
 	layer: u32,
-	shScale: array<vec4f, 3>,
+	// sh scale of coefficients 0-7, then 8
+	shScale: array<vec4f, 2>,
+	sh8: f32,
+	// extension word of the page's attribute directory (attributes.wgsl), ATTRIBUTE_NONE for none
+	attributes: u32,
 	// cos and sin of the layer's heading, (1, 0) for the world
-	turn: vec2f,
+	@align(16) turn: vec2f,
 }
 
 const PICKLESS: u32 = 0x80000000u;
+const ATTRIBUTE_NONE: u32 = 0xffffffffu;
 
 // v turned clockwise seen from above by the angle of cos and sin by
 fn turn(v: vec3f, by: vec2f) -> vec3f {

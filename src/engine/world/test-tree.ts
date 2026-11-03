@@ -22,6 +22,7 @@ export function world(...roots: UnitKey[]): World {
 		leaf: LEAF,
 		roots: roots.map((key) => ({ ...key, idx: `u/${key.level}/${key.e}/${key.n}.idx` })),
 		extent: { e: [0, 0], n: [0, 0], h: [0, 0] },
+		attributes: {},
 		extra: {}
 	};
 }
@@ -79,6 +80,8 @@ export function unit(
 		pack: hash(key),
 		packSize: rows.length * size,
 		col: null,
+		atr: null,
+		atrSize: 0,
 		rows,
 		children: (level > 0 ? children : []).map((quadrant) => ({
 			quadrant,

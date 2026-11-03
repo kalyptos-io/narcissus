@@ -25,15 +25,24 @@ export function deflate(bytes: Uint8Array): Promise<Uint8Array> {
 	return pipe(bytes, new CompressionStream('deflate-raw'));
 }
 
-/** the inflated body of a file with the 8-byte magic and version prefix; throws naming the fault */
-export async function unwrap(bytes: Uint8Array, magic: string, kind: string): Promise<DataView> {
+/**
+ * the inflated body of a file with the 8-byte magic and version prefix, of version 1 to newest;
+ * throws naming the fault
+ */
+export async function unwrap(
+	bytes: Uint8Array,
+	magic: string,
+	kind: string,
+	newest = VERSION
+): Promise<DataView> {
 	const head = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 	if (bytes.length < PREFIX || String.fromCharCode(...bytes.subarray(0, 4)) !== magic) {
 		throw new Error(`not a ${kind} file`);
 	}
 	const version = head.getUint16(4, true);
-	if (version !== VERSION) {
-		throw new Error(`${kind} version ${version}; narcissus reads ${VERSION}`);
+	if (version < VERSION || version > newest) {
+		const reads = newest === VERSION ? `${VERSION}` : `${VERSION} to ${newest}`;
+		throw new Error(`${kind} version ${version}; narcissus reads ${reads}`);
 	}
 	let body: Uint8Array;
 	try {

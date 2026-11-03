@@ -11,6 +11,8 @@ const idx: Idx = {
 	pack: '0123456789abcdef',
 	packSize: 123456,
 	col: 'fedcba9876543210',
+	atr: null,
+	atrSize: 0,
 	rows: [
 		{
 			g: 2,
@@ -51,6 +53,30 @@ describe('parseIdx', () => {
 	it('reads an all-zero colour hash as no colour', async () => {
 		const plain = { ...idx, col: null, children: [], descendants: [] };
 		expect(await parseIdx(await encodeIdx(plain))).toEqual(plain);
+	});
+
+	it('writes version 1 without an .atr and version 2 with one, and reads both', async () => {
+		const plain = await encodeIdx(idx);
+		expect(new DataView(plain.buffer).getUint16(4, true)).toBe(1);
+		const named = { ...idx, atr: '00000000000000a1', atrSize: 4096 };
+		const bytes = await encodeIdx(named);
+		expect(new DataView(bytes.buffer).getUint16(4, true)).toBe(2);
+		expect(await parseIdx(bytes)).toEqual(named);
+	});
+
+	it('reads a version 2 header with no .atr as none', async () => {
+		const body = new Uint8Array(52);
+		const parsed = await parseIdx(await wrap(body, IDX_MAGIC, 2));
+		expect([parsed.atr, parsed.atrSize]).toEqual([null, 0]);
+	});
+
+	it('rejects an .atr without its size, and a version it does not read', async () => {
+		const body = new Uint8Array(52);
+		body[40] = 1;
+		await expect(parseIdx(await wrap(body, IDX_MAGIC, 2))).rejects.toThrow('without its size');
+		await expect(parseIdx(await wrap(body, IDX_MAGIC, 3))).rejects.toThrow(
+			'.idx version 3; narcissus reads 1 to 2'
+		);
 	});
 
 	it('rejects a body whose counts do not match its size', async () => {

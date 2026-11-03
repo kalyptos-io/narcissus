@@ -28,6 +28,8 @@ function family(missing = -1): { parent: PageNode; children: PageNode[] } {
 		n: N,
 		pack: '0'.repeat(16),
 		packSize: 0,
+		atr: null,
+		atrSize: 0,
 		col: null,
 		rows,
 		children: [],

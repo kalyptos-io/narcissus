@@ -9,6 +9,13 @@ import { disk } from '../adapters/disk.ts';
 import { probe, validate } from './validate.ts';
 
 const TREE = fileURLToPath(new URL('../../fixtures/tree', import.meta.url));
+const ATTRIBUTES = fileURLToPath(new URL('../../fixtures/attributes', import.meta.url));
+/** the .atr of the level 1 unit, whose pack keeps a level its .idx does not list */
+const ATR = (
+	JSON.parse(readFileSync(join(ATTRIBUTES, 'expected.json'), 'utf8')) as {
+		atrs: { path: string }[];
+	}
+).atrs.find(({ path }) => path.startsWith('u/1/'))!.path;
 const LEAF = 'u/0/723000/6177000';
 const PACK = `${LEAF}.656598a8e97f00d8.pack`;
 const COL = `${LEAF}.5b67c3353357531e.col`;
@@ -25,10 +32,10 @@ const FILES = [
 const scratch = mkdtempSync(join(tmpdir(), 'narcissus-'));
 afterAll(() => rmSync(scratch, { recursive: true }));
 
-/** a copy of the fixture with change made to it */
-function copy(name: string, change: (dir: string) => void): string {
+/** a copy of a fixture with change made to it */
+function copy(name: string, change: (dir: string) => void, tree = TREE): string {
 	const dir = join(scratch, name);
-	cpSync(TREE, dir, { recursive: true });
+	cpSync(tree, dir, { recursive: true });
 	change(dir);
 	return `${dir}/world.json`;
 }
@@ -68,6 +75,50 @@ describe('validate', () => {
 		const { faults } = await validate(disk, world, { deep: true });
 		expect(faults).toContainEqual({ path: PACK, fault: 'does not have the hash in its name' });
 		expect(new Set(faults.map((f) => f.path))).toEqual(new Set([PACK]));
+	});
+
+	it('finds no fault in the attribute fixture, deep or not, and counts its .atr files', async () => {
+		for (const deep of [false, true]) {
+			const report = await validate(disk, `${ATTRIBUTES}/world.json`, { deep });
+			expect(report.faults).toEqual([]);
+			expect([report.units, report.files]).toEqual([4, 11]);
+		}
+	});
+
+	it('names an .atr stream that world.json does not declare', async () => {
+		const world = copy(
+			'undeclared',
+			(dir) => {
+				const file = join(dir, 'world.json');
+				const json = JSON.parse(readFileSync(file, 'utf8'));
+				delete json.attributes['test.parts'];
+				writeFileSync(file, JSON.stringify(json));
+			},
+			ATTRIBUTES
+		);
+		const { faults } = await validate(disk, world);
+		expect(faults).toContainEqual({
+			path: ATR,
+			fault: 'holds stream test.parts, which world.json does not declare'
+		});
+		expect(faults).toHaveLength(3);
+	});
+
+	it('names an .atr with one byte changed, when deep', async () => {
+		const world = copy(
+			'flipped-atr',
+			(dir) => {
+				const file = join(dir, ATR);
+				const bytes = readFileSync(file);
+				bytes[3] ^= 0xff;
+				writeFileSync(file, bytes);
+			},
+			ATTRIBUTES
+		);
+		expect((await validate(disk, world)).faults).toEqual([]);
+		const { faults } = await validate(disk, world, { deep: true });
+		expect(faults).toContainEqual({ path: ATR, fault: 'does not have the hash in its name' });
+		expect(new Set(faults.map((f) => f.path))).toEqual(new Set([ATR]));
 	});
 
 	it('reports a world.json that does not parse and goes no further', async () => {

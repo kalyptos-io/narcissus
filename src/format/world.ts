@@ -1,8 +1,21 @@
-import type { World, WorldRoot } from './types.ts';
+import type { Attribute, Scalar, World, WorldRoot } from './types.ts';
 import { parseUnitPath } from './idx.ts';
-import { LEAF, VERSION } from './spec.ts';
+import { LEAF, SCALAR_BYTES, VERSION } from './spec.ts';
 
-const KNOWN = new Set(['version', 'crs', 'height', 'leaf', 'roots', 'extent']);
+const KNOWN = new Set(['version', 'crs', 'height', 'leaf', 'roots', 'extent', 'attributes']);
+const RULES = new Set(['preserved', 'aggregated', 'unavailable']);
+/** <producer>.<name>, at most 255 bytes as an .atr stores it */
+const NAME = /^[^.\s]+(\.[^.\s]+)+$/;
+const NAME_BYTES = 255;
+/** the integer range of each integer type */
+const INTEGERS: Partial<Record<Scalar, [number, number]>> = {
+	u8: [0, 0xff],
+	u16: [0, 0xffff],
+	u32: [0, 0xffffffff],
+	i8: [-0x80, 0x7f],
+	i16: [-0x8000, 0x7fff],
+	i32: [-0x80000000, 0x7fffffff]
+};
 
 function fault(what: string): Error {
 	return new Error(`This world has ${what}.`);
@@ -59,6 +72,41 @@ function root(value: unknown): WorldRoot {
 	return { ...key, idx };
 }
 
+function attribute(name: string, value: unknown): Attribute {
+	const what = `an invalid attribute ${name}`;
+	if (!NAME.test(name) || new TextEncoder().encode(name).length > NAME_BYTES) throw fault(what);
+	const a = record(value, what);
+	if (typeof a.rule !== 'string' || !RULES.has(a.rule)) throw fault(what);
+	const rule = a.rule as Attribute['rule'];
+	if (a.type === 'records') {
+		if (a.components !== undefined || a.default !== undefined) throw fault(what);
+		return { type: 'records', components: 0, default: [], rule };
+	}
+	if (typeof a.type !== 'string' || !Object.hasOwn(SCALAR_BYTES, a.type)) throw fault(what);
+	const type = a.type as Scalar;
+	const components = a.components;
+	if (!Number.isInteger(components) || (components as number) < 1 || (components as number) > 4) {
+		throw fault(what);
+	}
+	const given = typeof a.default === 'number' ? Array(components).fill(a.default) : a.default;
+	if (!Array.isArray(given) || given.length !== components || !given.every(Number.isFinite)) {
+		throw fault(what);
+	}
+	const bounds = INTEGERS[type];
+	if (bounds && !given.every((v) => Number.isInteger(v) && v >= bounds[0] && v <= bounds[1])) {
+		throw fault(what);
+	}
+	return { type, components: components as number, default: given as number[], rule };
+}
+
+function attributes(value: unknown): Record<string, Attribute> {
+	if (value === undefined) return {};
+	const declared = record(value, 'an invalid attributes member');
+	return Object.fromEntries(
+		Object.entries(declared).map(([name, a]) => [name, attribute(name, a)])
+	);
+}
+
 /** the directory of a world.json url, with its trailing slash and without query or fragment; unit paths join it */
 export function directory(url: string): string {
 	const path = url.split(/[?#]/)[0];
@@ -85,6 +133,7 @@ export function parseWorld(json: unknown): World {
 			n: range(extent.n, 'an invalid northing extent'),
 			h: range(extent.h, 'an invalid height extent')
 		},
+		attributes: attributes(w.attributes),
 		extra: Object.fromEntries(Object.entries(w).filter(([member]) => !KNOWN.has(member)))
 	};
 }

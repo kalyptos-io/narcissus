@@ -57,8 +57,8 @@ export interface Stats {
 	/** of planned, the splats not resident yet */
 	missing: number;
 	pages: { resident: number; drawn: number; loading: number; queued: number };
-	/** bytes */
-	memory: { pool: number; buffers: number };
+	/** bytes; extension holds attribute streams, plugin tables and sample records */
+	memory: { pool: number; buffers: number; extension: number };
 	/** splats the pool holds at most */
 	capacity: number;
 	/** splats a frame may draw now */

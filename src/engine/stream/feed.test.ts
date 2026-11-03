@@ -1,9 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { unitPath, type DecodedPage, type Idx, type UnitKey } from '../../format/index.ts';
+import {
+	unitPath,
+	type Attribute,
+	type DecodedPage,
+	type Idx,
+	type PageAttribute,
+	type UnitKey
+} from '../../format/index.ts';
 import type { Pool } from '../gpu/pool.ts';
 import type { Plan } from '../plan/cut.ts';
 import { hash, unit as full, world } from '../world/test-tree.ts';
 import { Tree, unitKey, type PageNode, type Wanted } from '../world/tree.ts';
+import type { Wanted as Stream } from './attributes.ts';
+
+const CLASS: Attribute = { type: 'u16', components: 1, default: [0], rule: 'preserved' };
 import { FEED, Feed, type FeedOptions } from './feed.ts';
 import { Missing } from '../../ports.ts';
 import type { Loader } from './loader.ts';
@@ -25,21 +35,30 @@ interface Pending<T> {
 
 class FakeLoader {
 	idxs: (Pending<Idx> & { path: string })[] = [];
-	batches: (Pending<Loaded> & { batch: Batch; signal: AbortSignal })[] = [];
+	batches: (Pending<Loaded> & {
+		batch: Batch;
+		streams: readonly Stream[];
+		signal: AbortSignal;
+	})[] = [];
 
 	idx(path: string): Promise<Idx> {
 		return new Promise((resolve, reject) => this.idxs.push({ path, resolve, reject }));
 	}
 
 	/** resolve hands the pages over one by one, then settles */
-	batch(batch: Batch, signal: AbortSignal, page: (loaded: Loaded[number]) => void): Promise<void> {
+	batch(
+		batch: Batch,
+		streams: readonly Stream[],
+		signal: AbortSignal,
+		page: (loaded: Loaded[number]) => void
+	): Promise<void> {
 		return new Promise((resolve, reject) => {
 			signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
 			const pages = (loaded: Loaded) => {
 				loaded.forEach(page);
 				resolve();
 			};
-			this.batches.push({ batch, signal, resolve: pages, reject });
+			this.batches.push({ batch, streams, signal, resolve: pages, reject });
 		});
 	}
 }
@@ -82,6 +101,13 @@ class FakePool {
 	remove(id: number): void {
 		this.held.delete(id);
 	}
+
+	/** the attributes each page was given in place of those it came with */
+	replaced = new Map<number, PageAttribute[]>();
+
+	setAttributes(id: number, attributes: PageAttribute[]): void {
+		this.replaced.set(id, attributes);
+	}
 }
 
 /** a full unit whose pages lie back to back in its pack */
@@ -106,21 +132,23 @@ function plan(load: PageNode[], idx: Wanted[] = [], keep: PageNode[] = load): Pl
 	return { cut: load, load, idx, keep: new Set(ids(keep)), planned: 0, missing: 0 };
 }
 
-/** a tree holding one level-1 root, its four children wanted */
-function setup(options: Partial<FeedOptions> = {}, capacity = Infinity) {
+/** a tree holding one level-1 root, its four children wanted; atr gives the root an .atr */
+function setup(options: Partial<FeedOptions> = {}, capacity = Infinity, atr = false) {
 	const tree = new Tree(world(ROOT));
-	const root = tree.add(unit(ROOT), 'root.idx');
+	const idx = unit(ROOT);
+	const root = tree.add(atr ? { ...idx, atr: 'a'.repeat(16), atrSize: 300 } : idx, 'root.idx');
 	const loader = new FakeLoader();
 	const pool = new FakePool(capacity);
 	const arrive = vi.fn();
 	const stale = vi.fn();
 	const typed = { loader: loader as unknown as Loader, pool: pool as unknown as Pool };
 	const objects = new Objects({}, vi.fn(), vi.fn());
-	const feed = new Feed(tree, typed.loader, objects, typed.pool, arrive, stale, {
+	const streams = { wanted: [] as Stream[], generation: 0 };
+	const feed = new Feed(tree, typed.loader, objects, streams, typed.pool, arrive, stale, {
 		...FEED,
 		...options
 	});
-	return { tree, root, loader, pool, arrive, stale, feed };
+	return { tree, root, loader, pool, arrive, stale, feed, streams };
 }
 
 describe('Feed', () => {
@@ -173,6 +201,50 @@ describe('Feed', () => {
 		feed.update(plan(pages), NONE, 10);
 		expect(loader.batches).toHaveLength(1);
 		expect(feed.idle).toBe(true);
+	});
+
+	it('fetches the wanted streams with each batch, and names the unit .atr', async () => {
+		const { root, loader, feed, streams } = setup({}, Infinity, true);
+		const stream: Stream = { id: 0, name: 'test.a', required: true, attribute: CLASS };
+		streams.wanted = [stream];
+		feed.update(plan(root.pages.slice(0, 2)), NONE, 0);
+		const [{ batch, streams: sent }] = loader.batches;
+		expect(sent).toEqual([stream]);
+		expect(batch.atr).toEqual({ path: unitPath(ROOT, 'a'.repeat(16), 'atr'), size: 300 });
+	});
+
+	it('fetches drawn pages again once a stream their unit may hold comes to be read', async () => {
+		const { root, loader, pool, feed, streams } = setup({}, Infinity, true);
+		const pages = root.pages.slice(0, 2);
+		feed.update(plan(pages), NONE, 0);
+		loader.batches[0].resolve(loaded(pages));
+		await settle();
+		feed.update(plan(pages), NONE, 10);
+		expect(loader.batches).toHaveLength(1);
+
+		streams.wanted = [{ id: 0, name: 'test.a', required: false, attribute: CLASS }];
+		streams.generation = 1;
+		feed.update(plan(pages), NONE, 20);
+		expect(loader.batches).toHaveLength(2);
+		expect(ids(loader.batches[1].batch.pages)).toEqual(ids(pages));
+		const attributes: PageAttribute[] = [{ stream: 0, descriptor: 1, words: new Uint32Array(1) }];
+		loader.batches[1].resolve(pages.map(({ id }) => ({ id, page: { ...decoded(), attributes } })));
+		await settle();
+		expect([...pool.replaced.keys()]).toEqual(ids(pages));
+		expect(pool.replaced.get(pages[0].id)).toBe(attributes);
+		feed.update(plan(pages), NONE, 30);
+		expect(loader.batches).toHaveLength(2);
+	});
+
+	it('leaves drawn pages of a unit without an .atr be when a stream comes to be read', async () => {
+		const { root, loader, feed, streams } = setup();
+		const pages = root.pages.slice(0, 2);
+		feed.update(plan(pages), NONE, 0);
+		loader.batches[0].resolve(loaded(pages));
+		await settle();
+		streams.generation = 1;
+		feed.update(plan(pages), NONE, 10);
+		expect(loader.batches).toHaveLength(1);
 	});
 
 	it('aborts a batch whose pages left the plan', async () => {

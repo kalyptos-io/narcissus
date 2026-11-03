@@ -1,9 +1,10 @@
 // the main thread's side of the stream workers
 
 import { Missing, type Fetch } from '../../ports.ts';
-import type { Idx } from '../../format/index.ts';
+import type { Idx, PageRow } from '../../format/index.ts';
+import type { Wanted } from './attributes.ts';
 import { answering, type Ask } from './remote.ts';
-import type { Batch } from './scheduler.ts';
+import type { Batch, UnitFile } from './scheduler.ts';
 import type { Loaded, Message, Reply } from './worker.ts';
 // inline, so the built engine is one file that needs no path to its worker
 import StreamWorker from './worker.ts?worker&inline';
@@ -26,7 +27,7 @@ interface Pending {
 	slot: Slot;
 	/** a batch's pages as they come */
 	page?(loaded: Loaded): void;
-	resolve(value?: Idx): void;
+	resolve(value?: Idx | Map<number, Uint16Array>): void;
 	reject(error: Error): void;
 }
 
@@ -67,11 +68,26 @@ export class Loader {
 		return this.#send(this.#slots[0], message) as Promise<Idx>;
 	}
 
-	/** page takes each page once decoded; rejects with an AbortError when signal aborts */
-	batch(batch: Batch, signal: AbortSignal, page: (loaded: Loaded) => void): Promise<void> {
+	/** a unit's object ids by the blob offsets of its pages, as jobs.ts loadIds gives them */
+	ids(url: string, pack: UnitFile, rows: readonly PageRow[]): Promise<Map<number, Uint16Array>> {
+		const message = { type: 'ids', id: ++this.#id, url, pack, rows } as const;
+		const slot = this.#slots[shardOf(pack.path, this.#slots.length)];
+		return this.#send(slot, message) as Promise<Map<number, Uint16Array>>;
+	}
+
+	/**
+	 * page takes each page once decoded, with its chunks of streams; rejects with an AbortError
+	 * when signal aborts
+	 */
+	batch(
+		batch: Batch,
+		streams: readonly Wanted[],
+		signal: AbortSignal,
+		page: (loaded: Loaded) => void
+	): Promise<void> {
 		if (signal.aborted) return Promise.reject(aborted());
 		const slot = this.#slots[shardOf(`${batch.pack}#${batch.window}`, this.#slots.length)];
-		const message = { type: 'batch', id: ++this.#id, batch } as const;
+		const message = { type: 'batch', id: ++this.#id, batch, streams } as const;
 		return this.#send(slot, message, signal, page) as Promise<void>;
 	}
 
@@ -82,10 +98,10 @@ export class Loader {
 
 	#send(
 		slot: Slot,
-		message: Extract<Message, { type: 'idx' | 'batch' }>,
+		message: Extract<Message, { type: 'idx' | 'ids' | 'batch' }>,
 		signal?: AbortSignal,
 		page?: (loaded: Loaded) => void
-	): Promise<Idx | void> {
+	): Promise<Idx | Map<number, Uint16Array> | void> {
 		if (slot.error) return Promise.reject(slot.error);
 		const { id } = message;
 		return new Promise((resolve, reject) => {

@@ -4,6 +4,9 @@ import { Missing, type Fetch } from '../../ports.ts';
 import {
 	parseUnitPath,
 	unitPath,
+	ATR_CHUNK_BYTES,
+	ATR_MAGIC,
+	ATR_TRAILER,
 	BASE_PLANES,
 	C0,
 	LEAF,
@@ -46,6 +49,11 @@ const STORED_HEADER = 5;
 const BLOB = PAYLOAD + Math.ceil(PAYLOAD / STORED) * STORED_HEADER;
 /** the level of both roots */
 const TOP = 12;
+/** each splat's quadrant, u8 plain: the same chunk for every page, as quadrants are quarters */
+const QUADRANT = 'synthetic.quadrant';
+const ATTRIBUTES = { [QUADRANT]: { type: 'u8', components: 1, default: 0, rule: 'preserved' } };
+/** bytes of every chunk */
+const CHUNK = PAGE_SPLATS + STORED_HEADER;
 
 /** in lattice cells: a centre's jitter either way, and splat sigmas along and across the ground */
 const JITTER = 0.4;
@@ -88,7 +96,8 @@ const WORLD = {
 	height: 'synthetic',
 	leaf: LEAF,
 	roots: ROOTS.map((key) => ({ ...key, idx: unitPath(key, nameOf(key, 'idx'), 'idx') })),
-	extent: { e: [440000, 900000], n: [6050000, 6410000], h: [0, 80] }
+	extent: { e: [440000, 900000], n: [6050000, 6410000], h: [0, 80] },
+	attributes: ATTRIBUTES
 };
 
 const WORLD_JSON = text.encode(JSON.stringify(WORLD));
@@ -101,13 +110,14 @@ export function synthetic(): Fetch {
 		const ext = url.slice(url.lastIndexOf('.') + 1);
 		if (
 			!unit ||
-			(ext !== 'idx' && ext !== 'pack') ||
+			(ext !== 'idx' && ext !== 'pack' && ext !== 'atr') ||
 			!exists(unit) ||
 			unit.hash !== nameOf(unit, ext)
 		) {
 			throw new Missing(`no file ${url}`);
 		}
 		if (ext === 'idx') return part(await idxBytes(unit), range);
+		if (ext === 'atr') return atrBytes(unit, range);
 		return packBytes(unit, range, url);
 	};
 }
@@ -225,6 +235,8 @@ function idxBytes(key: UnitKey): Promise<Uint8Array> {
 		pack: nameOf(key, 'pack'),
 		packSize: pages.length * (BLOB + ROW_BYTES) + PACK_TRAILER,
 		col: null,
+		atr: nameOf(key, 'atr'),
+		atrSize: pages.length * CHUNK + atrTables(key).length,
 		rows: pages.map((page, r) => pageRow(key, page, r * BLOB)),
 		children,
 		descendants
@@ -246,6 +258,60 @@ function packBytes(key: UnitKey, range: Range, url: string): Uint8Array {
 	const out = new Uint8Array(range[1] - range[0]);
 	for (let at = 0; at < out.length; at += BLOB) {
 		store(payload(key, pages[(range[0] + at) / BLOB]), out, at);
+	}
+	return out;
+}
+
+/** the quadrant chunk every page shares, as one deflate stored block */
+const QUADRANTS = (() => {
+	const values = Uint8Array.from({ length: PAGE_SPLATS }, (_, t) =>
+		Math.floor((4 * t) / PAGE_SPLATS)
+	);
+	const out = new Uint8Array(CHUNK);
+	store(values, out, 0);
+	return out;
+})();
+
+/** the tables and trailer of a unit's .atr: one chunk a page, in pack order */
+function atrTables(key: UnitKey): Uint8Array {
+	const pages = pagesOf(key);
+	const name = text.encode(QUADRANT);
+	const out = new Uint8Array(4 + 1 + name.length + pages.length * ATR_CHUNK_BYTES + ATR_TRAILER);
+	const view = new DataView(out.buffer);
+	view.setUint16(0, 1, true);
+	out[4] = name.length;
+	out.set(name, 5);
+	let at = 5 + name.length;
+	for (let r = 0; r < pages.length; r++, at += ATR_CHUNK_BYTES) {
+		view.setUint32(at + 4, r * BLOB, true);
+		view.setUint32(at + 8, PAGE_SPLATS, true);
+		view.setUint32(at + 12, r * CHUNK, true);
+		view.setUint32(at + 16, CHUNK, true);
+	}
+	const pack = nameOf(key, 'pack');
+	for (let b = 0; b < 8; b++) out[at + b] = parseInt(pack.slice(2 * b, 2 * b + 2), 16);
+	view.setUint32(at + 8, pages.length * CHUNK, true);
+	view.setUint32(at + 12, pages.length, true);
+	for (let c = 0; c < 4; c++) out[at + 16 + c] = ATR_MAGIC.charCodeAt(c);
+	view.setUint16(at + 20, VERSION, true);
+	return out;
+}
+
+/** bytes range of a unit's .atr, whole without one */
+function atrBytes(key: UnitKey, range: Range): Uint8Array {
+	const chunks = pagesOf(key).length * CHUNK;
+	const tables = atrTables(key);
+	const [start, end] = range ?? [0, chunks + tables.length];
+	const out = new Uint8Array(Math.max(0, Math.min(end, chunks + tables.length) - start));
+	for (let at = start; at < start + out.length;) {
+		if (at >= chunks) {
+			out.set(tables.subarray(at - chunks, at - chunks + out.length - (at - start)), at - start);
+			break;
+		}
+		const from = at % CHUNK;
+		const length = Math.min(CHUNK - from, start + out.length - at);
+		out.set(QUADRANTS.subarray(from, from + length), at - start);
+		at += length;
 	}
 	return out;
 }

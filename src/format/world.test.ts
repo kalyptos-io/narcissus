@@ -12,7 +12,11 @@ const world = {
 
 describe('parseWorld', () => {
 	it('accepts a version 1 world', () => {
-		expect(parseWorld(JSON.parse(JSON.stringify(world)))).toEqual({ ...world, extra: {} });
+		expect(parseWorld(JSON.parse(JSON.stringify(world)))).toEqual({
+			...world,
+			attributes: {},
+			extra: {}
+		});
 	});
 
 	it('takes any coordinate system and height datum as labels', () => {
@@ -24,6 +28,50 @@ describe('parseWorld', () => {
 		const source = { name: 'survey', retrieved: '2026-10-03' };
 		const { extra } = parseWorld({ ...world, source, waiting: [] });
 		expect(extra).toEqual({ source, waiting: [] });
+	});
+
+	it('reads the declared attribute streams, a number default given to every component', () => {
+		const attributes = {
+			'test.class': { type: 'u16', components: 1, default: 0, rule: 'preserved' },
+			'test.tone': { type: 'f16', components: 2, default: [0.5, 1], rule: 'aggregated' },
+			'test.parts': { type: 'records', rule: 'unavailable' }
+		};
+		expect(parseWorld({ ...world, attributes }).attributes).toEqual({
+			'test.class': { type: 'u16', components: 1, default: [0], rule: 'preserved' },
+			'test.tone': { type: 'f16', components: 2, default: [0.5, 1], rule: 'aggregated' },
+			'test.parts': { type: 'records', components: 0, default: [], rule: 'unavailable' }
+		});
+		expect(
+			parseWorld({
+				...world,
+				attributes: { 'a.b': { type: 'i8', components: 3, default: -2, rule: 'preserved' } }
+			}).attributes['a.b'].default
+		).toEqual([-2, -2, -2]);
+	});
+
+	it('rejects an attribute stream it cannot store', () => {
+		const ok = { type: 'u8', components: 1, default: 0, rule: 'preserved' };
+		const bad: [string, unknown][] = [
+			['plain', ok],
+			['a.', ok],
+			['a b.c', ok],
+			['a.' + 'b'.repeat(254), ok],
+			['a.b', { ...ok, type: 'u64' }],
+			['a.b', { ...ok, components: 5 }],
+			['a.b', { ...ok, components: 0 }],
+			['a.b', { ...ok, default: 256 }],
+			['a.b', { ...ok, default: 1.5 }],
+			['a.b', { ...ok, components: 2, default: [1] }],
+			['a.b', { ...ok, rule: 'majority' }],
+			['a.b', { type: 'records', components: 1, rule: 'preserved' }],
+			['a.b', { type: 'records', default: 0, rule: 'preserved' }]
+		];
+		for (const [name, declared] of bad) {
+			expect(() => parseWorld({ ...world, attributes: { [name]: declared } }), name).toThrow(
+				`This world has an invalid attribute ${name}.`
+			);
+		}
+		expect(() => parseWorld({ ...world, attributes: [] })).toThrow('an invalid attributes member');
 	});
 
 	it('rejects another version with a sentence that names both', () => {

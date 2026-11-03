@@ -1,10 +1,17 @@
 // which page ranges to fetch next: priority order, siblings merged, stale fetches aborted
 
+/** a unit file: its world.json-relative path and its size in bytes */
+export interface UnitFile {
+	path: string;
+	size: number;
+}
+
 export interface PageJob {
 	id: number;
 	/** world.json-relative paths */
 	pack: string;
 	col: string | null;
+	atr: UnitFile | null;
 	offset: number;
 	length: number;
 }
@@ -13,6 +20,7 @@ export interface PageJob {
 export interface Batch {
 	pack: string;
 	col: string | null;
+	atr: UnitFile | null;
 	start: number;
 	end: number;
 	/** the span-aligned stretch of the pack its pages start in; one worker owns each */
@@ -124,6 +132,6 @@ export class Scheduler {
 			pages.unshift(job);
 			start = job.offset;
 		}
-		return { pack: seed.pack, col: seed.col, start, end, window, pages };
+		return { pack: seed.pack, col: seed.col, atr: seed.atr, start, end, window, pages };
 	}
 }

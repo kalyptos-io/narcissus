@@ -24,6 +24,7 @@ import { FADE_CAP, Fader } from './plan/draw.ts';
 import type { Fetch } from '../ports.ts';
 import type { Frame, Host, Plugin, Post, Shade } from './plugin.ts';
 import { percentile, pixelRatio, Quality } from './quality.ts';
+import { AttributeRegistry } from './stream/attributes.ts';
 import { Feed } from './stream/feed.ts';
 import { http } from '../adapters/http.ts';
 import { Loader } from './stream/loader.ts';
@@ -291,6 +292,8 @@ class GpuEngine implements Engine {
 	#settings: Settings;
 	#quality: Quality;
 	#pool: Pool;
+	/** the attribute streams the hooks read */
+	#attributes: AttributeRegistry;
 	#renderer: Renderer;
 	/** splats one frame may project */
 	#frameCapacity: number;
@@ -384,6 +387,10 @@ class GpuEngine implements Engine {
 		this.#target = [Math.max(1, canvas.width), Math.max(1, canvas.height)];
 		const { pool, frame } = capacities(this.#budget, gpu.device.limits);
 		this.#pool = new Pool(gpu.device, pool);
+		this.#attributes = new AttributeRegistry(this.#pool.extension, () => {
+			this.#arrived = true;
+			this.requestFrame();
+		});
 		const keep = (id: number) => this.#feed?.protects(id) ?? false;
 		this.#layers = new Layers(
 			this.#pool,
@@ -415,7 +422,12 @@ class GpuEngine implements Engine {
 		};
 		const { cache = 'opfs', source = 'http' } = this.#options;
 		// a worker resolves a relative url against its own script, not the page
-		if (source === 'http') worldUrl = new URL(worldUrl, document.baseURI).href;
+		if (source === 'http') {
+			worldUrl = new URL(worldUrl, document.baseURI).href;
+			objects = Object.fromEntries(
+				Object.entries(objects).map(([pack, url]) => [pack, new URL(url, document.baseURI).href])
+			);
+		}
 		const bytes = await this.#fetch(worldUrl, null);
 		const world = parseWorld(JSON.parse(new TextDecoder().decode(bytes)));
 		check();
@@ -440,6 +452,7 @@ class GpuEngine implements Engine {
 		this.#loader?.destroy();
 		this.#url = worldUrl;
 		this.#objects = objects;
+		this.#attributes.open(world.attributes);
 		this.#tree = tree;
 		this.#loader = loader;
 		this.#plan = null;
@@ -598,7 +611,7 @@ class GpuEngine implements Engine {
 				loading: feed?.loading ?? 0,
 				queued: feed?.queued ?? 0
 			},
-			memory: { pool: pool.bytes, buffers: gpu.bytes },
+			memory: { pool: pool.bytes, buffers: gpu.bytes, extension: pool.extension.bytes },
 			capacity: pool.capacity,
 			budget: this.#budget,
 			scale: this.#quality.scale
@@ -719,8 +732,8 @@ class GpuEngine implements Engine {
 			this.#arrived = true;
 			this.requestFrame();
 		};
-		const objects = new Objects(this.#objects, this.#fetch, arrive);
-		return new Feed(tree, loader, objects, this.#pool, arrive, this.#reopen);
+		const objects = new Objects(this.#objects, loader.ids.bind(loader), arrive);
+		return new Feed(tree, loader, objects, this.#attributes, this.#pool, arrive, this.#reopen);
 	}
 
 	/** a release replaced the world: open its world.json again at the same camera */

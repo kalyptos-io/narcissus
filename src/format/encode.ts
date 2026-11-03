@@ -1,16 +1,24 @@
 // writers from the spec: layer packs for hosts, and the files of tests and synthetic worlds
 
-import type { Col, Idx, PageRow } from './types.ts';
+import type { Attribute, Col, Idx, PageRow, Scalar } from './types.ts';
 import { deflate } from './inflate.ts';
 import { extents } from './page.ts';
 import {
+	ATR_CHUNK_BYTES,
+	ATR_MAGIC,
+	ATR_TRAILER,
 	BASE_PLANES,
 	CHILD_BYTES,
 	COL_CHANNELS,
 	COL_HEADER,
 	COL_MAGIC,
 	DESCENDANT_BYTES,
+	DICTIONARY_MAX,
+	DICTIONARY_U8,
+	ENCODING,
 	IDX_HEADER,
+	IDX_HEADER_V2,
+	IDX_VERSION,
 	IDS_MAGIC,
 	IDX_MAGIC,
 	PACK_MAGIC,
@@ -20,6 +28,7 @@ import {
 	PLANES,
 	PREFIX,
 	ROW_BYTES,
+	SCALAR_BYTES,
 	SH_COEFFS,
 	VERSION
 } from './spec.ts';
@@ -327,19 +336,25 @@ function unhex(hash: string): Uint8Array {
 }
 
 /** magic, version and the deflated body */
-export async function wrap(body: Uint8Array, magic: string): Promise<Uint8Array> {
+export async function wrap(
+	body: Uint8Array,
+	magic: string,
+	version = VERSION
+): Promise<Uint8Array> {
 	const z = await deflate(body);
 	const out = new Uint8Array(PREFIX + z.length);
 	writeMagic(out, 0, magic);
-	new DataView(out.buffer).setUint16(4, VERSION, true);
+	new DataView(out.buffer).setUint16(4, version, true);
 	out.set(z, PREFIX);
 	return out;
 }
 
+/** version 2 when the unit has an .atr, else version 1 */
 export async function encodeIdx(idx: Idx): Promise<Uint8Array> {
 	const { rows, children, descendants } = idx;
+	const header = idx.atr ? IDX_HEADER_V2 : IDX_HEADER;
 	const body = new Uint8Array(
-		IDX_HEADER +
+		header +
 			rows.length * ROW_BYTES +
 			children.length * CHILD_BYTES +
 			descendants.length * DESCENDANT_BYTES
@@ -354,7 +369,11 @@ export async function encodeIdx(idx: Idx): Promise<Uint8Array> {
 	view.setUint16(32, rows.length, true);
 	view.setUint8(34, children.length);
 	view.setUint16(36, descendants.length, true);
-	let at = IDX_HEADER;
+	if (idx.atr) {
+		body.set(unhex(idx.atr), 40);
+		view.setUint32(48, idx.atrSize, true);
+	}
+	let at = header;
 	for (const row of rows) {
 		writeRow(view, at, row);
 		at += ROW_BYTES;
@@ -371,7 +390,7 @@ export async function encodeIdx(idx: Idx): Promise<Uint8Array> {
 		body.set(unhex(d.idx), at + 3);
 		at += DESCENDANT_BYTES;
 	}
-	return wrap(body, IDX_MAGIC);
+	return wrap(body, IDX_MAGIC, idx.atr ? IDX_VERSION : VERSION);
 }
 
 export async function encodeCol(col: Col): Promise<Uint8Array> {
@@ -397,6 +416,157 @@ export async function encodeCol(col: Col): Promise<Uint8Array> {
 		}
 	}
 	return wrap(body, COL_MAGIC);
+}
+
+function setScalar(view: DataView, at: number, type: Scalar, value: number): void {
+	switch (type) {
+		case 'u8':
+			return view.setUint8(at, value);
+		case 'u16':
+			return view.setUint16(at, value, true);
+		case 'u32':
+			return view.setUint32(at, value, true);
+		case 'i8':
+			return view.setInt8(at, value);
+		case 'i16':
+			return view.setInt16(at, value, true);
+		case 'i32':
+			return view.setInt32(at, value, true);
+		case 'f16':
+			return view.setFloat16(at, value, true);
+		case 'f32':
+			return view.setFloat32(at, value, true);
+	}
+}
+
+/** the bytes of each row's value of a fixed stream, components per row in values */
+function valueBytes(values: ArrayLike<number>, a: Attribute & { type: Scalar }): Uint8Array[] {
+	const size = SCALAR_BYTES[a.type];
+	const rows = values.length / a.components;
+	return Array.from({ length: rows }, (_, row) => {
+		const bytes = new Uint8Array(a.components * size);
+		const view = new DataView(bytes.buffer);
+		for (let c = 0; c < a.components; c++) {
+			setScalar(view, c * size, a.type, values[row * a.components + c]);
+		}
+		return bytes;
+	});
+}
+
+function concat(parts: readonly Uint8Array[]): Uint8Array {
+	const out = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
+	let at = 0;
+	for (const part of parts) {
+		out.set(part, at);
+		at += part.length;
+	}
+	return out;
+}
+
+const u32s = (values: readonly number[]) => new Uint8Array(Uint32Array.from(values).buffer);
+
+/**
+ * one stream's values for one page as an inflated chunk: a fixed stream's values, components per
+ * row, or a records stream's record per row. sparse lists the rows whose value is not the default,
+ * or whose record is not empty; a dictionary holds the values in the order they first appear
+ */
+export function encodeChunk(
+	values: ArrayLike<number> | readonly Uint8Array[],
+	a: Attribute,
+	encoding: number
+): Uint8Array {
+	if (a.type === 'records') {
+		const records = values as readonly Uint8Array[];
+		if (encoding === ENCODING.dictionary) throw new Error('a records stream has no dictionary');
+		const rows = Array.from(records.keys());
+		const listed = encoding === ENCODING.sparse ? rows.filter((row) => records[row].length) : rows;
+		const offsets = [0];
+		for (const row of listed) offsets.push(offsets[offsets.length - 1] + records[row].length);
+		const head = encoding === ENCODING.sparse ? [u32s([listed.length]), u32s(listed)] : [];
+		return concat([...head, u32s(offsets), ...listed.map((row) => records[row])]);
+	}
+	const fixed = { ...a, type: a.type };
+	const rows = valueBytes(values as ArrayLike<number>, fixed);
+	if (encoding === ENCODING.plain) return concat(rows);
+	if (encoding === ENCODING.sparse) {
+		const [empty] = valueBytes(a.default, fixed);
+		const listed = Array.from(rows.keys()).filter((row) =>
+			rows[row].some((b, k) => b !== empty[k])
+		);
+		return concat([u32s([listed.length]), u32s(listed), ...listed.map((row) => rows[row])]);
+	}
+	const entries = new Map<string, number>();
+	const order: Uint8Array[] = [];
+	const indices = rows.map((bytes) => {
+		const key = bytes.join();
+		let index = entries.get(key);
+		if (index === undefined) {
+			index = order.length;
+			entries.set(key, index);
+			order.push(bytes);
+		}
+		return index;
+	});
+	if (order.length > DICTIONARY_MAX)
+		throw new Error(`${order.length} values overflow a dictionary`);
+	const wide = order.length > DICTIONARY_U8;
+	const index = wide ? new Uint8Array(Uint16Array.from(indices).buffer) : Uint8Array.from(indices);
+	return concat([u32s([order.length]), ...order, index]);
+}
+
+/** an .atr of chunks, inflated bodies, of the pack whose hash is pack; streams are their names */
+export async function encodeAtr(
+	pack: string,
+	streams: readonly string[],
+	chunks: readonly {
+		stream: number;
+		encoding: number;
+		offset: number;
+		rows: number;
+		body: Uint8Array;
+	}[]
+): Promise<Uint8Array> {
+	const ordered = chunks.toSorted((a, b) => a.offset - b.offset || a.stream - b.stream);
+	const blobs = await Promise.all(ordered.map(({ body }) => deflate(body)));
+	const names = streams.map((name) => new TextEncoder().encode(name));
+	const tables = blobs.reduce((sum, blob) => sum + blob.length, 0);
+	const size =
+		tables +
+		4 +
+		names.reduce((sum, name) => sum + 1 + name.length, 0) +
+		ordered.length * ATR_CHUNK_BYTES +
+		ATR_TRAILER;
+	const out = new Uint8Array(size);
+	const view = new DataView(out.buffer);
+	let at = 0;
+	const placed = blobs.map((blob) => {
+		out.set(blob, at);
+		at += blob.length;
+		return at - blob.length;
+	});
+	view.setUint16(at, streams.length, true);
+	at += 4;
+	for (const name of names) {
+		if (name.length > 255) throw new Error('a stream name is longer than 255 bytes');
+		out[at] = name.length;
+		out.set(name, at + 1);
+		at += 1 + name.length;
+	}
+	ordered.forEach((chunk, c) => {
+		view.setUint16(at, chunk.stream, true);
+		view.setUint8(at + 2, chunk.encoding);
+		view.setUint32(at + 4, chunk.offset, true);
+		view.setUint32(at + 8, chunk.rows, true);
+		view.setUint32(at + 12, placed[c], true);
+		view.setUint32(at + 16, blobs[c].length, true);
+		at += ATR_CHUNK_BYTES;
+	});
+	out.set(unhex(pack), at);
+	view.setUint32(at + 8, tables, true);
+	view.setUint32(at + 12, ordered.length, true);
+	writeMagic(out, at + 16, ATR_MAGIC);
+	view.setUint16(at + 20, VERSION, true);
+	return out;
 }
 
 export async function encodeIds(ids: Uint16Array): Promise<Uint8Array> {

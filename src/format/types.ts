@@ -26,6 +26,9 @@ export interface Idx extends UnitKey {
 	pack: string;
 	packSize: number;
 	col: string | null;
+	/** 16 hex digits of the unit's .atr and its size in bytes; null and 0 for none */
+	atr: string | null;
+	atrSize: number;
 	rows: PageRow[];
 	/** quadrant a + 2b of this unit */
 	children: { quadrant: number; idx: string }[];
@@ -47,6 +50,40 @@ export interface WorldRoot extends UnitKey {
 	idx: string;
 }
 
+export type Scalar = 'u8' | 'u16' | 'u32' | 'i8' | 'i16' | 'i32' | 'f16' | 'f32';
+
+/** a stream world.json declares */
+export interface Attribute {
+	type: Scalar | 'records';
+	/** 1 to 4; 0 for records */
+	components: number;
+	/** one per component; empty for records */
+	default: number[];
+	rule: 'preserved' | 'aggregated' | 'unavailable';
+}
+
+/** one stream's values for one page in an .atr */
+export interface AtrChunk {
+	/** index into Atr.streams */
+	stream: number;
+	encoding: number;
+	/** blob offset of the page in the pack */
+	offset: number;
+	rows: number;
+	/** byte offset and length of the deflated chunk in the file */
+	at: number;
+	length: number;
+}
+
+/** the tables and trailer of an .atr */
+export interface Atr {
+	/** 16 hex digits of the pack the values describe */
+	pack: string;
+	streams: string[];
+	/** by blob offset, then stream */
+	chunks: AtrChunk[];
+}
+
 export interface World {
 	version: 1;
 	/** names of the horizontal system and the height datum; a reader does not interpret them */
@@ -55,6 +92,8 @@ export interface World {
 	leaf: number;
 	roots: WorldRoot[];
 	extent: { e: [number, number]; n: [number, number]; h: [number, number] };
+	/** the streams .atr files may hold, by name; empty when world.json declares none */
+	attributes: Record<string, Attribute>;
 	/** the members of world.json a reader does not know, as written */
 	extra: Record<string, unknown>;
 }
@@ -71,4 +110,14 @@ export interface DecodedPage {
 	params: Float32Array<ArrayBuffer>;
 	/** per cluster of CLUSTER splats: min x, y, z, max x, y, z of their extents, relative to the origin */
 	clusters: Float32Array<ArrayBuffer>;
+	/** the streams the engine asked for that the page has a chunk of */
+	attributes?: PageAttribute[];
+}
+
+/** one stream of a decoded page, as the gpu reads it; layout in spec.ts */
+export interface PageAttribute {
+	/** the engine's id of the stream */
+	stream: number;
+	descriptor: number;
+	words: Uint32Array<ArrayBuffer>;
 }

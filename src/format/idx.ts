@@ -4,13 +4,17 @@ import {
 	CHILD_BYTES,
 	DESCENDANT_BYTES,
 	IDX_HEADER,
+	IDX_HEADER_V2,
 	IDX_MAGIC,
+	IDX_VERSION,
 	LEAF,
 	PACK_MAGIC,
 	PACK_TRAILER,
 	ROW_BYTES,
 	VERSION
 } from './spec.ts';
+
+const NONE = '0000000000000000';
 
 function hashAt(view: DataView, offset: number): string {
 	let hex = '';
@@ -64,31 +68,39 @@ export async function packRows(
 	return Array.from({ length: rows }, (_, r) => rowAt(table, r * ROW_BYTES));
 }
 
-/** throws an Error naming the fault when the bytes are not a v1 .idx */
+/** throws an Error naming the fault when the bytes are not a v1 or v2 .idx */
 export async function parseIdx(bytes: Uint8Array): Promise<Idx> {
-	const v = await unwrap(bytes, IDX_MAGIC, '.idx');
-	if (v.byteLength < IDX_HEADER) throw new Error('.idx header is cut off');
+	const v = await unwrap(bytes, IDX_MAGIC, '.idx', IDX_VERSION);
+	// unwrap took version 1 or 2, so its low byte tells them apart
+	const header = bytes[4] === VERSION ? IDX_HEADER : IDX_HEADER_V2;
+	if (v.byteLength < header) throw new Error('.idx header is cut off');
 	const rows = v.getUint16(32, true);
 	const children = v.getUint8(34);
 	const descendants = v.getUint16(36, true);
-	const size =
-		IDX_HEADER + rows * ROW_BYTES + children * CHILD_BYTES + descendants * DESCENDANT_BYTES;
+	const size = header + rows * ROW_BYTES + children * CHILD_BYTES + descendants * DESCENDANT_BYTES;
 	if (v.byteLength !== size) {
 		throw new Error(`.idx holds ${v.byteLength} bytes, its counts need ${size}`);
 	}
 	const colHash = hashAt(v, 24);
+	const atrHash = header === IDX_HEADER ? NONE : hashAt(v, 40);
+	const atrSize = header === IDX_HEADER ? 0 : v.getUint32(48, true);
+	if ((atrHash === NONE) !== (atrSize === 0)) {
+		throw new Error('.idx names an attribute file without its size, or a size without a file');
+	}
 	const idx: Idx = {
 		level: v.getUint8(0),
 		e: v.getInt32(4, true),
 		n: v.getInt32(8, true),
 		pack: hashAt(v, 12),
 		packSize: v.getUint32(20, true),
-		col: colHash === '0000000000000000' ? null : colHash,
+		col: colHash === NONE ? null : colHash,
+		atr: atrHash === NONE ? null : atrHash,
+		atrSize,
 		rows: [],
 		children: [],
 		descendants: []
 	};
-	let at = IDX_HEADER;
+	let at = header;
 	for (let r = 0; r < rows; r++, at += ROW_BYTES) idx.rows.push(rowAt(v, at));
 	for (let c = 0; c < children; c++, at += CHILD_BYTES) {
 		idx.children.push({ quadrant: v.getUint8(at), idx: hashAt(v, at + 1) });
@@ -105,11 +117,11 @@ export async function parseIdx(bytes: Uint8Array): Promise<Idx> {
 }
 
 /** u/<L>/<E>/<N>.<hash>.<ext>, relative to world.json */
-export function unitPath(key: UnitKey, hash: string, ext: 'idx' | 'pack' | 'col'): string {
+export function unitPath(key: UnitKey, hash: string, ext: 'idx' | 'pack' | 'col' | 'atr'): string {
 	return `u/${key.level}/${key.e}/${key.n}.${hash}.${ext}`;
 }
 
-const UNIT_PATH = /(?:^|\/)u\/(\d+)\/(-?\d+)\/(-?\d+)\.([0-9a-f]{16})\.(?:idx|pack|col)$/;
+const UNIT_PATH = /(?:^|\/)u\/(\d+)\/(-?\d+)\/(-?\d+)\.([0-9a-f]{16})\.(?:idx|pack|col|atr)$/;
 
 /** the unit key and hash of a unitPath */
 export function parseUnitPath(path: string): (UnitKey & { hash: string }) | null {

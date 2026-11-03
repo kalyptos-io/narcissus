@@ -31,6 +31,10 @@ export const CLUSTER_WORDS = 12;
 export const FRAME_UNIFORM_BYTES = 336;
 /** u32 words of common.wgsl's Projected */
 export const PROJECTED_WORDS = 6;
+/** engine attribute stream ids at most; the extension's first 4 words a stream hold their defaults */
+export const ATTRIBUTE_STREAMS = 64;
+/** Page.attributes when the page has no attribute directory */
+export const ATTRIBUTE_NONE = 0xffffffff;
 /** vec4f slots shared by shade hooks */
 export const PLUGIN_VEC4S = 16;
 

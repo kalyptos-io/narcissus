@@ -1,14 +1,15 @@
 // a stream worker: fetch, cache, inflate, decode; see jobs.ts
 
 import { Missing, type Cache } from '../../ports.ts';
-import type { Col, DecodedPage, Idx } from '../../format/index.ts';
+import type { DecodedPage, Idx, PageRow } from '../../format/index.ts';
 import { http } from '../../adapters/http.ts';
-import { loadBatch, loadIdx, type Sources } from './jobs.ts';
+import type { Wanted } from './attributes.ts';
+import { loadBatch, loadIdx, loadIds, type Kept, type Sources } from './jobs.ts';
 import type { LoaderOptions } from './loader.ts';
 import { memoryCache } from '../../adapters/memory.ts';
 import { opfsCache, pruneOpfs } from '../../adapters/opfs.ts';
 import { asking, type Ask, type Fetched } from './remote.ts';
-import type { Batch } from './scheduler.ts';
+import type { Batch, UnitFile } from './scheduler.ts';
 import { synthetic } from './synthetic.ts';
 
 export interface Init extends Pick<LoaderOptions, 'base' | 'cache'> {
@@ -22,14 +23,15 @@ export interface Init extends Pick<LoaderOptions, 'base' | 'cache'> {
 export type Message =
 	| ({ type: 'init' } & Init)
 	| { type: 'idx'; id: number; path: string }
-	| { type: 'batch'; id: number; batch: Batch }
+	| { type: 'ids'; id: number; url: string; pack: UnitFile; rows: readonly PageRow[] }
+	| { type: 'batch'; id: number; batch: Batch; streams: readonly Wanted[] }
 	| { type: 'abort'; id: number };
 
 export type Loaded = { id: number; page: DecodedPage };
 
 /** a batch answers with its pages one by one, then done */
 export type Reply =
-	| { id: number; value: Idx }
+	| { id: number; value: Idx | Map<number, Uint16Array> }
 	| { id: number; page: Loaded }
 	| { id: number; done: true }
 	| { id: number; error: string; missing: boolean };
@@ -43,7 +45,7 @@ const scope = self as unknown as {
 };
 
 let sources: Promise<Sources> | undefined;
-const cols = new Map<string, Promise<Col>>();
+const kept: Kept = { cols: new Map(), atrs: new Map() };
 const running = new Map<number, AbortController>();
 const own = asking((ask) => scope.postMessage(ask, []));
 
@@ -90,7 +92,7 @@ async function opfsBytes(): Promise<number> {
 	}
 }
 
-async function answer(message: Extract<Message, { type: 'idx' | 'batch' }>) {
+async function answer(message: Extract<Message, { type: 'idx' | 'ids' | 'batch' }>) {
 	const { id } = message;
 	const controller = new AbortController();
 	running.set(id, controller);
@@ -99,8 +101,13 @@ async function answer(message: Extract<Message, { type: 'idx' | 'batch' }>) {
 		const ready = await sources;
 		if (message.type === 'idx') {
 			scope.postMessage({ id, value: await loadIdx(ready, message.path) }, []);
+		} else if (message.type === 'ids') {
+			const ids = await loadIds(ready, message.url, message.pack, message.rows);
+			const buffers = new Set(Array.from(ids.values(), (page) => page.buffer as ArrayBuffer));
+			scope.postMessage({ id, value: ids }, [...buffers]);
 		} else {
-			for await (const page of loadBatch(ready, message.batch, cols, controller.signal)) {
+			const { batch, streams } = message;
+			for await (const page of loadBatch(ready, batch, streams, kept, controller.signal)) {
 				scope.postMessage({ id, page }, transfers(page));
 			}
 			scope.postMessage({ id, done: true }, []);
@@ -120,5 +127,6 @@ function transfers({ page }: Loaded): Transferable[] {
 	for (const array of [page.geometry, page.colour, page.params, page.clusters]) {
 		buffers.add(array.buffer);
 	}
+	for (const { words } of page.attributes ?? []) buffers.add(words.buffer);
 	return [...buffers];
 }

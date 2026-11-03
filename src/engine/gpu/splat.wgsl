@@ -68,7 +68,7 @@ fn decode(cluster: Cluster, t: u32, s: ptr<function, Splat>, g: ptr<function, ve
 	let k = page.shScale;
 	let m0 = vec3f(code(w0, 24u), code(w1, 16u), code(w2, 8u)) * vec3f(k[0].x, k[0].w, k[1].z);
 	let m1 = vec3f(code(w1, 0u), code(w1, 24u), code(w2, 16u)) * vec3f(k[0].y, k[1].x, k[1].w);
-	let m2 = vec3f(code(w1, 8u), code(w2, 0u), code(w2, 24u)) * vec3f(k[0].z, k[1].y, k[2].x);
+	let m2 = vec3f(code(w1, 8u), code(w2, 0u), code(w2, 24u)) * vec3f(k[0].z, k[1].y, page.sh8);
 	// sh in the layer's frame, so the view direction turns back
 	let toward = turn(normalize(d.position - uniforms.camera), page.turn * vec2f(1.0, -1.0));
 	d.colour = max(0.5 + C0 * dc + C1 * (-toward.y * m0 + toward.z * m1 - toward.x * m2), vec3f(0.0));

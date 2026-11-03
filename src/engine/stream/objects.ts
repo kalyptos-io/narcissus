@@ -1,33 +1,38 @@
-// the host's object ids: each unit's .ids, read once through the engine's source and written into
+// the host's object ids: each unit's .ids, read once through the stream workers and written into
 // its pages as they arrive
 
-import { GEOMETRY_WORDS, parseIds, type DecodedPage, type PageRow } from '../../format/index.ts';
-import type { Fetch } from '../../ports.ts';
+import { GEOMETRY_WORDS, type DecodedPage, type Idx, type PageRow } from '../../format/index.ts';
+import type { UnitFile } from './scheduler.ts';
+
+/** a unit's ids at url by the blob offsets of its pages, given its pack and the rows of its .idx */
+export type LoadIds = (
+	url: string,
+	pack: UnitFile,
+	rows: readonly PageRow[]
+) => Promise<Map<number, Uint16Array>>;
 
 export class Objects {
 	#urls: Map<string, string>;
-	#fetch: Fetch;
+	#load: LoadIds;
 	#onLoad: () => void;
 	/** by pack path: each page's ids by blob offset, null when ignored, undefined while loading */
 	// ponytail: kept for the world's life, bounded by the host's map
 	#packs = new Map<string, Map<number, Uint16Array> | null | undefined>();
 
 	/** urls: a unit's pack path to the url of its .ids; onLoad runs when one settles */
-	constructor(urls: Readonly<Record<string, string>>, fetch: Fetch, onLoad: () => void) {
+	constructor(urls: Readonly<Record<string, string>>, load: LoadIds, onLoad: () => void) {
 		this.#urls = new Map(Object.entries(urls));
-		this.#fetch = fetch;
+		this.#load = load;
 		this.#onLoad = onLoad;
 	}
 
-	/** whether the pages of pack may load: it has no .ids, or its .ids settled; starts loading it */
-	ready(pack: string, rows: readonly PageRow[]): boolean {
+	/** whether the pages of pack, of the unit of idx, may load: it has no .ids, or its .ids settled; starts loading it */
+	ready(pack: string, idx: Idx): boolean {
 		const url = this.#urls.get(pack);
 		if (url === undefined) return true;
 		if (this.#packs.has(pack)) return this.#packs.get(pack) !== undefined;
 		this.#packs.set(pack, undefined);
-		void this.#fetch(url, null)
-			.then(parseIds)
-			.then((ids) => slices(ids, rows))
+		void this.#load(url, { path: pack, size: idx.packSize }, idx.rows)
 			.catch((error: unknown) => {
 				console.warn(
 					`${url} is ignored: ${error instanceof Error ? error.message : String(error)}`
@@ -48,18 +53,4 @@ export class Objects {
 		const { geometry } = page;
 		for (let t = 0; t < page.count; t++) geometry[t * GEOMETRY_WORDS + 3] |= ids[t] << 16;
 	}
-}
-
-/** ids cut into the pages of rows, in blob order; throws when they hold another count of splats */
-function slices(ids: Uint16Array, rows: readonly PageRow[]): Map<number, Uint16Array> {
-	const ordered = rows.toSorted((a, b) => a.offset - b.offset);
-	const splats = ordered.reduce((sum, row) => sum + row.count, 0);
-	if (ids.length !== splats) throw new Error(`it holds ${ids.length} ids for ${splats} splats`);
-	const pages = new Map<number, Uint16Array>();
-	let first = 0;
-	for (const { offset, count } of ordered) {
-		pages.set(offset, ids.subarray(first, first + count));
-		first += count;
-	}
-	return pages;
 }

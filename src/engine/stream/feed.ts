@@ -3,8 +3,9 @@
 import { unitPath } from '../../format/index.ts';
 import type { Pool } from '../gpu/pool.ts';
 import type { Plan } from '../plan/cut.ts';
-import type { Tree, UnitNode } from '../world/tree.ts';
+import type { PageNode, Tree, UnitNode } from '../world/tree.ts';
 import { Missing } from '../../ports.ts';
+import type { Wanted } from './attributes.ts';
 import type { Loader } from './loader.ts';
 import type { Objects } from './objects.ts';
 import { Scheduler, type Batch, type PageJob, type SchedulerOptions } from './scheduler.ts';
@@ -26,10 +27,17 @@ const REFUSED = 1000;
 /** ms between prune checks */
 const PRUNE = 2000;
 
+/** the attribute streams hooks read, as AttributeRegistry gives them */
+export interface Streams {
+	readonly wanted: Wanted[];
+	readonly generation: number;
+}
+
 export class Feed {
 	#tree: Tree;
 	#loader: Loader;
 	#objects: Objects;
+	#streams: Streams;
 	#pool: Pool;
 	#onArrive: () => void;
 	/** runs once, when an immutable file was missing: the world was released anew and must be reopened */
@@ -50,8 +58,8 @@ export class Feed {
 	#refused = new Map<number, number>();
 	/** by pack or idx path, or page id: a replan for when its wait ends */
 	#timers = new Map<string | number, ReturnType<typeof setTimeout>>();
-	/** ids the pool accepted; it may have evicted some since */
-	#held = new Set<number>();
+	/** ids the pool accepted, with the streams' generation they loaded at; it may have evicted some since */
+	#held = new Map<number, number>();
 	/** units added and the update that first saw them; prune spares them for PRUNE ms */
 	#added = new Map<UnitNode, number>();
 	/** units added since the last update */
@@ -65,6 +73,7 @@ export class Feed {
 		tree: Tree,
 		loader: Loader,
 		objects: Objects,
+		streams: Streams,
 		pool: Pool,
 		onArrive: () => void,
 		onStale: () => void,
@@ -73,6 +82,7 @@ export class Feed {
 		this.#tree = tree;
 		this.#loader = loader;
 		this.#objects = objects;
+		this.#streams = streams;
 		this.#pool = pool;
 		this.#onArrive = onArrive;
 		this.#onStale = onStale;
@@ -150,15 +160,32 @@ export class Feed {
 		}
 	}
 
-	/** the plan's load pages not held and not waiting, most wanted first */
+	/**
+	 * the plan's load pages not held and not waiting, most wanted first, then the cut's pages that
+	 * loaded before a stream their unit may hold came to be read
+	 */
 	#jobs(): PageJob[] {
 		const jobs: PageJob[] = [];
-		for (const { id, unit, row } of this.#plan.load) {
+		const job = ({ id, unit, row }: PageNode, pack: string): PageJob => {
 			const { idx } = unit;
-			const pack = unitPath(unit, idx.pack, 'pack');
-			if (!this.#ready(id, pack) || !this.#objects.ready(pack, idx.rows)) continue;
 			const col = idx.col ? unitPath(unit, idx.col, 'col') : null;
-			jobs.push({ id, pack, col, offset: row.offset, length: row.length });
+			const atr = idx.atr ? { path: unitPath(unit, idx.atr, 'atr'), size: idx.atrSize } : null;
+			return { id, pack, col, atr, offset: row.offset, length: row.length };
+		};
+		for (const page of this.#plan.load) {
+			const { idx } = page.unit;
+			const pack = unitPath(page.unit, idx.pack, 'pack');
+			if (!this.#ready(page.id, pack) || !this.#objects.ready(pack, idx)) continue;
+			jobs.push(job(page, pack));
+		}
+		const { generation } = this.#streams;
+		for (const page of this.#plan.cut) {
+			const { id, unit } = page;
+			const loaded = this.#held.get(id);
+			if (!unit.idx.atr || loaded === undefined || loaded >= generation || !this.#pool.has(id))
+				continue;
+			const pack = unitPath(unit, unit.idx.pack, 'pack');
+			if (!this.#waiting(pack)) jobs.push(job(page, pack));
 		}
 		return jobs;
 	}
@@ -167,32 +194,40 @@ export class Feed {
 		if (this.#stale) return;
 		const { start, abort } = this.#scheduler.next();
 		for (const batch of abort) this.#batches.get(batch)?.abort();
+		const { wanted, generation } = this.#streams;
 		for (const batch of start) {
 			const controller = new AbortController();
 			this.#batches.set(batch, controller);
-			void this.#loader.batch(batch, controller.signal, this.#arrive).then(
+			const arrive = (loaded: Loaded) => this.#arrive(loaded, generation);
+			void this.#loader.batch(batch, wanted, controller.signal, arrive).then(
 				() => this.#done(batch),
 				(error: unknown) => this.#failed(batch, error)
 			);
 		}
 	}
 
-	/** a page of a batch in flight, into the pool */
-	#arrive = ({ id, page }: Loaded): void => {
+	/** a page of a batch in flight, loaded with the streams of generation, into the pool */
+	#arrive({ id, page }: Loaded, generation: number): void {
 		if (this.#destroyed) return;
 		const node = this.#tree.pages.get(id);
 		if (!node) return;
 		const { unit, row } = node;
+		if (this.#pool.holds(id)) {
+			this.#pool.setAttributes(id, page.attributes ?? []);
+			this.#held.set(id, generation);
+			this.#onArrive();
+			return;
+		}
 		this.#objects.write(unitPath(unit, unit.idx.pack, 'pack'), row.offset, page);
 		if (this.#pool.add(id, page, [unit.e, unit.n], this.protects)) {
-			this.#held.add(id);
+			this.#held.set(id, generation);
 			if (this.#refused.delete(id)) this.#unwake(id);
 		} else {
 			this.#refused.set(id, this.#now + REFUSED);
 			this.#wake(id, REFUSED);
 		}
 		this.#onArrive();
-	};
+	}
 
 	#done(batch: Batch): void {
 		if (this.#destroyed) return;
@@ -252,12 +287,12 @@ export class Feed {
 		const now = this.#now;
 		if (now - this.#pruned < PRUNE) return;
 		this.#pruned = now;
-		for (const id of this.#held) if (!this.#pool.holds(id)) this.#held.delete(id);
+		for (const id of this.#held.keys()) if (!this.#pool.holds(id)) this.#held.delete(id);
 		for (const [id, until] of this.#refused) if (until <= now) this.#refused.delete(id);
 		for (const [unit, seen] of this.#added) if (now - seen >= PRUNE) this.#added.delete(unit);
 		const { keep } = this.#plan;
 		if (this.#tree.pages.size <= 2 * (this.#held.size + keep.size)) return;
-		const kept = new Set([...keep, ...this.#drawn, ...this.#held]);
+		const kept = new Set([...keep, ...this.#drawn, ...this.#held.keys()]);
 		// a fresh unit's pages wait on a plan that refines into them
 		for (const unit of this.#added.keys()) for (const { id } of unit.pages) kept.add(id);
 		for (const id of this.#tree.prune(kept)) if (this.#pool.holds(id)) this.#pool.remove(id);

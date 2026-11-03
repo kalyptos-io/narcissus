@@ -79,7 +79,8 @@ An `.ids` file has an 8-byte prefix (`NIDS`, u16 version 1, u16 0), then a raw d
 There is one id for each splat of the pack: the pages in the order of their blobs, and the splats of each page in file order. Integers are little-endian.
 
 - The engine reads each `.ids` once for each open world, through its `source`, and keeps it out of its `cache`. The pages of a unit wait for its `.ids`.
-- When the file does not load, or `n` differs from the splats that the unit's `.idx` lists, the engine ignores the file and writes a warning to the console.
+- A pack can keep levels that its `.idx` no longer lists, when its unit gained a parent. The ids then cover every page of the pack, in the order of their blobs, and the engine cuts them by the pack's page table.
+- When the file does not load, or `n` differs both from the splats that the unit's `.idx` lists and from those of every page of its pack, the engine ignores the file and writes a warning to the console.
 - `pick()` gives the object in `Hit.object`. A `Shade` hook reads it as `(*s).object`, a `u32`. Layers have object 0.
 
 ## Lines and markers

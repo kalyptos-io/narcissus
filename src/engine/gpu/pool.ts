@@ -1,20 +1,33 @@
-// resident pages on the gpu: records in CLUSTER-splat slots, the page and cluster tables
+// resident pages on the gpu: records in CLUSTER-splat slots, the page and cluster tables, and
+// each page's attribute directory in the extension
 
 import {
 	CLUSTER,
 	COLOUR_WORDS,
 	GEOMETRY_WORDS,
 	PARAMS,
-	type DecodedPage
+	type DecodedPage,
+	type PageAttribute
 } from '../../format/index.ts';
-import { baseOf, CLUSTER_WORDS, PAGE_WORDS, slots } from './layout.ts';
+import { Extension } from './extension.ts';
+import {
+	ATTRIBUTE_NONE,
+	ATTRIBUTE_STREAMS,
+	baseOf,
+	CLUSTER_WORDS,
+	PAGE_WORDS,
+	slots
+} from './layout.ts';
 import { Masks, type Spec } from './masks.ts';
 import type { Drawn } from '../types.ts';
 
-/** u32 words of Page.factors, Page.layer and Page.turn */
+/** u32 words of Page.factors, Page.layer, Page.attributes and Page.turn */
 const FACTORS = 19;
 const LAYER = 23;
+const ATTRIBUTES = 33;
 const TURN = 36;
+/** words the extension starts with */
+const EXTENSION_WORDS = 1 << 16;
 /** Page.layer's bit of a page pick passes by */
 const PICKLESS = 0x80000000;
 /** u32 words of Cluster.maskList and Cluster.maskCount */
@@ -44,6 +57,8 @@ interface Entry {
 	/** 0 for the world's pages; a layer's are pinned: never evicted, kept through clear */
 	layer: number;
 	pickable: boolean;
+	/** extension word of its attribute directory, ATTRIBUTE_NONE for none */
+	directory: number;
 }
 
 /** word ranges of a cpu mirror changed since the last flush */
@@ -88,6 +103,8 @@ export class Pool {
 	/** splats */
 	capacity: number;
 	readonly masks: Masks;
+	/** attribute directories and streams, and what else extends the passes */
+	readonly extension: Extension;
 
 	#device: GPUDevice;
 	#entries = new Map<number, Entry>();
@@ -122,6 +139,9 @@ export class Pool {
 	constructor(device: GPUDevice, capacity: number) {
 		this.capacity = capacity;
 		this.masks = new Masks(device);
+		this.extension = new Extension(device, EXTENSION_WORDS);
+		// the defaults at word 0, where attributes.wgsl reads them
+		this.extension.alloc(4 * ATTRIBUTE_STREAMS);
 		this.#device = device;
 		const slots = this.slots;
 		this.#allocate();
@@ -191,7 +211,8 @@ export class Pool {
 			turn: [1, 0],
 			factors: 0,
 			layer,
-			pickable: true
+			pickable: true,
+			directory: ATTRIBUTE_NONE
 		};
 		this.#entries.set(id, entry);
 		this.#touch(entry);
@@ -214,6 +235,7 @@ export class Pool {
 		this.#firstFree = Math.min(this.#firstFree, entry.slots[0]);
 		this.#free += entry.slots.length;
 		this.#tables.push(entry.table);
+		if (entry.directory !== ATTRIBUTE_NONE) this.extension.free(entry.directory);
 		// the gpu list may name its clusters until the next draw
 		if (entry.page === null && entry.factors !== 0) this.#setFactors(entry, 0);
 	}
@@ -250,6 +272,18 @@ export class Pool {
 		const w = entry.table * PAGE_WORDS;
 		this.#tableDirty.mark(w, w + PAGE_WORDS);
 		if (this.masks.size) this.#relate(entry);
+	}
+
+	/** page id's attribute streams in place of those it came with, from the next draw */
+	setAttributes(id: number, attributes: PageAttribute[]): void {
+		const entry = this.#entries.get(id);
+		if (!entry) return;
+		if (entry.page) {
+			entry.page = { ...entry.page, attributes };
+			return;
+		}
+		if (entry.directory !== ATTRIBUTE_NONE) this.extension.free(entry.directory);
+		this.#writeDirectory(entry, attributes);
 	}
 
 	/** whether pick finds the splats of page id */
@@ -403,6 +437,7 @@ export class Pool {
 	destroy(): void {
 		for (const b of this.#buffers()) b.destroy();
 		this.masks.destroy();
+		this.extension.destroy();
 	}
 
 	#buffers(): GPUBuffer[] {
@@ -521,12 +556,38 @@ export class Pool {
 		f.set(p.subarray(PARAMS.dcMax, PARAMS.dcMax + 3), w + 20);
 		f.set(p.subarray(PARAMS.shScale, PARAMS.shScale + 9), w + 24);
 		this.#setLayer(entry);
+		const directory = this.#writeDirectory(entry, page.attributes ?? []);
 		this.#tableDirty.mark(w, w + PAGE_WORDS);
 
 		entry.page = null;
 		if (this.masks.size) this.#relate(entry);
 		const records = page.count * (GEOMETRY_WORDS + COLOUR_WORDS) * 4;
-		return records + n * CLUSTER_WORDS * 4 + PAGE_WORDS * 4;
+		return records + n * CLUSTER_WORDS * 4 + PAGE_WORDS * 4 + directory * 4;
+	}
+
+	/** an uploaded entry's streams into the extension, behind a directory a stream id; returns its words */
+	#writeDirectory(entry: Entry, attributes: readonly PageAttribute[]): number {
+		const word = entry.table * PAGE_WORDS + ATTRIBUTES;
+		this.#tableDirty.mark(word, word + 1);
+		if (!attributes.length) {
+			entry.directory = this.#table[word] = ATTRIBUTE_NONE;
+			return 0;
+		}
+		const streams = Math.max(...attributes.map((a) => a.stream)) + 1;
+		const head = 1 + 2 * streams;
+		const words = new Uint32Array(head + attributes.reduce((sum, a) => sum + a.words.length, 0));
+		const at = this.extension.alloc(words.length);
+		words[0] = streams;
+		let next = head;
+		for (const { stream, descriptor, words: values } of attributes) {
+			words[1 + 2 * stream] = at + next;
+			words[2 + 2 * stream] = descriptor;
+			words.set(values, next);
+			next += values.length;
+		}
+		this.extension.write(at, words);
+		entry.directory = this.#table[word] = at;
+		return words.length;
 	}
 
 	/** origin in the floating frame, summed in float64 before the f32 store, and turn */

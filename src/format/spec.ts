@@ -1,4 +1,4 @@
-// the constants of guldmund trees version 1 (docs/format.md) and the layout of a decoded page
+// the constants of guldmund trees version 2 (docs/format.md) and the layout of a decoded page
 
 export const C0 = 0.28209479177387814;
 export const C1 = 0.4886025119029199;
@@ -10,18 +10,41 @@ export const LEAF = 250;
 export const PACK_MAGIC = 'GMPK';
 export const IDX_MAGIC = 'GMIX';
 export const COL_MAGIC = 'GMCL';
+export const ATR_MAGIC = 'GMAT';
 /** narcissus's own object id sidecar, docs/embedding.md */
 export const IDS_MAGIC = 'NIDS';
 export const VERSION = 1;
+/** the newest .idx: version 2 names the unit's .atr */
+export const IDX_VERSION = 2;
 /** bytes of the .idx, .col and .ids prefix before their deflate stream */
 export const PREFIX = 8;
 export const PACK_TRAILER = 16;
 export const IDX_HEADER = 40;
+export const IDX_HEADER_V2 = 52;
 export const ROW_BYTES = 52;
 export const CHILD_BYTES = 9;
 export const DESCENDANT_BYTES = 11;
 export const COL_HEADER = 60;
 export const COL_CHANNELS = 12;
+export const ATR_TRAILER = 24;
+export const ATR_CHUNK_BYTES = 20;
+
+/** .atr chunk encodings */
+export const ENCODING = { plain: 0, dictionary: 1, sparse: 2 } as const;
+/** dictionary entries at most, and at most for u8 indices */
+export const DICTIONARY_MAX = 65536;
+export const DICTIONARY_U8 = 256;
+/** bytes of each scalar type */
+export const SCALAR_BYTES = {
+	u8: 1,
+	u16: 2,
+	u32: 4,
+	i8: 1,
+	i16: 2,
+	i32: 4,
+	f16: 2,
+	f32: 4
+} as const;
 
 export const PAGE_HEADER = 128;
 /** byte planes of a page payload, each count long */
@@ -66,3 +89,27 @@ export const PARAMS = {
 	shScale: 18
 };
 export const PAGE_PARAMS = 27;
+
+/**
+ * PageAttribute.descriptor: encoding bits 0-1, type bits 2-5 (ATTRIBUTE_TYPES, 0 for absent),
+ * components bits 6-8, count bits 9-31: the dictionary's entries, the sparse rows, or a plain
+ * records stream's rows. PageAttribute.words, word-aligned:
+ * plain:      the values, back to back
+ * dictionary: the k values, then the row indices, u8 when k <= 256, else u16
+ * sparse:     the m rows, then their values
+ * records:    plain the rows + 1 word offsets, sparse the m rows and m + 1 word offsets, then the
+ *             records from the word after them, each padded with 0 to whole words
+ */
+export const ATTRIBUTE_TYPES = {
+	u8: 1,
+	u16: 2,
+	u32: 3,
+	i8: 4,
+	i16: 5,
+	i32: 6,
+	f16: 7,
+	f32: 8,
+	records: 9
+} as const;
+export const DESCRIPTOR = { encoding: 0, type: 2, components: 6, count: 9 };
+export const DESCRIPTOR_COUNT_MAX = 2 ** 23 - 1;

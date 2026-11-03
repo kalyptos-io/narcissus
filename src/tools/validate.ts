@@ -1,14 +1,21 @@
 // a world checked as a reader meets it: every file there and well formed, and when deep what its name says
 
 import {
+	atrTrailer,
 	contentHash,
 	decodePage,
 	directory,
 	inflate,
 	packRows,
+	parseAtr,
 	parseCol,
 	parseUnitPath,
+	readRecords,
+	readValues,
 	unitPath,
+	ATR_TRAILER,
+	type Attribute,
+	type Idx,
 	type PageRow
 } from '../format/index.ts';
 import { Missing, type Fetch } from '../ports.ts';
@@ -22,7 +29,7 @@ export interface Fault {
 
 export interface Report {
 	units: number;
-	/** the .idx, .pack and .col files reached */
+	/** the .idx, .pack, .col and .atr files reached */
 	files: number;
 	/** their bytes, a pack by the size its .idx gives */
 	bytes: number;
@@ -30,7 +37,7 @@ export interface Report {
 }
 
 export interface ValidateOptions {
-	/** also reads every pack whole: each file's hash against its name, and every page decoded */
+	/** also reads every pack and .atr whole: each file's hash against its name, every page and chunk decoded */
 	deep?: boolean;
 	/** also asks an http world's server, with a plain request, for a range and for cors */
 	server?: boolean;
@@ -57,7 +64,7 @@ export async function validate(
 	}
 	const base = directory(worldUrl);
 	const check = async (unit: Unit) => {
-		await checkUnit(source, base, unit, options.deep ?? false, report);
+		await checkUnit(source, base, unit, world.attributes, options.deep ?? false, report);
 		options.progress?.(report);
 	};
 	// a deep check holds a whole pack per unit
@@ -80,7 +87,14 @@ export async function validate(
 	return report;
 }
 
-async function checkUnit(source: Fetch, base: string, unit: Unit, deep: boolean, report: Report) {
+async function checkUnit(
+	source: Fetch,
+	base: string,
+	unit: Unit,
+	attributes: Record<string, Attribute>,
+	deep: boolean,
+	report: Report
+) {
 	const { idx, path, bytes } = unit;
 	const fault = (at: string, what: string) => report.faults.push({ path: at, fault: what });
 	report.units++;
@@ -106,6 +120,7 @@ async function checkUnit(source: Fetch, base: string, unit: Unit, deep: boolean,
 	}
 
 	const pack = unitPath(idx, idx.pack, 'pack');
+	let table: PageRow[] | null = null;
 	try {
 		report.files++;
 		report.bytes += idx.packSize;
@@ -121,12 +136,12 @@ async function checkUnit(source: Fetch, base: string, unit: Unit, deep: boolean,
 			}
 			return part;
 		};
-		const rows = await packRows(read, idx.packSize);
-		const table = new Map(rows.map((row) => [`${row.g}/${row.i}/${row.j}`, row]));
+		table = await packRows(read, idx.packSize);
+		const pages = new Map(table.map((row) => [`${row.g}/${row.i}/${row.j}`, row]));
 		for (const row of idx.rows) {
 			const key = `${row.g}/${row.i}/${row.j}`;
 			const page = `page ${key}`;
-			const listed = table.get(key);
+			const listed = pages.get(key);
 			if (!listed || listed.offset !== row.offset || listed.length !== row.length) {
 				fault(pack, `does not list ${page} as its .idx does`);
 			} else if (whole) {
@@ -136,6 +151,65 @@ async function checkUnit(source: Fetch, base: string, unit: Unit, deep: boolean,
 		}
 	} catch (error) {
 		fault(pack, told(error));
+	}
+	if (idx.atr) await checkAtr(source, base, idx, table, attributes, deep, report);
+}
+
+/** an .atr against its unit's pack table, when it read, and the streams world.json declares */
+async function checkAtr(
+	source: Fetch,
+	base: string,
+	idx: Idx,
+	table: PageRow[] | null,
+	attributes: Record<string, Attribute>,
+	deep: boolean,
+	report: Report
+) {
+	const path = unitPath(idx, idx.atr!, 'atr');
+	const fault = (what: string) => report.faults.push({ path, fault: what });
+	const size = idx.atrSize;
+	report.files++;
+	report.bytes += size;
+	try {
+		const whole = deep ? await source(base + path, null) : null;
+		if (whole && whole.length !== size) {
+			throw new Error(`holds ${whole.length} bytes, its .idx gives ${size}`);
+		}
+		if (whole && contentHash(whole) !== idx.atr) fault('does not have the hash in its name');
+		const read = async (start: number, end: number) => {
+			const part = whole ? whole.subarray(start, end) : await source(base + path, [start, end]);
+			if (part.length !== end - start) {
+				throw new Error(`gives ${part.length} bytes for ${start}-${end}`);
+			}
+			return part;
+		};
+		const { tables } = atrTrailer(await read(size - ATR_TRAILER, size), size);
+		const atr = parseAtr(await read(tables, size), size);
+		if (atr.pack !== idx.pack) fault(`describes pack ${atr.pack}, not ${idx.pack}`);
+		for (const name of atr.streams) {
+			if (!attributes[name]) fault(`holds stream ${name}, which world.json does not declare`);
+		}
+		const pages = new Map(table?.map((row) => [row.offset, row]));
+		for (const chunk of atr.chunks) {
+			const name = atr.streams[chunk.stream];
+			const at = `the ${name} chunk at blob offset ${chunk.offset}`;
+			const page = pages.get(chunk.offset);
+			if (table && !page) fault(`has ${at}, where no page of the pack starts`);
+			else if (page && page.count !== chunk.rows) {
+				fault(`has ${at} of ${chunk.rows} rows, for a page of ${page.count}`);
+			}
+			const a = attributes[name];
+			if (!whole || !a) continue;
+			try {
+				const body = await inflate(whole.subarray(chunk.at, chunk.at + chunk.length));
+				if (a.type === 'records') readRecords(body, chunk, a);
+				else readValues(body, chunk, a);
+			} catch (error) {
+				fault(`has ${at} that does not decode: ${reason(error)}`);
+			}
+		}
+	} catch (error) {
+		fault(told(error));
 	}
 }
 

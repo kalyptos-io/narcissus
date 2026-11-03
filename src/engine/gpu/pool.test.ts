@@ -452,4 +452,40 @@ describe('Pool', () => {
 		expect(await draw([1])).toEqual([0, 1]);
 		pool.destroy();
 	});
+
+	it('writes a directory a page with attributes, frees it with the page, and replaces it', async () => {
+		const device = await testDevice();
+		const pool = new Pool(device, 4 * CLUSTER);
+		const streams = [
+			{ stream: 2, descriptor: 7, words: Uint32Array.of(10, 11) },
+			{ stream: 0, descriptor: 5, words: Uint32Array.of(12) }
+		];
+		pool.add(1, { ...page(10), attributes: streams }, [0, 0], none);
+		pool.add(2, page(10), [0, 0], none);
+		pool.upload(Infinity);
+		pool.draw([]);
+		pool.extension.flush();
+		const directory = async (slot: number) => {
+			const table = (await read(device, pool.clusters)).u[slot * CLUSTER_WORDS];
+			return (await read(device, pool.pages)).u[table * PAGE_WORDS + 33];
+		};
+		const at = await directory(0);
+		expect(await directory(1)).toBe(0xffffffff);
+		const words = (await read(device, pool.extension.buffer)).u;
+		// three streams, 0 and 2 with values; 1 absent
+		expect(slice(words, at, 10)).toEqual([3, at + 9, 5, 0, 0, at + 7, 7, 10, 11, 12]);
+		pool.setAttributes(1, [{ stream: 0, descriptor: 6, words: Uint32Array.of(13) }]);
+		pool.draw([]);
+		pool.extension.flush();
+		const again = await directory(0);
+		expect(slice((await read(device, pool.extension.buffer)).u, again, 4)).toEqual([
+			1,
+			again + 3,
+			6,
+			13
+		]);
+		pool.remove(1);
+		expect(pool.extension.alloc(4)).toBe(again);
+		pool.destroy();
+	});
 });

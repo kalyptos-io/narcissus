@@ -4,7 +4,7 @@ import { Scheduler, type PageJob } from './scheduler.ts';
 const KiB = 1024;
 
 function job(id: number, offset: number, length = 10 * KiB, pack = 'a.pack'): PageJob {
-	return { id, pack, col: null, offset, length };
+	return { id, pack, col: null, atr: null, offset, length };
 }
 
 function scheduler(concurrency = 24) {
