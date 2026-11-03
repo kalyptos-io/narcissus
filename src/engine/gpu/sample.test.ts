@@ -173,7 +173,10 @@ describe('sample hooks', () => {
 		const { pool, render, pick, camera, destroy } = await setup([{ at: [8, 10, 1.5] }]);
 		const table = pool.tables.create(4);
 		pool.tables.create(2).destroy();
-		table.write(0, new Uint32Array([11, 22, 33, 44]));
+		const words = new Uint32Array([11, 22, 33, 44]);
+		table.write(0, words);
+		// the write copied them
+		words.fill(0);
 		expect(() => table.write(3, new Uint32Array([1, 2]))).toThrow(RangeError);
 		// the shade reads word 2 and one past the end; the sample hook word 0 of the destroyed table
 		const tabled: Shade = {

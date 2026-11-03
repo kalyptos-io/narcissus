@@ -43,7 +43,7 @@ export class Tables {
 						`A write of ${values.length} words at ${at} is past the table's ${words}.`
 					);
 				}
-				extension.write(first + at, values);
+				extension.write(first + at, values.slice());
 			},
 			destroy: () => {
 				if (!live) return;
