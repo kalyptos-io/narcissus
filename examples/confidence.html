@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>narcissus confidence</title>
+		<style>
+			html,
+			body {
+				height: 100%;
+				margin: 0;
+				font:
+					13px system-ui,
+					sans-serif;
+			}
+			narcissus-viewer {
+				height: 100%;
+			}
+			#panel {
+				position: fixed;
+				top: 8px;
+				left: 8px;
+				display: grid;
+				gap: 6px;
+				width: 220px;
+				padding: 10px;
+				border-radius: 6px;
+				background: #fffe;
+			}
+			#ramp {
+				height: 10px;
+				border-radius: 2px;
+				background: linear-gradient(to right, #d92619, #ffff1a, #1abf4d);
+			}
+		</style>
+	</head>
+	<body>
+		<!-- a world that declares an f16 stream example.confidence; ?src=<url of a world.json> shows another -->
+		<narcissus-viewer
+			src="../fixtures/scene/world.json"
+			camera="723031,6177031,,0,-45,80"
+			aria-label="the world"
+		>
+			<p>This browser cannot show the world.</p>
+		</narcissus-viewer>
+		<div id="panel">
+			<label><input id="colour" type="checkbox" checked /> colour by confidence</label>
+			<div id="ramp"></div>
+			<label
+				>hide below <input id="floor" type="range" min="0" max="1" step="0.01" value="0"
+			/></label>
+			<span>under the pointer: <output id="under">-</output></span>
+		</div>
+		<script type="module">
+			// from a clone: pnpm build, then serve the repository root. on a site, point this at the package's dist
+			import '../dist/element/index.js';
+
+			const viewer = document.querySelector('narcissus-viewer');
+			const src = new URLSearchParams(location.search).get('src');
+			if (src) viewer.setAttribute('src', src);
+			const $ = (id) => document.getElementById(id);
+
+			// confidence 0 to 1 as red, yellow, green; the token carries it to pick in thousandths
+			const confidence = {
+				name: 'confidence',
+				uniforms: 1,
+				attributes: [{ stream: 'example.confidence', as: 'confidence', type: 'f32' }],
+				wgsl: `
+// u[0].x: how much the ramp replaces the colour, u[0].y: the confidence below which splats hide
+fn confidence(s: ptr<function, Splat>, u: array<vec4f, 1>) {
+	let c = clamp(attr_confidence(s), 0.0, 1.0);
+	if (c < u[0].y) {
+		(*s).opacity = 0.0;
+		return;
+	}
+	let ramp = vec3f(min(1.0, 2.0 - 2.0 * c), min(1.0, 2.0 * c), 0.1) * vec3f(0.85, 0.75, 1.0);
+	(*s).colour = mix((*s).colour, ramp, u[0].x);
+	(*s).token = 1u + u32(round(c * 1000.0));
+}`,
+				update: (frame, out) => {
+					out[0] = $('colour').checked ? 1 : 0;
+					out[1] = $('floor').valueAsNumber;
+				}
+			};
+
+			viewer.addEventListener('start', () => {
+				const engine = viewer.engine;
+				// the scene is a few metres tall: down to 2 m above it, not 50 m
+				viewer.controls.limits = { ...viewer.controls.limits, floor: 0, clearance: 2 };
+				engine.use((host) => host.shade(confidence));
+				// a change shows at the next frame, which update() fills
+				for (const id of ['colour', 'floor']) $(id).oninput = () => engine.requestFrame();
+				let picking = false;
+				viewer.addEventListener('pointermove', async (event) => {
+					if (picking) return;
+					picking = true;
+					const hit = await engine.pick(event.offsetX, event.offsetY);
+					picking = false;
+					$('under').value = hit?.token ? ((hit.token - 1) / 1000).toFixed(3) : '-';
+				});
+			});
+			viewer.addEventListener('error', (event) => console.error(event.detail));
+		</script>
+	</body>
+</html>

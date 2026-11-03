@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>narcissus section</title>
+		<style>
+			html,
+			body {
+				height: 100%;
+				margin: 0;
+				font:
+					13px system-ui,
+					sans-serif;
+			}
+			narcissus-viewer {
+				height: 100%;
+			}
+			#panel {
+				position: fixed;
+				top: 8px;
+				left: 8px;
+				display: grid;
+				gap: 6px;
+				width: 240px;
+				padding: 10px;
+				border-radius: 6px;
+				background: #fffe;
+			}
+		</style>
+	</head>
+	<body>
+		<!-- no world: a scanned part alone, as a layer -->
+		<narcissus-viewer sky="0.16,0.17,0.2" aria-label="a scanned part">
+			<p>This browser cannot show the part.</p>
+		</narcissus-viewer>
+		<div id="panel">
+			<label><input id="cut" type="checkbox" checked /> section</label>
+			<label
+				>offset <input id="offset" type="range" min="-2.3" max="2.3" step="0.01" value="0"
+			/></label>
+			<label>turn <input id="turn" type="range" min="-90" max="90" value="0" /></label>
+			<label><input id="mark" type="checkbox" /> a click marks the surface</label>
+			<span>last mark from the plane: <output id="away">-</output></span>
+		</div>
+		<script type="module">
+			// from a clone: pnpm build, then serve the repository root. on a site, point these at the package's dist
+			import '../dist/element/index.js';
+			import { encodeLayer, fit } from '../dist/index.js';
+
+			const viewer = document.querySelector('narcissus-viewer');
+			const $ = (id) => document.getElementById(id);
+			const C0 = 0.28209479177387814;
+			// the part's axis runs east through AT
+			const AT = [500, 500, 3];
+
+			// a flanged pipe as a scanner sees it: flat splats on its surfaces, 8 cm apart, each facing
+			// out of the metal
+			function part() {
+				const step = 0.08;
+				const found = [];
+				const add = (p, n, grey) => found.push({ p, n, grey });
+				const around = (r, x0, x1, inward, grey) => {
+					for (let x = x0; x <= x1; x += step)
+						for (let a = 0; a < 2 * Math.PI; a += step / r) {
+							const n = [0, Math.cos(a), Math.sin(a)].map((v) => (inward ? -v : v));
+							add([x, r * Math.cos(a), r * Math.sin(a)], n, grey);
+						}
+				};
+				// six bolt holes of 15 cm on a 1.6 m circle
+				const holes = Array.from({ length: 6 }, (_, k) => [
+					1.6 * Math.cos((k * Math.PI) / 3),
+					1.6 * Math.sin((k * Math.PI) / 3)
+				]);
+				const solid = (y, z) => holes.every(([hy, hz]) => Math.hypot(y - hy, z - hz) > 0.15);
+				const face = (x, r0, r1, facing) => {
+					for (let r = r0; r <= r1; r += step)
+						for (let a = 0; a < 2 * Math.PI; a += step / r) {
+							const [y, z] = [r * Math.cos(a), r * Math.sin(a)];
+							if (solid(y, z)) add([x, y, z], [facing, 0, 0], 0.62);
+						}
+				};
+				around(1.2, -1.7, 1.7, false, 0.6);
+				around(0.95, -2, 2, true, 0.32);
+				for (const side of [-1, 1]) {
+					face(2 * side, 0.95, 2, side);
+					face(1.7 * side, 1.2, 2, -side);
+					around(2, Math.min(1.7 * side, 2 * side), Math.max(1.7 * side, 2 * side), false, 0.66);
+					for (const [hy, hz] of holes)
+						for (let x = 1.7; x <= 2; x += step)
+							for (let a = 0; a < 2 * Math.PI; a += step / 0.15) {
+								const [cy, cz] = [Math.cos(a), Math.sin(a)];
+								add([x * side, hy + 0.15 * cy, hz + 0.15 * cz], [0, -cy, -cz], 0.4);
+							}
+				}
+				const count = found.length;
+				const splats = {
+					count,
+					position: new Float64Array(count * 3),
+					rotation: new Float32Array(count * 4),
+					scale: new Float32Array(count * 3),
+					alpha: new Float32Array(count).fill(0.95),
+					dc: new Float32Array(count * 3),
+					sh: null
+				};
+				found.forEach(({ p, n, grey }, i) => {
+					splats.position.set([AT[0] + p[0], AT[1] + p[1], AT[2] + p[2]], i * 3);
+					// the quaternion that turns up, the thin axis, onto n
+					const q = n[2] > -0.999 ? [1 + n[2], -n[1], n[0], 0] : [0, 1, 0, 0];
+					const norm = Math.hypot(...q);
+					splats.rotation.set(
+						q.map((v) => v / norm),
+						i * 4
+					);
+					splats.scale.set([Math.log(0.05), Math.log(0.05), Math.log(0.004)], i * 3);
+					const tone = grey * (0.94 + 0.06 * Math.sin(37 * i));
+					splats.dc.set(
+						[tone, tone + 0.02, tone + 0.05].map((c) => (c - 0.5) / C0),
+						i * 3
+					);
+				});
+				return splats;
+			}
+
+			// the plane through the axis, turned about up and moved along its normal; kept on its north side
+			function plane() {
+				const turn = ($('turn').valueAsNumber * Math.PI) / 180;
+				const n = [-Math.sin(turn), Math.cos(turn), 0];
+				const at = AT.map((v, k) => v + n[k] * $('offset').valueAsNumber);
+				return [...n, -(n[0] * at[0] + n[1] * at[1] + n[2] * at[2])];
+			}
+
+			viewer.addEventListener('start', async () => {
+				const engine = viewer.engine;
+				const { pack, origin } = await encodeLayer(part());
+				const layer = await engine.addLayer({ bytes: pack, origin });
+				// a part a few metres across: the camera may come down to it
+				viewer.controls.limits = { ...viewer.controls.limits, floor: 0, clearance: 0.2 };
+				viewer.controls.jump(fit(layer.box, { ...viewer.controls.pose, yaw: 20, pitch: -25 }));
+
+				let remove = null;
+				const section = () => {
+					remove?.();
+					remove = $('cut').checked ? engine.addClip({ planes: [plane()] }) : null;
+				};
+				section();
+				for (const id of ['cut', 'offset', 'turn']) $(id).oninput = section;
+
+				let mark = null;
+				viewer.addEventListener(
+					'pointerdown',
+					async (event) => {
+						if (!$('mark').checked || event.button !== 0) return;
+						event.preventDefault();
+						const hit = await engine.pick(event.offsetX, event.offsetY);
+						if (!hit) return;
+						mark?.remove();
+						mark = engine.addMarker(hit.point, { size: 10, colour: [1, 0.8, 0, 1] });
+						const [a, b, c, d] = plane();
+						const away = a * hit.point[0] + b * hit.point[1] + c * hit.point[2] + d;
+						$('away').value = $('cut').checked ? `${(away * 100).toFixed(1)} cm` : '-';
+					},
+					{ capture: true }
+				);
+			});
+			viewer.addEventListener('error', (event) => console.error(event.detail));
+		</script>
+	</body>
+</html>

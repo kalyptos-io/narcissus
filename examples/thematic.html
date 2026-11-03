@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>narcissus thematic</title>
+		<style>
+			html,
+			body {
+				height: 100%;
+				margin: 0;
+				font:
+					13px system-ui,
+					sans-serif;
+			}
+			narcissus-viewer {
+				height: 100%;
+			}
+			#panel {
+				position: fixed;
+				top: 8px;
+				left: 8px;
+				display: grid;
+				gap: 6px;
+				width: 240px;
+				padding: 10px;
+				border-radius: 6px;
+				background: #fffe;
+			}
+		</style>
+	</head>
+	<body>
+		<!-- a world that declares a u32 stream example.object; ?src=<url of a world.json> shows another -->
+		<narcissus-viewer
+			src="../fixtures/scene/world.json"
+			camera="723031,6177031,,0,-45,80"
+			aria-label="the world"
+		>
+			<p>This browser cannot show the world.</p>
+		</narcissus-viewer>
+		<div id="panel">
+			<label
+				>theme
+				<select id="theme">
+					<option value="random">a colour per object</option>
+					<option value="range">by id, 0 to 1,048,575</option>
+					<option value="sevens">every seventh object</option>
+					<option value="none">none</option>
+				</select>
+			</label>
+			<span>table: <output id="written">-</output></span>
+			<span>under the pointer: <output id="under">-</output></span>
+		</div>
+		<script type="module">
+			// from a clone: pnpm build, then serve the repository root. on a site, point this at the package's dist
+			import '../dist/element/index.js';
+
+			const viewer = document.querySelector('narcissus-viewer');
+			const src = new URLSearchParams(location.search).get('src');
+			if (src) viewer.setAttribute('src', src);
+			const $ = (id) => document.getElementById(id);
+
+			const OBJECTS = 2 ** 20;
+			// rgba 0 to 1 as unpack4x8unorm reads a word
+			const word = (r, g, b, a) =>
+				(Math.round(r * 255) |
+					(Math.round(g * 255) << 8) |
+					(Math.round(b * 255) << 16) |
+					(Math.round(a * 255) << 24)) >>>
+				0;
+			const hue = (h) => [0, 8, 4].map((n) => 0.5 + 0.4 * Math.cos(2 * Math.PI * (h + n / 12)));
+			// a theme as each object's colour, alpha how much of it replaces the splat's own
+			const themes = {
+				random: (id) => word(...hue(((Math.imul(id, 2654435761) >>> 0) % 997) / 997), 1),
+				range: (id) => word(id / OBJECTS, 0.3, 1 - id / OBJECTS, 1),
+				sevens: (id) => (id % 7 === 0 ? word(1, 0.55, 0, 1) : 0),
+				none: () => 0
+			};
+			const colours = new Uint32Array(OBJECTS);
+			const HOVER = word(1, 1, 1, 1);
+
+			viewer.addEventListener('start', () => {
+				const engine = viewer.engine;
+				// the scene is a few metres tall: down to 2 m above it, not 50 m
+				viewer.controls.limits = { ...viewer.controls.limits, floor: 0, clearance: 2 };
+				let table = null;
+
+				function paint() {
+					const start = performance.now();
+					const theme = themes[$('theme').value];
+					for (let id = 0; id < OBJECTS; id++) colours[id] = theme(id);
+					table.write(0, colours);
+					$('written').value =
+						`${OBJECTS.toLocaleString()} colours in ${Math.round(performance.now() - start)} ms`;
+				}
+
+				engine.use((host) => {
+					table = host.table(OBJECTS);
+					paint();
+					const off = host.shade({
+						name: 'theme',
+						uniforms: 1,
+						// a world without the stream turns the hook off
+						attributes: [{ stream: 'example.object', as: 'object', type: 'u32', required: true }],
+						wgsl: `
+// u[0].x: the colour table's id
+fn theme(s: ptr<function, Splat>, u: array<vec4f, 1>) {
+	let object = attr_object(s);
+	let colour = unpack4x8unorm(table(u32(u[0].x), object));
+	(*s).colour = mix((*s).colour, colour.rgb, colour.a);
+	(*s).token = object;
+}`,
+						update: (frame, out) => (out[0] = table.id)
+					});
+					return () => {
+						off();
+						table.destroy();
+					};
+				});
+				$('theme').onchange = paint;
+
+				// one word rewritten: the object under the pointer shows white
+				let hovered = null;
+				let picking = false;
+				viewer.addEventListener('pointermove', async (event) => {
+					if (picking) return;
+					picking = true;
+					const hit = await engine.pick(event.offsetX, event.offsetY);
+					picking = false;
+					const id = hit?.token ?? null;
+					$('under').value = id === null ? '-' : `object ${id}`;
+					if (id === hovered) return;
+					if (hovered !== null) table.write(hovered, colours.subarray(hovered, hovered + 1));
+					if (id !== null) table.write(id, Uint32Array.of(HOVER));
+					hovered = id;
+				});
+			});
+			viewer.addEventListener('error', (event) => console.error(event.detail));
+		</script>
+	</body>
+</html>
