@@ -32,7 +32,7 @@ export class Feed {
 	#objects: Objects;
 	#pool: Pool;
 	#onArrive: () => void;
-	/** runs once, when an immutable file was missing: the world was released anew and must be reopened */
+	/** runs when an immutable file was missing: the world was released anew and must be reopened */
 	#onStale: () => void;
 	#options: FeedOptions;
 	#scheduler: Scheduler;
@@ -116,6 +116,13 @@ export class Feed {
 		if (this.#idx.size > 0 || this.#batches.size > 0 || this.#pool.queued > 0) return false;
 		const { idx, load } = this.#plan;
 		return idx.length === 0 && load.every(({ id }) => this.#pool.holds(id));
+	}
+
+	/** fetches again after onStale, the world it reads still the one published */
+	resume(): void {
+		if (this.#destroyed || !this.#stale) return;
+		this.#stale = false;
+		this.#onArrive();
 	}
 
 	destroy(): void {

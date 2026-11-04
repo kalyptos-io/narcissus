@@ -341,6 +341,23 @@ describe('Feed', () => {
 		expect(feed.queued).toBe(2);
 	});
 
+	it('fetches again once resumed, and goes stale again on the next missing file', async () => {
+		const { tree, root, loader, arrive, stale, feed } = setup();
+		const [first, ...rest] = tree.wanted();
+		feed.update(plan([], [first]), NONE, 0);
+		loader.idxs[0].reject(new Missing(first.path));
+		await settle();
+		arrive.mockClear();
+		feed.resume();
+		expect(arrive).toHaveBeenCalledTimes(1);
+		feed.update(plan(root.pages.slice(0, 2), rest), NONE, 10);
+		expect(loader.idxs.length).toBeGreaterThan(1);
+		expect(loader.batches.length).toBeGreaterThan(0);
+		loader.batches[0].reject(new Missing(loader.batches[0].batch.pack));
+		await settle();
+		expect(stale).toHaveBeenCalledTimes(2);
+	});
+
 	it('replans when a backoff ends, until destroy cancels the wait', async () => {
 		const { root, loader, arrive, feed } = setup();
 		const [a] = root.pages;

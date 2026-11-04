@@ -309,6 +309,8 @@ class GpuEngine implements Engine {
 	#has = (id: number) => this.#pool.has(id);
 
 	#url: string | null = null;
+	/** the open world's world.json as read */
+	#manifest = '';
 	#objects: Readonly<Record<string, string>> = {};
 	#tree: Tree | null = null;
 	#loader: Loader | null = null;
@@ -431,8 +433,8 @@ class GpuEngine implements Engine {
 				Object.entries(objects).map(([pack, url]) => [pack, new URL(url, document.baseURI).href])
 			);
 		}
-		const bytes = await this.#fetch(worldUrl, null);
-		const world = parseWorld(JSON.parse(new TextDecoder().decode(bytes)));
+		const manifest = new TextDecoder().decode(await this.#fetch(worldUrl, null));
+		const world = parseWorld(JSON.parse(manifest));
 		check();
 		const loader = new Loader({
 			base: directory(worldUrl),
@@ -454,6 +456,7 @@ class GpuEngine implements Engine {
 		this.#feed = null;
 		this.#loader?.destroy();
 		this.#url = worldUrl;
+		this.#manifest = manifest;
 		this.#objects = objects;
 		// restream below resolves the hooks' streams in this world
 		this.#pool.attributes.open(world.attributes);
@@ -765,17 +768,30 @@ class GpuEngine implements Engine {
 		return new Feed(tree, loader, objects, this.#pool, arrive, this.#reopen);
 	}
 
-	/** a release replaced the world: open its world.json again at the same camera */
+	/**
+	 * a file was missing: a release replaced the world, so open its world.json again at the same
+	 * camera; while world.json is unchanged its release is still being written, and the world shown
+	 * stays and loads again after a wait
+	 */
 	#reopen = (): void => {
 		const url = this.#url;
 		const tree = this.#tree;
 		if (this.#reopening || this.#destroyed || url === null) return;
 		this.#reopening = true;
-		const retry = () => {
+		const later = (then: () => void) => {
 			this.#reopening = false;
-			if (this.#tree === tree) setTimeout(this.#reopen, REOPEN_MS);
+			setTimeout(() => this.#tree === tree && then(), REOPEN_MS);
 		};
-		void this.open(url, { objects: this.#objects }).then(() => (this.#reopening = false), retry);
+		const reopen = async () => {
+			const manifest = new TextDecoder().decode(await this.#fetch(url, null));
+			if (this.#tree !== tree) this.#reopening = false;
+			else if (manifest === this.#manifest) later(() => this.#feed?.resume());
+			else {
+				await this.open(url, { objects: this.#objects });
+				this.#reopening = false;
+			}
+		};
+		reopen().catch(() => later(this.#reopen));
 	};
 
 	/** the layers' pages draw anew; the plan follows if what they take from it changed */
