@@ -163,7 +163,7 @@ fn clip_polygon(p: Posterior, a: u32, b: u32, clip: Clip, v: ptr<function, array
 
 `c.alpha` is already clipped, so a hook that draws the splat whole, or recolours it, needs nothing more. A hook that splits the splat into regions cuts each region's polygon with `clip_polygon()` before `polygon()` and normalises the pieces to sum to 1: they are then shares of the light the clip keeps, and `c.alpha` times a share is the mass of the region and the clip together.
 
-- `clip_mass` is exact: one plane gives the normal cdf of its signed distance, and two a quadrant of their joint gaussian, through `polygon()`.
+- `clip_mass` over one plane is exact, the normal cdf of its signed distance; over two it is Genz's form, within 1e-3.
 - `clip_polygon` takes a plane where the plane's signed distance, given the marginal's two axes, has a mean the plane keeps. That is exact when the plane's normal has no part along the third axis, as for every plane across a flat splat whose thin axis is the third. Otherwise it approximates, and the normalisation keeps the result within the mass `clip_mass` gives.
 - A hook's polygon has at most 10 vertices, as each plane adds one.
 
