@@ -100,14 +100,29 @@ fn clip_mass(p: Posterior, clip: Clip) -> f32 {
 	let n1 = clip.planes[1].xyz;
 	let s1 = dot(n1, p.mean) + clip.planes[1].w;
 	let v1 = dot(n1, p.cov * n1);
-	let c = dot(n0, p.cov * n1);
-	// its open sides 8 sigmas out, past the square polygon() clips to
-	let far = max(vec2f(s0, s1), vec2f(0.0)) + 8.0 * sqrt(vec2f(v0, v1));
-	var v: array<vec2f, 12>;
-	v[1] = vec2f(far.x, 0.0);
-	v[2] = far;
-	v[3] = vec2f(0.0, far.y);
-	return polygon(Posterior2(vec2f(s0, s1), mat2x2f(v0, c, c, v1)), v, 4u);
+	return quadrant(vec2f(s0, s1), vec2f(v0, v1), dot(n0, p.cov * n1));
+}
+
+// gauss-legendre 6 on [-1, 1]: quadrant()'s error stays under 1e-3 to a correlation of 0.999
+const QUADRANT_X = array<f32, 6>(-0.9324695, -0.6612094, -0.2386192, 0.2386192, 0.6612094, 0.9324695);
+const QUADRANT_W = array<f32, 6>(0.1713245, 0.3607616, 0.4679139, 0.4679139, 0.3607616, 0.1713245);
+
+// mass where two gaussian signed distances, means s, variances v and covariance c, are both >= 0:
+// genz's form, the product of the sides and an integral over the arcsine of their correlation
+fn quadrant(s: vec2f, v: vec2f, c: f32) -> f32 {
+	if (min(v.x, v.y) <= 0.0) {
+		return coverage_side(s.x, v.x) * coverage_side(s.y, v.y);
+	}
+	let sigma = sqrt(v);
+	// past 8 sigmas a side is a step in f32; the bound keeps h^2 finite
+	let h = clamp(-s / sigma, vec2f(-8.0), vec2f(8.0));
+	let a = asin(clamp(c / (sigma.x * sigma.y), -1.0, 1.0));
+	var sum = 0.0;
+	for (var i = 0u; i < 6u; i++) {
+		let sn = sin(0.5 * a * (QUADRANT_X[i] + 1.0));
+		sum += QUADRANT_W[i] * exp((sn * h.x * h.y - 0.5 * dot(h, h)) / (1.0 - sn * sn));
+	}
+	return saturate(sum * a * 0.07957747 + coverage_cdf(-h.x) * coverage_cdf(-h.y));
 }
 
 // v[0..count) cut to where each plane of clip keeps as the marginal over axes a and b sees it: where

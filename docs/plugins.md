@@ -135,6 +135,7 @@ fn polygon(p: Posterior2, v: array<vec2f, 12>, count: u32) -> f32
 
 - `halfspace` and `halfplane` use the normal CDF, through an erf with an error of at most 1e-6.
 - `polygon` whitens the posterior, clips the polygon to the square of half-side 3.73, and integrates `φ(u) [Φ(v_upper(u)) - Φ(v_lower(u))]` over intervals split at its vertices. Each interval uses Gauss-Kronrod 7/15. The worst interval is halved while the summed error estimate exceeds 1/510, up to a fixed cap. A sample still over the estimate counts in `engine.stats().coverageOver`.
+- `clip_mass` over two planes is the quadrant of their two signed distances, a 2d gaussian: Genz's form, the product of the two sides and an integral over the arcsine of their correlation by Gauss-Legendre 6, within 1e-3 to a correlation of 0.999. It costs six exponentials and two normal cdfs a pixel, where a `polygon` spends about 150 erf calls.
 - For a complete partition, a hook normalises its pieces' masses to sum to 1. The normalised share vector's total variation target is 1/255. The error estimate is an estimate, not a bound: tests check it against a dense reference.
 - A query returns the absolute mass. Masses of separate conditions are never multiplied: conditions are intersected first, then integrated.
 

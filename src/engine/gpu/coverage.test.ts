@@ -564,6 +564,52 @@ describe('halfspace and halfplane', () => {
 	});
 });
 
+const QUADRANT: Kernel = {
+	stride: 5,
+	out: 1,
+	body: 'put(0u, quadrant(vec2f(c(0u), c(1u)), vec2f(c(2u), c(3u)), c(4u)));'
+};
+
+describe('quadrant', () => {
+	it('is the mass of a 2d gaussian quadrant at a correlation up to 0.999', async () => {
+		const next = random(11);
+		const cases = Array.from({ length: 600 }, (_, i) => {
+			const p = posterior2(next);
+			if (i % 4 === 0) {
+				// two planes nearly alike
+				const rho = (0.99 + 0.009 * next()) * (next() < 0.5 ? -1 : 1);
+				const [sx, sy] = [Math.sqrt(p.cov[0][0]), Math.sqrt(p.cov[1][1])];
+				p.cov[0][1] = p.cov[1][0] = rho * sx * sy;
+			}
+			return p;
+		});
+		const words = pack(cases.map((p) => [...p.mean, p.cov[0][0], p.cov[1][1], p.cov[0][1]]));
+		const { results } = await run(QUADRANT, words);
+		cases.forEach((p, i) => {
+			const far = p.mean.map((m, k) => Math.max(m, 0) + 8 * Math.sqrt(p.cov[k][k]));
+			const v: Vec2[] = [
+				[0, 0],
+				[far[0], 0],
+				[far[0], far[1]],
+				[0, far[1]]
+			];
+			expect(Math.abs(results[i] - ref.dense(p, v))).toBeLessThan(ref.BUDGET);
+		});
+	});
+
+	it('takes a pinned side as a step', async () => {
+		const cases = [
+			[0.5, 1, 0, 4, 0],
+			[-0.5, 1, 0, 4, 0],
+			[1, 2, 1, 0, 0],
+			[0.3, -0.2, 0, 0, 0]
+		];
+		const { results } = await run(QUADRANT, pack(cases));
+		const want = [ref.cdf(0.5), 0, ref.cdf(1), 0];
+		want.forEach((x, i) => expect(results[i]).toBeCloseTo(x, 5));
+	});
+});
+
 describe('polygon', () => {
 	it('integrates within the tail and the estimate, as the float64 algorithm does', async () => {
 		const next = random(5);
