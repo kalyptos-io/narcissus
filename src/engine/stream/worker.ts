@@ -5,6 +5,5 @@ import { openCache, serve } from './serve.ts';
 
 serve(async (init, page) => ({
 	fetch: init.source === 'page' ? page : http,
-	cache: await openCache(init),
-	base: init.base
+	cache: await openCache(init)
 }));

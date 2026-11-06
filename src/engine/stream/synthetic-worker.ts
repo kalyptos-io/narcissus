@@ -5,6 +5,5 @@ import { synthetic } from './synthetic.ts';
 
 serve(async (init) => ({
 	fetch: synthetic(),
-	cache: await openCache({ ...init, cache: 'none' }),
-	base: init.base
+	cache: await openCache({ ...init, cache: 'none' })
 }));

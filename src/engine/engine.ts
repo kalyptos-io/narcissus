@@ -26,7 +26,7 @@ import type { Frame, Host, Plugin, Post, Shade } from './plugin.ts';
 import { percentile, pixelRatio, Quality } from './quality.ts';
 import { Feed } from './stream/feed.ts';
 import { http } from '../adapters/http.ts';
-import { Loader } from './stream/loader.ts';
+import { Loader, Workers } from './stream/loader.ts';
 import { Objects } from './stream/objects.ts';
 import type { Camera, Clip, Drawn, Point, Progress, Settings, Stats } from './types.ts';
 import { Tree } from './world/tree.ts';
@@ -318,6 +318,8 @@ class GpuEngine implements Engine {
 	#manifest = '';
 	#objects: Readonly<Record<string, string>> = {};
 	#tree: Tree | null = null;
+	/** made at the first open, kept across worlds with their caches */
+	#workers: Workers | null = null;
 	#loader: Loader | null = null;
 	#feed: Feed | null = null;
 	#opening = 0;
@@ -442,29 +444,24 @@ class GpuEngine implements Engine {
 				Object.entries(objects).map(([pack, url]) => [pack, new URL(url, document.baseURI).href])
 			);
 		}
-		const manifest = new TextDecoder().decode(await this.#fetch(worldUrl, null));
-		const world = parseWorld(JSON.parse(manifest));
-		check();
-		const loader = new Loader({
-			base: directory(worldUrl),
+		// before the fetch, so the workers start while world.json comes
+		this.#workers ??= new Workers({
 			workers: Math.min(6, Math.max(2, navigator.hardwareConcurrency - 2)),
 			cache,
 			page: typeof source === 'function' ? source : undefined,
 			spawn: this.#spawn
 		});
+		const manifest = new TextDecoder().decode(await this.#fetch(worldUrl, null));
+		const world = parseWorld(JSON.parse(manifest));
+		check();
+		const loader = new Loader(this.#workers, directory(worldUrl));
 		const tree = new Tree(world);
-		try {
-			const roots = await Promise.all(world.roots.map((root) => loader.idx(root.idx)));
-			check();
-			roots.forEach((idx, k) => tree.add(idx, world.roots[k].idx));
-		} catch (error) {
-			loader.destroy();
-			throw error;
-		}
+		const roots = await Promise.all(world.roots.map((root) => loader.idx(root.idx)));
+		check();
+		roots.forEach((idx, k) => tree.add(idx, world.roots[k].idx));
 
 		this.#feed?.destroy();
 		this.#feed = null;
-		this.#loader?.destroy();
 		this.#url = worldUrl;
 		this.#manifest = manifest;
 		this.#objects = objects;
@@ -719,7 +716,7 @@ class GpuEngine implements Engine {
 		this.#destroyed = true;
 		cancelAnimationFrame(this.#raf);
 		this.#feed?.destroy();
-		this.#loader?.destroy();
+		this.#workers?.destroy();
 		this.#renderer.destroy();
 		this.#pool.destroy();
 		this.#layers.clear();

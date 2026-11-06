@@ -10,7 +10,7 @@ import { opfsCache, pruneOpfs } from '../../adapters/opfs.ts';
 import { asking, type Ask, type Fetched } from './remote.ts';
 import type { Batch, UnitFile } from './scheduler.ts';
 
-export interface Init extends Pick<LoaderOptions, 'base' | 'cache'> {
+export interface Init extends Pick<LoaderOptions, 'cache'> {
 	/** page is the page's own Fetch, asked by message */
 	source: 'http' | 'page';
 	/** the cache shard this worker owns, of shards */
@@ -18,12 +18,14 @@ export interface Init extends Pick<LoaderOptions, 'base' | 'cache'> {
 	shards: number;
 }
 
-export type Message =
-	| ({ type: 'init' } & Init)
-	| { type: 'idx'; id: number; path: string }
-	| { type: 'ids'; id: number; url: string; pack: UnitFile; rows: readonly PageRow[] }
-	| { type: 'batch'; id: number; batch: Batch; streams: readonly Wanted[] }
-	| { type: 'abort'; id: number };
+export type Message = ({ type: 'init' } & Init) | Request | { type: 'abort'; id: number };
+
+/** base is the url of its world's directory, ending in / */
+export type Request = { id: number; base: string } & (
+	| { type: 'idx'; path: string }
+	| { type: 'ids'; url: string; pack: UnitFile; rows: readonly PageRow[] }
+	| { type: 'batch'; batch: Batch; streams: readonly Wanted[] }
+);
 
 export type Loaded = { id: number; page: DecodedPage };
 
@@ -42,13 +44,13 @@ const scope = self as unknown as {
 	postMessage(message: Reply | Ask, transfer: Transferable[]): void;
 };
 
-let sources: Promise<Sources> | undefined;
+let sources: Promise<Omit<Sources, 'base'>> | undefined;
 const kept: Kept = { cols: new Map(), atrs: new Map() };
 const running = new Map<number, AbortController>();
 const own = asking((ask) => scope.postMessage(ask, []));
 
 /** answers the loader's messages over the sources open makes; page is the page's own Fetch */
-export function serve(open: (init: Init, page: Fetch) => Promise<Sources>): void {
+export function serve(open: (init: Init, page: Fetch) => Promise<Omit<Sources, 'base'>>): void {
 	scope.onmessage = ({ data }) => {
 		if ('fetched' in data) {
 			own.take(data);
@@ -81,13 +83,13 @@ async function opfsBytes(): Promise<number> {
 	}
 }
 
-async function answer(message: Extract<Message, { type: 'idx' | 'ids' | 'batch' }>) {
+async function answer(message: Request) {
 	const { id } = message;
 	const controller = new AbortController();
 	running.set(id, controller);
 	try {
 		if (!sources) throw new Error('stream worker used before init');
-		const ready = await sources;
+		const ready = { ...(await sources), base: message.base };
 		if (message.type === 'idx') {
 			scope.postMessage({ id, value: await loadIdx(ready, message.path) }, []);
 		} else if (message.type === 'ids') {

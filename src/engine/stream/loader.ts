@@ -1,17 +1,15 @@
-// the main thread's side of the stream workers
+// the main thread's side of the stream workers: one set per engine, a Loader per world over them
 
 import { rethrown, type Fetch } from '../../ports.ts';
 import type { Idx, PageRow } from '../../format/index.ts';
 import type { Wanted } from './attributes.ts';
 import { answering, type Ask } from './remote.ts';
 import type { Batch, UnitFile } from './scheduler.ts';
-import type { Loaded, Message, Reply } from './serve.ts';
+import type { Loaded, Message, Reply, Request } from './serve.ts';
 // inline, so the built engine is one file that needs no path to its worker
 import StreamWorker from './worker.ts?worker&inline';
 
 export interface LoaderOptions {
-	/** url of world.json's directory, ending in / */
-	base: string;
 	workers: number;
 	cache: 'opfs' | 'memory' | 'none';
 	/** the page's own Fetch, which stays on the main thread and the workers ask by message; http otherwise */
@@ -33,46 +31,34 @@ interface Pending {
 	reject(error: Error): void;
 }
 
+/** one world's requests, its paths relative to base, the url of its directory ending in / */
 export class Loader {
-	#slots: Slot[];
-	#pending = new Map<number, Pending>();
-	#id = 0;
+	#workers: Workers;
+	#base: string;
 
-	constructor(options: LoaderOptions) {
-		const { base, cache, page, workers: shards, spawn = () => new StreamWorker() } = options;
-		this.#slots = Array.from({ length: shards }, (_, shard) => {
-			const worker = spawn();
-			const slot: Slot = { worker };
-			const answer =
-				page && answering(page, (fetched, transfer) => worker.postMessage(fetched, transfer));
-			worker.onmessage = ({ data }: MessageEvent<Reply | Ask>) => {
-				if ('id' in data) this.#reply(data);
-				else answer?.(data);
-			};
-			worker.onerror = () => this.#fail(slot);
-			const init = {
-				type: 'init',
-				base,
-				cache,
-				source: page ? 'page' : 'http',
-				shard,
-				shards
-			} satisfies Message;
-			worker.postMessage(init);
-			return slot;
-		});
+	constructor(workers: Workers, base: string) {
+		this.#workers = workers;
+		this.#base = base;
 	}
 
 	idx(path: string): Promise<Idx> {
-		const message = { type: 'idx', id: ++this.#id, path } as const;
-		return this.#send(this.#slots[0], message) as Promise<Idx>;
+		const request = { type: 'idx', id: this.#workers.id(), base: this.#base, path } as const;
+		return this.#workers.send(0, request) as Promise<Idx>;
 	}
 
 	/** a unit's object ids by the blob offsets of its pages, as jobs.ts loadIds gives them */
 	ids(url: string, pack: UnitFile, rows: readonly PageRow[]): Promise<Map<number, Uint16Array>> {
-		const message = { type: 'ids', id: ++this.#id, url, pack, rows } as const;
-		const slot = this.#slots[shardOf(pack.path, this.#slots.length)];
-		return this.#send(slot, message) as Promise<Map<number, Uint16Array>>;
+		const request = {
+			type: 'ids',
+			id: this.#workers.id(),
+			base: this.#base,
+			url,
+			pack,
+			rows
+		} as const;
+		return this.#workers.send(this.#workers.shard(pack.path), request) as Promise<
+			Map<number, Uint16Array>
+		>;
 	}
 
 	/**
@@ -86,9 +72,56 @@ export class Loader {
 		page: (loaded: Loaded) => void
 	): Promise<void> {
 		if (signal.aborted) return Promise.reject(aborted());
-		const slot = this.#slots[shardOf(`${batch.pack}#${batch.window}`, this.#slots.length)];
-		const message = { type: 'batch', id: ++this.#id, batch, streams } as const;
-		return this.#send(slot, message, signal, page) as Promise<void>;
+		const slot = this.#workers.shard(`${batch.pack}#${batch.window}`);
+		const request = {
+			type: 'batch',
+			id: this.#workers.id(),
+			base: this.#base,
+			batch,
+			streams
+		} as const;
+		return this.#workers.send(slot, request, signal, page) as Promise<void>;
+	}
+}
+
+/** the stream workers, each owning a shard of the cache */
+export class Workers {
+	#slots: Slot[];
+	#pending = new Map<number, Pending>();
+	#id = 0;
+
+	constructor(options: LoaderOptions) {
+		const { cache, page, workers: shards, spawn = () => new StreamWorker() } = options;
+		this.#slots = Array.from({ length: shards }, (_, shard) => {
+			const worker = spawn();
+			const slot: Slot = { worker };
+			const answer =
+				page && answering(page, (fetched, transfer) => worker.postMessage(fetched, transfer));
+			worker.onmessage = ({ data }: MessageEvent<Reply | Ask>) => {
+				if ('id' in data) this.#reply(data);
+				else answer?.(data);
+			};
+			worker.onerror = () => this.#fail(slot);
+			const init = {
+				type: 'init',
+				cache,
+				source: page ? 'page' : 'http',
+				shard,
+				shards
+			} satisfies Message;
+			worker.postMessage(init);
+			return slot;
+		});
+	}
+
+	/** a new request id */
+	id(): number {
+		return ++this.#id;
+	}
+
+	/** the worker whose cache owns the pages of key */
+	shard(key: string): number {
+		return shardOf(key, this.#slots.length);
 	}
 
 	destroy(): void {
@@ -96,14 +129,15 @@ export class Loader {
 		for (const pending of this.#pending.values()) pending.reject(aborted());
 	}
 
-	#send(
-		slot: Slot,
-		message: Extract<Message, { type: 'idx' | 'ids' | 'batch' }>,
+	send(
+		shard: number,
+		request: Request,
 		signal?: AbortSignal,
 		page?: (loaded: Loaded) => void
 	): Promise<Idx | Map<number, Uint16Array> | void> {
+		const slot = this.#slots[shard];
 		if (slot.error) return Promise.reject(slot.error);
-		const { id } = message;
+		const { id } = request;
 		return new Promise((resolve, reject) => {
 			const settle = () => {
 				this.#pending.delete(id);
@@ -127,7 +161,7 @@ export class Loader {
 				}
 			});
 			signal?.addEventListener('abort', abort, { once: true });
-			slot.worker.postMessage(message);
+			slot.worker.postMessage(request);
 		});
 	}
 
