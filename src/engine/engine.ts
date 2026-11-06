@@ -410,7 +410,7 @@ class GpuEngine implements Engine {
 			this.#lost = true;
 			cancelAnimationFrame(this.#raf);
 			const reason = info.message || info.reason;
-			for (const { reject } of this.#captures.splice(0)) reject(new Error(reason));
+			this.#close(reason);
 			for (const fn of this.#lostListeners) fn(reason);
 		});
 	}
@@ -574,8 +574,7 @@ class GpuEngine implements Engine {
 	}
 
 	pickMany(points: readonly (readonly [number, number])[]): Promise<(Hit | null)[]> {
-		if (this.#destroyed || this.#lost || !points.length)
-			return Promise.resolve(points.map(() => null));
+		if (this.#dead || !points.length) return Promise.resolve(points.map(() => null));
 		return new Promise((resolve) => {
 			this.#picks.push({ points, resolve });
 			if (this.#rendered) this.#answer();
@@ -598,7 +597,7 @@ class GpuEngine implements Engine {
 	}
 
 	heights(west: number, south: number, cells: number): Promise<Float32Array | null> {
-		if (this.#destroyed || this.#lost) return Promise.resolve(null);
+		if (this.#dead) return Promise.resolve(null);
 		return new Promise((resolve) => {
 			this.#measures.push({ west, south, cells, resolve });
 			this.requestFrame();
@@ -606,7 +605,7 @@ class GpuEngine implements Engine {
 	}
 
 	capture({ type, quality }: ImageEncodeOptions = {}): Promise<Blob> {
-		if (this.#destroyed || this.#lost) return Promise.reject(new Error(DESTROYED));
+		if (this.#dead) return Promise.reject(new Error(DESTROYED));
 		return new Promise((resolve, reject) => {
 			this.#captures.push({ type, quality, resolve, reject });
 			this.requestFrame();
@@ -640,7 +639,7 @@ class GpuEngine implements Engine {
 	}
 
 	idle(): Promise<void> {
-		if (this.#destroyed) return Promise.resolve();
+		if (this.#dead) return Promise.resolve();
 		return new Promise((resolve) => {
 			this.#idlers.push(resolve);
 			this.requestFrame();
@@ -693,12 +692,12 @@ class GpuEngine implements Engine {
 	}
 
 	requestFrame(): void {
-		if (this.#destroyed || this.#lost || this.#options.manual || this.#raf) return;
+		if (this.#dead || this.#options.manual || this.#raf) return;
 		this.#raf = requestAnimationFrame(this.#tick);
 	}
 
 	async step(): Promise<StepReport> {
-		if (this.#destroyed || this.#lost) return { cpuMs: 0, gpuMs: 0, passes: {} };
+		if (this.#dead) return { cpuMs: 0, gpuMs: 0, passes: {} };
 		const { done, cpuMs } = this.#frame(false);
 		await done;
 		const { gpuMs, passes } = this.#renderer.stats();
@@ -714,11 +713,21 @@ class GpuEngine implements Engine {
 		this.#renderer.destroy();
 		this.#pool.destroy();
 		this.#layers.clear();
+		this.#close(DESTROYED);
+		this.#gpu.device.destroy();
+	}
+
+	/** no frame comes again: destroyed, or its device lost */
+	get #dead(): boolean {
+		return this.#destroyed || this.#lost;
+	}
+
+	/** settles every request still waiting for a frame */
+	#close(reason: string): void {
 		for (const { points, resolve } of this.#picks.splice(0)) resolve(points.map(() => null));
 		for (const { resolve } of this.#measures.splice(0)) resolve(null);
-		for (const { reject } of this.#captures.splice(0)) reject(new Error(DESTROYED));
+		for (const { reject } of this.#captures.splice(0)) reject(new Error(reason));
 		for (const resolve of this.#idlers.splice(0)) resolve();
-		this.#gpu.device.destroy();
 	}
 
 	get #budget(): number {
@@ -832,7 +841,7 @@ class GpuEngine implements Engine {
 
 	#tick = (now: number): void => {
 		this.#raf = 0;
-		if (this.#destroyed || this.#lost) return;
+		if (this.#dead) return;
 		if (this.#inFlight >= IN_FLIGHT) {
 			this.#behind = true;
 			return;
@@ -1045,7 +1054,7 @@ class GpuEngine implements Engine {
 			for (const picking of picks) {
 				const { points, resolve } = picking;
 				const mine = found.slice(at, at + points.length);
-				if (this.#destroyed || this.#lost || !mine.includes(undefined)) {
+				if (this.#dead || !mine.includes(undefined)) {
 					resolve(mine.map((f, k) => hit(f ?? null, pixels[at + k])));
 				} else {
 					this.#picks.push(picking);
