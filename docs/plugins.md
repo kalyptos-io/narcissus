@@ -51,7 +51,14 @@ interface AttributeUse {
 }
 ```
 
-A stream of `u8`, `u16` or `u32` widens to `u32`, `i8`, `i16` or `i32` to `i32`, and `f16` or `f32` to `f32`, with the same components; `records` only to `records`. A world that declares the stream otherwise lacks it. Two hooks may read one `as` only as the same stream, type and components.
+A stream widens with the same components:
+
+- `u8`, `u16` or `u32` to `u32`
+- `i8`, `i16` or `i32` to `i32`
+- `f16` or `f32` to `f32`
+- `records` only to `records`
+
+A world whose stream does not widen to the use counts as lacking it. Two hooks may share an `as` only with the same stream, type and components.
 
 WGSL defines `fn <name>(s: ptr<function, Splat>, u: array<vec4f, <uniforms>>)`. It may change `colour`, `opacity` and `token`; opacity 0 culls the splat. Projection and pick run the same shade hooks on the same inputs.
 
@@ -68,13 +75,15 @@ Generated accessors, one for each `AttributeUse`:
 - A fixed stream with one component: `fn attr_<as>(s: ptr<function, Splat>) -> T`, with `T` the use's `type` (narrow types widen).
 - With 2 to 4 components: the matching `vec2`-`vec4`.
 - A stream the world lacks reads 0, or an empty record.
-- A `records` stream: `fn attr_<as>(s: ptr<function, Splat>) -> Record`, then `fn record_u32(r: Record, i: u32) -> u32` and `fn record_f16x2(r: Record, i: u32) -> vec2f` read word `i` of the record; `r.words` is its length in whole words, the last padded with 0.
+- A `records` stream: `fn attr_<as>(s: ptr<function, Splat>) -> Record`. Then `fn record_u32(r: Record, i: u32) -> u32` and `fn record_f16x2(r: Record, i: u32) -> vec2f` read word `i` of the record. `r.words` is its length in whole words, the last padded with 0.
 
-`fn table(id: u32, i: u32) -> u32` reads word `i` of a host table; 0 past its end. A hook gets a table's `id` through its uniforms.
+`fn table(id: u32, i: u32) -> u32` reads word `i` of a host table, and 0 past its end. A hook gets a table's `id` through its uniforms.
 
-`fn source(s: ptr<function, Splat>, p: vec3f) -> vec3f` gives a point `p` of the floating-origin frame in the splat's source coordinates (see Coverage): sigmas from its centre along each of its scale axes. A shade turns a region of the world into one its sample hook integrates with it.
+`fn source(s: ptr<function, Splat>, p: vec3f) -> vec3f` maps a point `p` of the floating-origin frame into the splat's source coordinates (see Coverage): sigmas from its centre along each of its scale axes. A shade uses it to turn a region of the world into one that its sample hook can integrate.
 
-A shade asks for per-pixel evaluation with `fn sample_request(s: ptr<function, Splat>, data: array<u32, 8>)`: the splat then draws through the hook's `<name>_sample`, which receives `data`. A splat has at most one sample hook: the first that asks. A sample hook reads no attributes: its shade looks them up and passes them through `data`, a record as its `at` and `words`, which the sample rebuilds with `Record(c.data[0], c.data[1])` for `record_u32` and `record_f16x2`.
+A shade asks for per-pixel evaluation with `fn sample_request(s: ptr<function, Splat>, data: array<u32, 8>)`. The splat then draws through the hook's `<name>_sample`, which receives `data`. A splat has at most one sample hook: that of the first shade that asks.
+
+A sample hook reads no attributes. Its shade looks them up and passes them in `data`. It passes a record as its `at` and `words`, and the sample hook rebuilds it with `Record(c.data[0], c.data[1])` for `record_u32` and `record_f16x2`.
 
 ## Sample
 
@@ -111,7 +120,7 @@ The raster blends `Sampled.colour` once with OVER, at the splat's place in the d
 
 ## Coverage
 
-The library for hooks that split a splat's contribution by where its light comes from. The raster draws a splat as the projection of its gaussian, filtered on screen:
+These functions are for hooks that split a splat's contribution by where its light comes from. The raster draws a splat as the projection of its gaussian, filtered on screen:
 
 - `z ~ N(0, I)` in source coordinates: sigma units along the splat's three scale axes, in their stored order.
 - A pixel offset `x = B z + e`, with `B` the 2 × 3 map of those axes onto the screen in pixels and `e ~ N(0, L)` the screen filter. The raster's falloff is that of `N(0, B Bᵀ + L)`.
@@ -134,18 +143,18 @@ fn polygon(p: Posterior2, v: array<vec2f, 12>, count: u32) -> f32
 "Exact" means exact for this affine gaussian model, not for perspective. The numbers:
 
 - `halfspace` and `halfplane` use the normal CDF, through an erf with an error of at most 1e-6.
-- `polygon` whitens the posterior, clips the polygon to the square of half-side 3.73, and integrates `φ(u) [Φ(v_upper(u)) - Φ(v_lower(u))]` over intervals split at its vertices. Each interval uses Gauss-Kronrod 7/15. The worst interval is halved while the summed error estimate exceeds 1/510, up to a fixed cap. A sample still over the estimate counts in `engine.stats().coverageOver`.
-- `clip_mass` over two planes is the quadrant of their two signed distances, a 2d gaussian: Genz's form, the product of the two sides and an integral over the arcsine of their correlation by Gauss-Legendre 6, within 1e-3 to a correlation of 0.999. It costs six exponentials and two normal cdfs a pixel, where a `polygon` spends about 150 erf calls.
-- For a complete partition, a hook normalises its pieces' masses to sum to 1. The normalised share vector's total variation target is 1/255. The error estimate is an estimate, not a bound: tests check it against a dense reference.
+- `polygon` whitens the posterior and clips the polygon to the square of half-side 3.73. It then integrates `φ(u) [Φ(v_upper(u)) - Φ(v_lower(u))]` over intervals split at the vertices, each with Gauss-Kronrod 7/15. While the summed error estimate exceeds 1/510, it halves the worst interval, up to a fixed cap. A sample still over the estimate counts in `engine.stats().coverageOver`.
+- `clip_mass` over two planes is the 2D gaussian quadrant of their two signed distances. It uses Genz's form: the product of the two sides plus an integral over the arcsine of their correlation, with Gauss-Legendre 6. It is within 1e-3 up to a correlation of 0.999, and costs six exponentials and two normal CDFs per pixel. A `polygon` costs about 150 erf calls.
+- For a complete partition, a hook normalises its pieces' masses to sum to 1. The target for the total variation of the normalised shares is 1/255. The error estimate is an estimate, not a bound: tests check it against a dense reference.
 - A query returns the absolute mass. Masses of separate conditions are never multiplied: conditions are intersected first, then integrated.
 
 ## Clipping
 
-`engine.addClip({ planes })` ([embedding.md](embedding.md)) keeps, of every splat of the world and of layers, what lies where every plane of every clip keeps it. Against each plane, in sigmas of the splat along the plane's normal:
+`engine.addClip({ planes })` ([embedding.md](embedding.md)) keeps only the part of each splat, of the world and of layers, that every plane of every clip keeps. The engine measures a splat against each plane in sigmas along the plane's normal:
 
 - A splat more than 3 inside every plane is unchanged.
-- One more than 3 outside a plane is culled, in cull and project, and pick never finds it.
-- One in between crosses the plane. It draws through the sample path, its alpha the posterior mass the planes keep, and carries the planes in its source coordinates to its sample hook as `c.clip`. It carries two at most; a third plane it crosses cuts it by its centre.
+- One more than 3 outside a plane is culled in cull and project, and pick never finds it.
+- One in between crosses the plane. It draws through the sample path, with its alpha set to the posterior mass the planes keep. It passes the planes, in its source coordinates, to its sample hook as `c.clip`. It carries two planes at most; a third plane that crosses it cuts it at its centre.
 
 ```wgsl
 struct Clip {
@@ -161,10 +170,10 @@ fn clip_mass(p: Posterior, clip: Clip) -> f32
 fn clip_polygon(p: Posterior, a: u32, b: u32, clip: Clip, v: ptr<function, array<vec2f, 12>>, count: u32) -> u32
 ```
 
-`c.alpha` is already clipped, so a hook that draws the splat whole, or recolours it, needs nothing more. A hook that splits the splat into regions cuts each region's polygon with `clip_polygon()` before `polygon()` and normalises the pieces to sum to 1: they are then shares of the light the clip keeps, and `c.alpha` times a share is the mass of the region and the clip together.
+`c.alpha` is already clipped, so a hook that draws the splat whole, or recolours it, needs nothing more. A hook that splits the splat into regions must cut each region's polygon with `clip_polygon()` before `polygon()`, then normalise the pieces to sum to 1. The pieces are then shares of the light the clip keeps, and `c.alpha` times a share is the mass of that region inside the clip.
 
-- `clip_mass` over one plane is exact, the normal cdf of its signed distance; over two it is Genz's form, within 1e-3.
-- `clip_polygon` takes a plane where the plane's signed distance, given the marginal's two axes, has a mean the plane keeps. That is exact when the plane's normal has no part along the third axis, as for every plane across a flat splat whose thin axis is the third. Otherwise it approximates, and the normalisation keeps the result within the mass `clip_mass` gives.
+- `clip_mass` over one plane is exact: the normal CDF of its signed distance. Over two planes it uses Genz's form (see Coverage).
+- `clip_polygon` keeps a point of the marginal's two axes where the mean of the plane's signed distance, given that point, is on the kept side. That is exact when the plane's normal has no part along the third axis, as for every plane across a flat splat whose thin axis is the third. Otherwise it is approximate, and the normalisation keeps the result within the mass `clip_mass` gives.
 - A hook's polygon has at most 10 vertices, as each plane adds one.
 
 `engine.heights()` counts a splat only where every plane keeps its centre.
@@ -175,4 +184,8 @@ fn clip_polygon(p: Posterior, a: u32, b: u32, clip: Clip, v: ptr<function, array
 
 ## Cost
 
-Rows without a sample request take the projection path as in version 1, and with no sample hook or clip installed the raster draws as in version 1. A sampled row, which a hook asked for or which crosses a clip plane, adds a record of 80 bytes for the frame. The records' room is sized before dispatch: 1.5 times what the last measured frame asked, in a power of two, at most the rows of the drawn clusters. A row past it draws unsampled, or, crossing a plane that cuts its centre, not at all; `engine.stats().unsampled` counts it, and the next frame has room. Attribute streams, tables and sample records count toward the engine's stated memory.
+Rows without a sample request take the version 1 projection path. With no sample hook or clip installed, the raster draws as in version 1.
+
+A sampled row (one a hook asked for, or one that crosses a clip plane) adds an 80-byte record for the frame. The room for records is set before dispatch: 1.5 times what the last measured frame asked, rounded up to a power of two, at most the rows of the drawn clusters. A row that does not fit draws unsampled, or not at all if a plane it crosses cuts away its centre. `engine.stats().unsampled` counts these rows, and the next frame has room.
+
+Attribute streams, tables and sample records count toward the engine's stated memory ([embedding.md](embedding.md#memory)).

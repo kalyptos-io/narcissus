@@ -34,7 +34,9 @@ The built-in `http` runs in the engine's workers; a `Fetch` from the web page ru
 
 `Cache` runs in the workers; the `cache` option is `'opfs'` (default), `'memory'` or `'none'`.
 
-A `Plugin` gets a `Host` and installs a `Shade`, a WGSL function for each splat with an optional sample hook for each of its pixels, or a `Post`, a full-screen pass after the splats. `engine/plugins/fog.ts` is the shortest `Shade`, and `grade.ts` the shortest `Post`. `engine.use(plugin)` installs one and returns its remover.
+## Plugins
+
+[plugins.md](plugins.md) is the plugin contract. `engine/plugins/fog.ts` is the shortest `Shade`, and `grade.ts` the shortest `Post`.
 
 ## The engine
 
@@ -44,11 +46,19 @@ Tests of `plan/`, `world/`, `math/` and most of `stream/` run in Node; GPU pass 
 
 ### The extension
 
-`gpu/extension.ts` is one storage buffer of u32 words for all that extends the passes past the splats: the attribute streams' defaults from word 0, then first-fit blocks for each resident page's attribute directory and its streams as their chunks store them, the plugins' tables and their directory, the masks, the clip planes, and each frame's sample records. The buffer doubles at a flush that needs more, and each pass binds it anew then. Hooks reach it only through what the engine generates or includes: `attr_<as>`, `table()`, the record readers and the coverage library.
+`gpu/extension.ts` is one storage buffer of u32 words. It holds everything the passes need beyond the splats:
 
-A splat whose shade asks for a sample, or that a clip plane crosses, gets a record of 20 words in the frame's region: its coverage, colour, page and row, the hook, the shade's data and the planes. Projection tags the splat with its record, and the raster's fragment stage reads it; pick builds its own from the same inputs.
+- the attribute streams' defaults, from word 0
+- first-fit blocks for each resident page's attribute directory and streams, as their chunks store them
+- the plugins' tables and their directory
+- the masks and the clip planes
+- each frame's sample records
 
-The passes stay within WebGPU's default of 8 storage buffers per stage; project and pick use all 8, so what they need next goes into the extension.
+When a flush needs more room, the buffer doubles and each pass binds it again. Hooks reach it only through code the engine generates or includes: `attr_<as>`, `table()`, the record readers and the coverage library.
+
+A splat gets a 20-word record in the frame's region when its shade asks for a sample or a clip plane crosses it. The record holds its coverage, colour, page and row, the hook, the shade's data and the planes. Projection tags the splat with its record, and the raster's fragment stage reads it. Pick builds its own records from the same inputs.
+
+The passes stay within WebGPU's default of 8 storage buffers per stage. Project and pick use all 8, so anything new they need goes into the extension.
 
 | pass    | storage buffers                                                            |
 | ------- | -------------------------------------------------------------------------- |
@@ -66,4 +76,11 @@ The passes stay within WebGPU's default of 8 storage buffers per stage; project 
 
 `pnpm bench` and `pnpm bench:drive` measure the engine in Chrome. They need Linux, Chrome at `/opt/google/chrome/google-chrome`, a GPU and the `cage` compositor, and are not in CI.
 
-`pnpm bench` takes `CPU_RATE=6` (a sixfold slower CPU), `FRAME_LIMIT_MS=1000` (frame limit, default 100 ms), `SNAPSHOT=/tmp/view.png` (the settled second pose) and `PROFILE=/tmp/moves.cpuprofile` (a CPU profile of the camera moves). Results record `CPU_RATE` and `FRAME_LIMIT_MS`, and are compared with a saved baseline only when the adapter, world and settings match.
+`pnpm bench` reads these variables:
+
+- `CPU_RATE=6` makes the CPU six times slower.
+- `FRAME_LIMIT_MS=1000` sets the frame limit (default 100 ms).
+- `SNAPSHOT=/tmp/view.png` saves the settled second pose.
+- `PROFILE=/tmp/moves.cpuprofile` saves a CPU profile of the camera moves.
+
+Results record `CPU_RATE` and `FRAME_LIMIT_MS`. A run is compared with the saved baseline only when the adapter, world and settings match.

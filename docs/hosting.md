@@ -12,7 +12,7 @@ u/<level>/<E>/<N>.<hash>.{idx,pack,col}   unit files; named by their content, ne
 - Answer `Range: bytes=a-b` with status `206`. A `200` works, but then the viewer downloads a whole pack for each page.
 - For other origins, send `access-control-allow-origin` with that origin or `*`.
 - Use HTTP/2 or later.
-- Server compression gains nothing: the unit files are compressed.
+- Skip server compression; the unit files are already compressed.
 
 | files        | header                                               |
 | ------------ | ---------------------------------------------------- |

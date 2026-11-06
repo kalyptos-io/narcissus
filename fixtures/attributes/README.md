@@ -7,8 +7,6 @@ A small Guldmund tree, version 2, with attribute streams. `world.json` declares 
 - Their level 2 root.
 - One page has no `test.tone` chunk, so its rows take the default.
 
-`expected.json` records what a reader must find: each unit's `.idx`, and for each `.atr` its streams and its chunks in order, with each chunk's stream, encoding, blob offset, rows, the hash of its inflated body and its decoded values. It records no bytes of the deflate streams, so `src/format/attributes.test.ts` passes whichever writer made the files.
+`expected.json` records what a reader must find: each unit's `.idx`, and for each `.atr` its streams and its chunks in order. For each chunk it gives the stream, encoding, blob offset, rows, the hash of the inflated body and the decoded values. It holds no deflate bytes, so `src/format/attributes.test.ts` passes whichever writer made the files.
 
-guldmund writes the canonical fixture with its own writer, from its fixture test with `GULDMUND_FIXTURES=write`, as it writes `fixtures/tree`. guldmund checks its own output against these files byte for byte.
-
-The committed files are guldmund's. narcissus's own writers can write the same tree with `NARCISSUS_FIXTURES=write pnpm exec vitest --run src/format/attributes.test.ts`; do not commit theirs.
+The committed files come from guldmund. Its fixture test writes them with `GULDMUND_FIXTURES=write`, as it writes `fixtures/tree`, and guldmund checks its own output against them byte for byte. narcissus's own writers can write the same tree with `NARCISSUS_FIXTURES=write pnpm exec vitest --run src/format/attributes.test.ts`; do not commit their output.

@@ -1,6 +1,6 @@
 # Embedding the viewer
 
-From its `start` event, `<narcissus-viewer>` gives these hooks through its `engine` and `controls` properties; [examples/hooks.html](../examples/hooks.html) uses each. Positions are world coordinates as `world.json` declares them, as float64.
+After its `start` event, `<narcissus-viewer>` gives the API below through its `engine` and `controls` properties. [examples/hooks.html](../examples/hooks.html) uses all of it. Positions are float64 world coordinates, in the system that `world.json` declares.
 
 To replace part of the world:
 
@@ -61,22 +61,26 @@ You can set every option, and `enabled`. `engine.heights()` obeys masks; `engine
 
 `engine.addClip({ planes })` cuts away everything, of the world and of layers, outside a convex region: where `a e + b n + c h + d >= 0` for each plane `[a, b, c, d]`, in world coordinates. It returns the clip's remover. Several clips may be active; a splat is kept where it lies inside all of them. A plane that is not finite or has no normal throws a `RangeError`. To move a plane, remove its clip and add another; the next frame shows it. [examples/section.html](../examples/section.html) moves one through a part with a slider.
 
-A splat a plane crosses is cut inside itself, by the mass of its gaussian on the kept side, so the cut edge is as sharp as the pixels; a splat wholly outside is culled. `pick()` never reports a surface a clip removed, and `heights()` counts a splat only where every plane keeps its centre. `ground()` and `groundAt()` read the boxes of the index, not the splats, and stay as they are.
+A splat that a plane crosses is cut within itself, by the mass of its gaussian on the kept side, so the cut edge is pixel sharp. A splat wholly outside is culled. `pick()` never reports a surface a clip removed, and `heights()` counts a splat only where every plane keeps its centre. `ground()` and `groundAt()` read the boxes of the index, not the splats, and stay as they are.
 
 ## Picking
 
-`engine.pick(x, y)` takes canvas CSS pixels. It resolves with `null` over nothing, else with a `Hit` on the surface that the last frame drew there, after masks and clips: its world `point`, the surface `normal` toward the camera, the `layer` hit, `null` for the world, the `object` hit, 0 for none, the `token` and the `row`:
+`engine.pick(x, y)` takes canvas CSS pixels. It resolves with `null` over nothing, else with a `Hit` on the surface that the last frame drew there, after masks and clips:
 
-- `token` is what the shade hooks, or the sample hook at the pixel, gave the surface splat; 0 by default.
-- `row` names the splat: its unit's pack path as its `.idx` names it, its page's blob offset there and its row in the page, which is also the row of its attribute values; `null` for a layer's splat.
+- `point`: the world point.
+- `normal`: the surface normal, toward the camera.
+- `layer`: the layer hit, or `null` for the world.
+- `object`: the object hit (see Objects), or 0 for none.
+- `token`: what the shade hooks, or the sample hook at the pixel, gave the surface splat; 0 by default.
+- `row`: the splat's unit pack path as its `.idx` names it, its page's blob offset there, and its row in the page, which is also the row of its attribute values; `null` for a layer's splat.
 
-A pick renders no frame. It answers about one frame later, or a frame later still when the pixel holds many splats. You can pick at each pointer move. `engine.pickMany(points)` resolves with a `Hit` or `null` for each pixel, in order, at about the cost of one pick for up to 64 pixels.
+A pick renders no frame. It answers about one frame later, or a frame later still when the pixel holds many splats. You can pick at each pointer move. `engine.pickMany(points)` resolves with a `Hit` or `null` for each pixel, in order. Up to 64 pixels cost about as much as one pick.
 
 To drag a layer over the area its own mask hides, disable that mask during the drag.
 
 ## Objects
 
-A host can give each splat of the world an object id from 0 to 65535, such as the building it is part of. Pass `objects` to `engine.open(url, { objects })`, or set `viewer.objects` before `src`; the element reads it each time a world opens. It maps the pack path of a unit, as its `.idx` names it (`u/0/723000/6179250.<hash>.pack`), to the URL of the unit's `.ids` file. A unit that it does not name has object 0 everywhere. The format of the world does not change.
+A host can give each splat of the world an object id from 0 to 65535, such as the building it is part of. Pass `objects` to `engine.open(url, { objects })`, or set `viewer.objects` before `src`; the element reads it each time a world opens. `objects` maps the pack path of a unit, as its `.idx` names it (`u/0/723000/6179250.<hash>.pack`), to the URL of the unit's `.ids` file. A unit that it does not name has object 0 everywhere. The format of the world does not change.
 
 An `.ids` file has an 8-byte prefix (`NIDS`, u16 version 1, u16 0), then a raw deflate stream of:
 
@@ -96,19 +100,29 @@ There is one id for each splat of the pack: the pages in the order of their blob
 
 `engine.use(plugin)` installs a plugin and returns its remover; [plugins.md](plugins.md) is the contract. A plugin's `Shade` runs for every splat, of the world and of layers, in projection and in pick alike.
 
-**Attributes.** A world can carry named attribute streams beside its splats, each declared in `world.json` ([format.md](format.md)). A shade names those it reads in `attributes`, and its WGSL reads each as `attr_<as>(s)`, widened to the `type` it asks for. When the open world lacks a stream, or declares it with another type or count, a hook that marks it `required` is off until a world has it; otherwise every row reads 0, or an empty record. Each `open()` resolves the hooks' streams in the new world. [examples/confidence.html](../examples/confidence.html) colours a world by an f16 stream.
+### Attributes
 
-**Tables.** `host.table(words)` gives a table of u32 words that every hook reads as `table(id, i)`. `write(at, words)` changes any part of it from the next frame. [examples/thematic.html](../examples/thematic.html) colours a million objects through one table, from a u32 stream of object ids, and rewrites it whole or one word at a time.
+A world can carry named attribute streams beside its splats, each declared in `world.json` ([format.md](format.md)). A shade names those it reads in `attributes`, and its WGSL reads each as `attr_<as>(s)`, widened to the `type` it asks for.
 
-**Sample hooks.** A shade can ask for a splat to be drawn pixel by pixel through its sample hook, which returns the pixel's colour, alpha and token, from the share of the splat's light that comes from regions of the splat's own coordinates. Pick runs the same hook, so its token is where the colour is. `source(s, p)` takes a world point into those coordinates. [examples/decal.html](../examples/decal.html) paints a hexagon across the splats under it, and pick reports it exactly where it shows.
+If the open world lacks a stream, or declares it with another type or count, a hook that marks it `required` is off until a world has it. Otherwise every row reads 0, or an empty record. Each `open()` resolves the hooks' streams in the new world. [examples/confidence.html](../examples/confidence.html) colours a world by an f16 stream.
 
-`engine.stats()` reports `unsampled`, the splats that asked for a sample, or that a clip crosses, but drew without, the frame's records full; the next frame has room. `coverageOver` counts the samples whose integration exceeded its error estimate.
+### Tables
 
-**Memory.** These count toward `stats().memory.pool`:
+`host.table(words)` gives a table of u32 words that every hook reads as `table(id, i)`. `write(at, words)` changes any part of it from the next frame. [examples/thematic.html](../examples/thematic.html) colours a million objects through one table, from a u32 stream of object ids, and rewrites it whole or one word at a time.
 
-- An attribute stream: for each resident page with a chunk of it, the chunk's inflated bytes, in whole words: plain at its scalar's width, a dictionary its index and entries, a sparse chunk only its listed rows. Only streams an installed hook reads are fetched.
+### Sample hooks
+
+A shade can ask for a splat to be drawn pixel by pixel through its sample hook. The hook returns each pixel's colour, alpha and token from the share of the splat's light that comes from regions in the splat's own coordinates. `source(s, p)` takes a world point into those coordinates. Pick runs the same hook, so the token is where the colour is. [examples/decal.html](../examples/decal.html) paints a hexagon across the splats under it, and pick reports it exactly where it shows.
+
+`engine.stats().unsampled` counts the splats that needed a sample, because they asked or a clip crosses them, but drew without one because the frame's records were full. The next frame has room. `coverageOver` counts the samples whose integration exceeded its error estimate.
+
+### Memory
+
+These count toward `stats().memory.pool`:
+
+- An attribute stream: the inflated bytes of its chunk in each resident page, in whole words. A plain chunk stores values at its scalar's width, a dictionary its indices and entries, and a sparse chunk only its listed rows. Only streams that an installed hook reads are fetched.
 - A table: 4 bytes a word.
-- While a sample hook or a clip is installed, the frame's sample records: 80 bytes each, room for 1.5 times what the last frame asked, in a power of two, 1,024 at least.
+- While a sample hook or a clip is installed, the frame's sample records: 80 bytes each, with room for 1.5 times what the last frame asked, rounded up to a power of two, and at least 1,024.
 - A clip: 16 bytes a plane.
 
 ## Lines and markers
@@ -125,7 +139,7 @@ There is one id for each splat of the pack: the pages in the order of their blob
 
 `style` reads back with the defaults filled in, so `line.style = { ...line.style, colour }` changes one field.
 
-`engine.toScreen(point)` gives the canvas CSS pixel of a world point, or `null` behind the camera. Place HTML over the canvas in `engine.onFrame(fn)`, which runs after the controls set the camera. To draw on the GPU, write a `Post` plugin ([architecture.md](architecture.md)).
+`engine.toScreen(point)` gives the canvas CSS pixel of a world point, or `null` behind the camera. Place HTML over the canvas in `engine.onFrame(fn)`, which runs after the controls set the camera. To draw on the GPU, write a `Post` plugin ([plugins.md](plugins.md)).
 
 ## Capture
 
