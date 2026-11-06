@@ -360,6 +360,8 @@ class GpuEngine implements Engine {
 	#arrived = false;
 	#fading = false;
 	#drawn: Drawn[] = [];
+	/** #drawn's page ids */
+	#drawnIds = new Set<number>();
 	#lastFrame = -Infinity;
 	#warmUntil = -Infinity;
 	#movedAt = -Infinity;
@@ -936,7 +938,8 @@ class GpuEngine implements Engine {
 			) {
 				({ drawn, fading } = this.#fader.update(plan.cut, this.#has, now, this.#budget));
 			}
-			feed.update(plan, new Set(drawn.map((d) => d.id)), now);
+			if (drawn !== this.#drawn) this.#drawnIds = new Set(drawn.map((d) => d.id));
+			feed.update(plan, this.#drawnIds, now);
 		}
 		if (pool.upload(UPLOAD_BYTES) > 0) this.#arrived = true;
 		if (drawn !== this.#drawn || this.#arrived || this.#redraw) {

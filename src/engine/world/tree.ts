@@ -21,6 +21,8 @@ export interface UnitNode extends UnitKey {
 	grid: Map<number, PageNode>;
 	/** the units its .idx names, by unit key */
 	named: Map<string, { key: UnitKey; hash: string }>;
+	/** world.json-relative paths of its pack, .col and .atr, the last with its size */
+	files: { pack: string; col: string | null; atr: { path: string; size: number } | null };
 }
 
 export interface PageNode {
@@ -93,7 +95,12 @@ export class Tree {
 			parent: null,
 			pages: [],
 			grid,
-			named: namedBy(idx)
+			named: namedBy(idx),
+			files: {
+				pack: unitPath(idx, idx.pack, 'pack'),
+				col: idx.col ? unitPath(idx, idx.col, 'col') : null,
+				atr: idx.atr ? { path: unitPath(idx, idx.atr, 'atr'), size: idx.atrSize } : null
+			}
 		};
 		for (const row of idx.rows) {
 			const b = row.box;

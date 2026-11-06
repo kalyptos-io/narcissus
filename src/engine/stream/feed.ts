@@ -1,6 +1,5 @@
 // a plan turned into residency: idx fetches, page batches, pool admission and tree pruning
 
-import { unitPath } from '../../format/index.ts';
 import type { Pool } from '../gpu/pool.ts';
 import type { Plan } from '../plan/cut.ts';
 import type { PageNode, Tree, UnitNode } from '../world/tree.ts';
@@ -163,17 +162,14 @@ export class Feed {
 	 */
 	#jobs(): PageJob[] {
 		const jobs: PageJob[] = [];
-		const job = ({ id, unit, row }: PageNode, pack: string): PageJob => {
-			const { idx } = unit;
-			const col = idx.col ? unitPath(unit, idx.col, 'col') : null;
-			const atr = idx.atr ? { path: unitPath(unit, idx.atr, 'atr'), size: idx.atrSize } : null;
+		const job = ({ id, unit, row }: PageNode): PageJob => {
+			const { pack, col, atr } = unit.files;
 			return { id, pack, col, atr, offset: row.offset, length: row.length };
 		};
 		for (const page of this.#plan.load) {
-			const { idx } = page.unit;
-			const pack = unitPath(page.unit, idx.pack, 'pack');
-			if (!this.#ready(page.id, pack) || !this.#objects.ready(pack, idx)) continue;
-			jobs.push(job(page, pack));
+			const { idx, files } = page.unit;
+			if (!this.#ready(page.id, files.pack) || !this.#objects.ready(files.pack, idx)) continue;
+			jobs.push(job(page));
 		}
 		const { generation } = this.#pool.attributes;
 		for (const page of this.#plan.cut) {
@@ -181,8 +177,7 @@ export class Feed {
 			const loaded = this.#held.get(id);
 			if (!unit.idx.atr || loaded === undefined || loaded >= generation || !this.#pool.has(id))
 				continue;
-			const pack = unitPath(unit, unit.idx.pack, 'pack');
-			if (!this.#waiting(pack)) jobs.push(job(page, pack));
+			if (!this.#waiting(unit.files.pack)) jobs.push(job(page));
 		}
 		return jobs;
 	}
@@ -215,7 +210,7 @@ export class Feed {
 			this.#onArrive();
 			return;
 		}
-		const pack = unitPath(unit, unit.idx.pack, 'pack');
+		const { pack } = unit.files;
 		this.#objects.write(pack, row.offset, page);
 		const source = { pack, blob: row.offset };
 		if (this.#pool.add(id, page, [unit.e, unit.n], this.protects, 0, source)) {
