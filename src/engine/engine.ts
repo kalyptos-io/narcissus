@@ -910,7 +910,7 @@ class GpuEngine implements Engine {
 		}
 		const tree = this.#tree;
 		const feed = this.#feed;
-		const redraw = this.#arrived || this.#dirty || this.#fading;
+		const redraw = this.#arrived || this.#dirty;
 		const previous = this.#plan;
 		let plan = previous;
 		if (tree && feed) {
@@ -925,13 +925,14 @@ class GpuEngine implements Engine {
 		let drawn = this.#drawn;
 		let fading = this.#fading;
 		if (plan && feed) {
-			// camera motion can leave the same opaque cover
+			// a fade steps on the plan it has; camera motion can leave the same opaque cover
 			if (
-				plan !== previous &&
-				(redraw ||
-					!previous ||
-					plan.cut.length !== previous.cut.length ||
-					plan.cut.some((page, k) => page !== previous.cut[k]))
+				this.#fading ||
+				(plan !== previous &&
+					(redraw ||
+						!previous ||
+						plan.cut.length !== previous.cut.length ||
+						plan.cut.some((page, k) => page !== previous.cut[k])))
 			) {
 				({ drawn, fading } = this.#fader.update(plan.cut, this.#has, now, this.#budget));
 			}
