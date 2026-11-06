@@ -24,18 +24,58 @@ export interface Hooked {
 	streams: readonly (number | null)[];
 }
 
-export class Project {
+/** a compute pipeline over a pass's source and the shade hooks it runs, built lazily after a change */
+export class HookedPipeline {
 	#device: GPUDevice;
-	#pipelineLayout: GPUPipelineLayout;
+	#layout: GPUPipelineLayout;
+	#source: string;
+	#label: string;
+	#entryPoint: string;
+	#code: string;
 	#pipeline: GPUComputePipeline | undefined;
-	#code = shaded(source, [], 'shade');
+
+	constructor(
+		device: GPUDevice,
+		layout: GPUPipelineLayout,
+		source: string,
+		label: string,
+		entryPoint: string
+	) {
+		this.#device = device;
+		this.#layout = layout;
+		this.#source = source;
+		this.#label = label;
+		this.#entryPoint = entryPoint;
+		this.#code = shaded(source, [], 'shade');
+	}
+
+	hooks(hooks: readonly Hooked[]): void {
+		const code = shaded(this.#source, hooks, 'shade');
+		if (code === this.#code) return;
+		this.#code = code;
+		this.#pipeline = undefined;
+	}
+
+	get pipeline(): GPUComputePipeline {
+		return (this.#pipeline ??= this.#device.createComputePipeline({
+			label: this.#label,
+			layout: this.#layout,
+			compute: {
+				module: this.#device.createShaderModule({ label: this.#label, code: this.#code }),
+				entryPoint: this.#entryPoint
+			}
+		}));
+	}
+}
+
+export class Project {
+	#pipeline: HookedPipeline;
 	#group: () => GPUBindGroup;
 	#pool: Pool;
 	#work: GPUBuffer;
 	#visible: GPUBuffer;
 
 	constructor(device: GPUDevice, pool: Pool, buffers: FrameBuffers) {
-		this.#device = device;
 		this.#pool = pool;
 		this.#work = buffers.work;
 		this.#visible = buffers.visible;
@@ -52,7 +92,8 @@ export class Project {
 			'uniform',
 			'storage'
 		]);
-		this.#pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [layout] });
+		const pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [layout] });
+		this.#pipeline = new HookedPipeline(device, pipelineLayout, source, 'project', 'project');
 		const fixed = [
 			buffers.uniforms,
 			buffers.plugins,
@@ -70,10 +111,7 @@ export class Project {
 
 	/** the next frame's pipeline runs these hooks in order, each reading from its first slot */
 	hooks(hooks: readonly Hooked[]): void {
-		const code = shaded(source, hooks, 'shade');
-		if (code === this.#code) return;
-		this.#code = code;
-		this.#pipeline = undefined;
+		this.#pipeline.hooks(hooks);
 	}
 
 	encode(
@@ -89,20 +127,11 @@ export class Project {
 			Math.min(128, this.#pool.listed, visible ? Math.max(32, Math.ceil(visible / 16)) : 128)
 		);
 		const pass = encoder.beginComputePass({ label: 'project', timestampWrites: timestamps });
-		pass.setPipeline((this.#pipeline ??= this.#build()));
+		pass.setPipeline(this.#pipeline.pipeline);
 		pass.setBindGroup(0, this.#group());
 		// chrome validates indirect args on its gpu process's main thread, a cost every frame
 		pass.dispatchWorkgroups(count);
 		pass.end();
-	}
-
-	#build(): GPUComputePipeline {
-		const module = this.#device.createShaderModule({ label: 'project', code: this.#code });
-		return this.#device.createComputePipeline({
-			label: 'project',
-			layout: this.#pipelineLayout,
-			compute: { module, entryPoint: 'project' }
-		});
 	}
 }
 

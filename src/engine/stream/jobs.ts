@@ -1,6 +1,6 @@
 // what a stream worker does, as plain functions over the ports
 
-import type { Cache, Fetch } from '../../ports.ts';
+import { reason, type Cache, type Fetch } from '../../ports.ts';
 import {
 	atrTrailer,
 	chunkWords,
@@ -138,8 +138,6 @@ export async function* loadBatch(
 		yield { id: job.id, page };
 	}
 }
-
-const reason = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /** by blob offset, the chunks of the batch's pages of the declared streams, as the gpu reads them */
 async function pageAttributes(

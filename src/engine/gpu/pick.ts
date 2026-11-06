@@ -7,7 +7,7 @@ import { multiply } from '../math/mat4.ts';
 import { bufferLayout, liveGroup, type FrameBuffers } from './buffers.ts';
 import source from './pick.wgsl?raw';
 import type { PageSource, Pool } from './pool.ts';
-import { shaded, type Hooked } from './project.ts';
+import { HookedPipeline, type Hooked } from './project.ts';
 
 /** workgroups of a pick, pick.wgsl's PICK_GROUPS */
 const GROUPS = 256;
@@ -43,9 +43,7 @@ export interface Found {
 export class Pick {
 	#device: GPUDevice;
 	#pool: Pool;
-	#pipelineLayout: GPUPipelineLayout;
-	#pipeline: GPUComputePipeline | undefined;
-	#code = shaded(source, [], 'shade');
+	#pipeline: HookedPipeline;
 	#viewProj = new Float32Array(16);
 	#planes = new Float32Array(24);
 	#values = new Float32Array((PROBES_HEAD_BYTES + PROBES * PROBE_BYTES) / 4);
@@ -69,7 +67,8 @@ export class Pick {
 			'storage',
 			'read-only-storage'
 		]);
-		this.#pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [layout] });
+		const pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [layout] });
+		this.#pipeline = new HookedPipeline(device, pipelineLayout, source, 'pick', 'gather');
 		// picks in flight share these: the queue runs each pick's writes after the last one's pass
 		this.#probes = device.createBuffer({
 			label: 'pick probes',
@@ -89,10 +88,7 @@ export class Pick {
 
 	/** the next pick runs these hooks, as project does */
 	hooks(hooks: readonly Hooked[]): void {
-		const code = shaded(source, hooks, 'shade');
-		if (code === this.#code) return;
-		this.#code = code;
-		this.#pipeline = undefined;
+		this.#pipeline.hooks(hooks);
 	}
 
 	/**
@@ -131,6 +127,7 @@ export class Pick {
 		});
 		const values = this.#values;
 		new Uint32Array(values.buffer, 0, 1)[0] = pixels.length;
+		multiply(this.#viewProj, frame.proj, frame.view);
 		pixels.forEach(([x, y], k) => {
 			const at = (PROBES_HEAD_BYTES + k * PROBE_BYTES) / 4;
 			const up = frame.height - y;
@@ -146,7 +143,7 @@ export class Pick {
 		const encoder = device.createCommandEncoder({ label: 'pick' });
 		const pass = encoder.beginComputePass({ label: 'pick' });
 		pass.setBindGroup(0, this.#group());
-		pass.setPipeline((this.#pipeline ??= this.#build()));
+		pass.setPipeline(this.#pipeline.pipeline);
 		pass.dispatchWorkgroups(GROUPS);
 		pass.end();
 		encoder.copyBufferToBuffer(this.#hits, 0, readback, 0, bytes);
@@ -183,27 +180,17 @@ export class Pick {
 		old?.destroy();
 	}
 
-	/** the four sides of target pixel (x, y up), in the floating-origin frame */
+	/** the four sides of target pixel (x, y up), in the floating-origin frame; #viewProj is frame's */
 	#sides(x: number, y: number, frame: Frame): Float32Array {
 		const ndc = (pixel: number, size: number) => (2 * pixel) / size - 1;
-		const m = multiply(this.#viewProj, frame.proj, frame.view);
 		const sides = [
 			ndc(x - 0.5, frame.width),
 			ndc(x + 0.5, frame.width),
 			ndc(y - 0.5, frame.height),
 			ndc(y + 0.5, frame.height)
 		];
-		planes(this.#planes, m, sides);
+		planes(this.#planes, this.#viewProj, sides);
 		return this.#planes.subarray(0, 16);
-	}
-
-	#build(): GPUComputePipeline {
-		const module = this.#device.createShaderModule({ label: 'pick', code: this.#code });
-		return this.#device.createComputePipeline({
-			label: 'pick',
-			layout: this.#pipelineLayout,
-			compute: { module, entryPoint: 'gather' }
-		});
 	}
 }
 

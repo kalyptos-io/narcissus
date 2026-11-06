@@ -898,7 +898,7 @@ class GpuEngine implements Engine {
 		let plan = previous;
 		if (tree && feed) {
 			const due = !feed.idle && now - this.#plannedAt >= REPLAN_MS;
-			const stale = this.#dirty || this.#arrived || this.#fading || this.#heading;
+			const stale = redraw || this.#heading;
 			if (!plan || moved || due || stale) {
 				plan = this.#replan(tree, now, moved);
 			}

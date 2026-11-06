@@ -1,6 +1,6 @@
 // a stream worker: fetch, cache, inflate, decode; see jobs.ts
 
-import { Missing, type Cache } from '../../ports.ts';
+import { failed, type Cache, type Failed } from '../../ports.ts';
 import type { DecodedPage, Idx, PageRow } from '../../format/index.ts';
 import { http } from '../../adapters/http.ts';
 import type { Wanted } from './attributes.ts';
@@ -34,7 +34,7 @@ export type Reply =
 	| { id: number; value: Idx | Map<number, Uint16Array> }
 	| { id: number; page: Loaded }
 	| { id: number; done: true }
-	| { id: number; error: string; missing: boolean };
+	| ({ id: number } & Failed);
 
 const MiB = 2 ** 20;
 
@@ -113,9 +113,7 @@ async function answer(message: Extract<Message, { type: 'idx' | 'ids' | 'batch' 
 			scope.postMessage({ id, done: true }, []);
 		}
 	} catch (error) {
-		const text = error instanceof Error ? error.message : String(error);
-		// an error's class does not cross to the page, so missing goes beside its message
-		scope.postMessage({ id, error: text, missing: error instanceof Missing }, []);
+		scope.postMessage({ id, ...failed(error) }, []);
 	} finally {
 		running.delete(id);
 	}

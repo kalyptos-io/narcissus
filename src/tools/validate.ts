@@ -18,7 +18,7 @@ import {
 	type Idx,
 	type PageRow
 } from '../format/index.ts';
-import { Missing, type Fetch } from '../ports.ts';
+import { Missing, reason, type Fetch } from '../ports.ts';
 import { openWorld, walk, type Unit } from './walk.ts';
 
 export interface Fault {
@@ -45,7 +45,6 @@ export interface ValidateOptions {
 	progress?: (report: Report) => void;
 }
 
-const reason = (error: unknown) => (error instanceof Error ? error.message : String(error));
 const told = (error: unknown) => (error instanceof Missing ? 'is missing' : reason(error));
 
 export async function validate(

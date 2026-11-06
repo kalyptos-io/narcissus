@@ -2,6 +2,7 @@
 
 import common from './common.wgsl?raw';
 import { pack4x8unorm } from './layout.ts';
+import { OVER } from './raster.ts';
 import code from './overlay.wgsl?raw';
 
 /** a capsule from a to b, world coordinates; a marker where a is b */
@@ -18,7 +19,6 @@ export interface Capsule {
 
 /** bytes of an instance: a, b, radius, colour, occlude */
 const STRIDE = 36;
-const OVER: GPUBlendComponent = { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' };
 
 export class Overlay {
 	#device: GPUDevice;

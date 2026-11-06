@@ -142,9 +142,7 @@ export class Tree {
 			const entry = this.#wanted.get(k);
 			// the nearest namer's pages rank the fetch
 			if (entry && entry.from <= unit.level) continue;
-			const over = this.#over(unit, below);
-			const wanted = { ...below, path: unitPath(below, hash, 'idx'), over };
-			this.#wanted.set(k, { wanted, from: unit.level });
+			this.#name(unit, below, hash, k);
 		}
 		return unit;
 	}
@@ -227,16 +225,16 @@ export class Tree {
 			if (!namer) continue;
 			const named = namedUnits(namer.idx).find((entry) => unitKey(entry.key) === k);
 			if (!named) continue;
-			const wanted = {
-				level: key.level,
-				e: key.e,
-				n: key.n,
-				path: unitPath(named.key, named.hash, 'idx'),
-				over: this.#over(namer, key)
-			};
-			this.#wanted.set(k, { wanted, from: namer.level });
+			this.#name(namer, key, named.hash, k);
 			return;
 		}
+	}
+
+	/** wants key's .idx, k its unitKey, as namer names it with hash */
+	#name(namer: UnitNode, key: UnitKey, hash: string, k: string): void {
+		const { level, e, n } = key;
+		const wanted = { level, e, n, path: unitPath(key, hash, 'idx'), over: this.#over(namer, key) };
+		this.#wanted.set(k, { wanted, from: namer.level });
 	}
 
 	/** child is a quadrant of parent, one level down */

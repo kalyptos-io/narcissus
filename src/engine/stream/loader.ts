@@ -1,6 +1,6 @@
 // the main thread's side of the stream workers
 
-import { Missing, type Fetch } from '../../ports.ts';
+import { rethrown, type Fetch } from '../../ports.ts';
 import type { Idx, PageRow } from '../../format/index.ts';
 import type { Wanted } from './attributes.ts';
 import { answering, type Ask } from './remote.ts';
@@ -136,7 +136,7 @@ export class Loader {
 		if (!pending) return;
 		if ('page' in reply) pending.page?.(reply.page);
 		else if ('error' in reply) {
-			pending.reject(reply.missing ? new Missing(reply.error) : new Error(reply.error));
+			pending.reject(rethrown(reply));
 		} else pending.resolve('value' in reply ? reply.value : undefined);
 	}
 

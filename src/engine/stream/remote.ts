@@ -1,13 +1,12 @@
 // a page's own Fetch, reached from the stream workers by message: a function cannot be posted
 
-import { Missing, type Fetch } from '../../ports.ts';
+import { failed, rethrown, type Failed, type Fetch } from '../../ports.ts';
 
 /** a worker wants bytes, or wants them no more */
 export type Ask =
 	{ fetch: number; url: string; range: readonly [number, number] | null } | { unfetch: number };
 
-export type Fetched =
-	{ fetched: number; bytes: Uint8Array } | { fetched: number; error: string; missing: boolean };
+export type Fetched = { fetched: number; bytes: Uint8Array } | ({ fetched: number } & Failed);
 
 /** the worker's side: a Fetch that posts what it wants, and take for the answers */
 export function asking(post: (ask: Ask) => void): { fetch: Fetch; take(answer: Fetched): void } {
@@ -25,7 +24,7 @@ export function asking(post: (ask: Ask) => void): { fetch: Fetch; take(answer: F
 			waiting.set(id, (answer) => {
 				signal?.removeEventListener('abort', abort);
 				if ('bytes' in answer) resolve(answer.bytes);
-				else reject(answer.missing ? new Missing(answer.error) : new Error(answer.error));
+				else reject(rethrown(answer));
 			});
 			signal?.addEventListener('abort', abort, { once: true });
 			post({ fetch: id, url, range });
@@ -58,10 +57,7 @@ export function answering(
 					const copy = bytes.slice();
 					post({ fetched: id, bytes: copy }, [copy.buffer]);
 				},
-				(error: unknown) => {
-					const text = error instanceof Error ? error.message : String(error);
-					post({ fetched: id, error: text, missing: error instanceof Missing }, []);
-				}
+				(error: unknown) => post({ fetched: id, ...failed(error) }, [])
 			)
 			.finally(() => running.delete(id));
 	};

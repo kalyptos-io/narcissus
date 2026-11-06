@@ -10,7 +10,7 @@ import {
 } from '../format/index.ts';
 import type { Fetch } from '../ports.ts';
 import { checkPoint, checkUnit } from './check.ts';
-import { baseOf, slots } from './gpu/layout.ts';
+import { baseOf, pack4x8unorm, slots } from './gpu/layout.ts';
 import type { Pool } from './gpu/pool.ts';
 import { boxVisible } from './math/frustum.ts';
 import { DEG } from './math/mat4.ts';
@@ -207,7 +207,7 @@ function turnBoxes(page: Kept, [c, s]: readonly [number, number]): Float32Array<
 
 /** Drawn factors of a layer's pages, every quadrant at its opacity; 0 while it draws nothing */
 function factors({ visible, opacity }: Layer): number {
-	return visible ? (Math.round(opacity * 255) * 0x01010101) >>> 0 : 0;
+	return visible ? pack4x8unorm([opacity, opacity, opacity, opacity]) : 0;
 }
 
 /** the layers of an engine, their pages pinned in its pool */

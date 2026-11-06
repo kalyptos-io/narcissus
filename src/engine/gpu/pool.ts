@@ -434,25 +434,15 @@ export class Pool {
 		for (const buffer of old) buffer.destroy();
 
 		const slots = this.slots;
-		const taken = new Uint8Array(slots);
-		taken.set(this.#taken);
-		this.#taken = taken;
+		this.#taken = wider(this.#taken, slots);
 		this.#free += slots - before;
 		for (let s = slots - 1; s >= before; s--) this.#tables.push(s);
-		const table = new Uint32Array(slots * PAGE_WORDS);
-		table.set(this.#table);
-		this.#table = table;
-		this.#tableFloats = new Float32Array(table.buffer);
-		const clusterWords = new Uint32Array(slots * CLUSTER_WORDS);
-		clusterWords.set(this.#clusterWords);
-		this.#clusterWords = clusterWords;
-		this.#clusterFloats = new Float32Array(clusterWords.buffer);
-		const list = new Uint32Array(slots);
-		list.set(this.#list);
-		this.#list = list;
-		const hidden = new Uint8Array(slots);
-		hidden.set(this.#hidden);
-		this.#hidden = hidden;
+		this.#table = wider(this.#table, slots * PAGE_WORDS);
+		this.#tableFloats = new Float32Array(this.#table.buffer);
+		this.#clusterWords = wider(this.#clusterWords, slots * CLUSTER_WORDS);
+		this.#clusterFloats = new Float32Array(this.#clusterWords.buffer);
+		this.#list = wider(this.#list, slots);
+		this.#hidden = wider(this.#hidden, slots);
 		for (let s = before; s < slots; s++) this.#masked.push(NONE);
 	}
 
@@ -752,4 +742,11 @@ export class Pool {
 		this.#free -= need;
 		return out;
 	}
+}
+
+/** array's values at the start of a new zeroed one of length */
+function wider<T extends Uint8Array | Uint32Array>(array: T, length: number): T {
+	const out = new (array.constructor as new (length: number) => T)(length);
+	out.set(array);
+	return out;
 }

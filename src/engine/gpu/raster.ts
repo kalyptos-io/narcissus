@@ -10,7 +10,8 @@ export const COLOUR_FORMAT: GPUTextureFormat = 'rgb10a2unorm';
 /** the nearest drawn splat's log depth; a second colour target would double the blend work */
 export const DEPTH_FORMAT: GPUTextureFormat = 'depth16unorm';
 
-const OVER: GPUBlendComponent = { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' };
+/** premultiplied over */
+export const OVER: GPUBlendComponent = { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' };
 
 /** sorted splats as instanced quads, premultiplied, back to front, the sampled through their hooks */
 export class Raster {

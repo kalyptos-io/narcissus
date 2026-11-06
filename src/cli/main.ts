@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // narcissus <command>: the tools over a world in a folder or on a server
 
+import { reason } from '../ports.ts';
 import { exportWorld } from './export.ts';
 import { info } from './info.ts';
 import { publish } from './publish.ts';
@@ -30,7 +31,7 @@ const [name, ...args] = process.argv.slice(2);
 const command = commands[name];
 if (command) {
 	process.exitCode = await command(args).catch((error: unknown) => {
-		console.error(error instanceof Error ? error.message : String(error));
+		console.error(reason(error));
 		return 1;
 	});
 } else {

@@ -1,6 +1,7 @@
 // the host's object ids: each unit's .ids, read once through the stream workers and written into
 // its pages as they arrive
 
+import { reason } from '../../ports.ts';
 import { GEOMETRY_WORDS, type DecodedPage, type Idx, type PageRow } from '../../format/index.ts';
 import type { UnitFile } from './scheduler.ts';
 
@@ -34,9 +35,7 @@ export class Objects {
 		this.#packs.set(pack, undefined);
 		void this.#load(url, { path: pack, size: idx.packSize }, idx.rows)
 			.catch((error: unknown) => {
-				console.warn(
-					`${url} is ignored: ${error instanceof Error ? error.message : String(error)}`
-				);
+				console.warn(`${url} is ignored: ${reason(error)}`);
 				return null;
 			})
 			.then((pages) => {
