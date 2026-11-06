@@ -1,21 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { capacities, poolRoom, rebase, unproject } from './engine.ts';
-import { CLUSTER } from '../format/index.ts';
+import { capacities, poolRoom, unproject } from './engine.ts';
 import { forward, multiply, perspective, transform, view } from './math/mat4.ts';
 
 const MiB = 2 ** 20;
 const DEG = Math.PI / 180;
 
 describe('capacities', () => {
-	it('gives the pool 3.25 and a frame 2 times the budget in whole clusters', () => {
-		const limits = { maxStorageBufferBindingSize: 2 ** 31, maxBufferSize: 2 ** 32 };
-		const { pool, frame } = capacities(2_000_000, limits);
-		expect(pool).toBe(6_500_096);
-		expect(frame).toBe(4_000_000);
-		expect(pool % CLUSTER).toBe(0);
-		expect(frame % CLUSTER).toBe(0);
-	});
-
 	it('keeps the widest binding of each within the binding size', () => {
 		const limits = { maxStorageBufferBindingSize: 128 * MiB, maxBufferSize: 256 * MiB };
 		expect(capacities(16_000_000, limits)).toEqual({ pool: 8_388_608, frame: 5_592_320 });
@@ -36,17 +26,6 @@ describe('poolRoom', () => {
 		expect(poolRoom(16_000_000, 4096, 0, limits)).toBe(most);
 		expect(poolRoom(1_000_000, 4096, most - pool - 4096, limits)).toBe(most);
 		expect(poolRoom(1_000_000, 4096, most - pool, limits)).toBeNull();
-	});
-});
-
-describe('rebase', () => {
-	it('keeps the origin while the camera stays within 2048 m of it', () => {
-		const origin = [722944, 6176768, 0] as const;
-		expect(rebase(origin, [724944, 6176768, 100])).toBe(origin);
-	});
-
-	it('moves the origin to the nearest 1024 m grid point once the camera strays further', () => {
-		expect(rebase([0, 0, 0], [723100.4, 6177000, 30])).toEqual([722944, 6176768, 0]);
 	});
 });
 

@@ -12,7 +12,7 @@ export interface Footprint {
 }
 
 /** for a screen box in -1..1 coordinates */
-export function centreWeight(left: number, right: number, bottom: number, top: number): number {
+function centreWeight(left: number, right: number, bottom: number, top: number): number {
 	const radius =
 		(left * left + left * right + right * right + bottom * bottom + bottom * top + top * top) / 3;
 	// centre targets quarter-pixel spacing, tapering smoothly to one pixel at the edge

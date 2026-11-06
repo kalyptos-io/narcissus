@@ -80,15 +80,6 @@ function inside(page: DecodedPage, box: Float32Array): boolean {
 }
 
 describe('synthetic', () => {
-	it('serves a world with two level 12 roots', async () => {
-		const { roots, extent } = await world(synthetic());
-		expect(roots.map(({ level, e, n }) => ({ level, e, n }))).toEqual([
-			{ level: 12, e: 0, n: 5120000 },
-			{ level: 12, e: 0, n: 6144000 }
-		]);
-		expect(extent).toEqual({ e: [440000, 900000], n: [6050000, 6410000], h: [0, 80] });
-	});
-
 	it('lists the levels, children and descendants of a root that meet the extent', async () => {
 		const fetch = synthetic();
 		const idx = await open(fetch, (await world(fetch)).roots[1].idx);

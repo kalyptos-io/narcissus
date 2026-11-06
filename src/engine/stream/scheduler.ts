@@ -102,11 +102,6 @@ export class Scheduler {
 		return queued;
 	}
 
-	/** pages in flight */
-	get loading(): number {
-		return this.#flying.size;
-	}
-
 	/** seed plus the free pages around it in its pack's offset order */
 	#merge(seed: PageJob, jobs: PageJob[]): Batch {
 		const { gap, span } = this.#options;

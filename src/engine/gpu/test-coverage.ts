@@ -20,12 +20,10 @@ export interface Posterior2 {
 	cov: [Vec2, Vec2];
 }
 
-/** what polygon() spent and whether it ended over its estimate */
+/** polygon()'s mass, its error estimate and whether it ended over its budget */
 export interface Integrated {
 	mass: number;
 	error: number;
-	intervals: number;
-	erfs: number;
 	over: boolean;
 }
 
@@ -185,8 +183,7 @@ interface Interval {
 
 /** coverage.wgsl's polygon(): whiten, clip to the square, vertex intervals, adaptive k15 */
 export function polygon(p: Posterior2, v: Vec2[], budget = BUDGET): Integrated {
-	const cost = { erfs: 0 };
-	const none = { mass: 0, error: 0, intervals: 0, erfs: 0, over: false };
+	const none = { mass: 0, error: 0, over: false };
 	if (v.length < 3) return none;
 	const w = clipped(p, v);
 	if (w.length < 3) return none;
@@ -197,7 +194,7 @@ export function polygon(p: Posterior2, v: Vec2[], budget = BUDGET): Integrated {
 		if (!(u1 > u0)) continue;
 		const [lo0, up0] = edgeAt(w, 0.5 * (u0 + u1), u0);
 		const [lo1, up1] = edgeAt(w, 0.5 * (u0 + u1), u1);
-		list.push(rule([u0, u1], [lo0, lo1], [up0, up1], cost));
+		list.push(rule([u0, u1], [lo0, lo1], [up0, up1]));
 	}
 	const total = () => list.reduce((s, i) => s + i.error, 0);
 	for (let h = 0; h < HALVINGS && total() > budget; h++) {
@@ -205,15 +202,13 @@ export function polygon(p: Posterior2, v: Vec2[], budget = BUDGET): Integrated {
 		const { u, lo, up } = list[worst];
 		const um = 0.5 * (u[0] + u[1]);
 		const [lm, upm] = [0.5 * (lo[0] + lo[1]), 0.5 * (up[0] + up[1])];
-		list[worst] = rule([u[0], um], [lo[0], lm], [up[0], upm], cost);
-		list.push(rule([um, u[1]], [lm, lo[1]], [upm, up[1]], cost));
+		list[worst] = rule([u[0], um], [lo[0], lm], [up[0], upm]);
+		list.push(rule([um, u[1]], [lm, lo[1]], [upm, up[1]]));
 	}
 	const error = total();
 	return {
 		mass: list.reduce((s, i) => s + i.mass, 0),
 		error,
-		intervals: list.length,
-		erfs: cost.erfs,
 		over: error > budget
 	};
 }
@@ -274,10 +269,9 @@ function edgeAt(w: Vec2[], um: number, u: number): Vec2 {
 }
 
 /** k15 over one interval, its error |k15 - g7| */
-function rule(u: Vec2, lo: Vec2, up: Vec2, cost: { erfs: number }): Interval {
+function rule(u: Vec2, lo: Vec2, up: Vec2): Interval {
 	const half = 0.5 * (u[1] - u[0]);
 	const f = (t: number) => {
-		cost.erfs += 2;
 		const s = 0.5 * (1 + t);
 		const x = u[0] + s * (u[1] - u[0]);
 		const a = lo[0] + s * (lo[1] - lo[0]);

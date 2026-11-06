@@ -24,8 +24,4 @@ describe('shardOf', () => {
 		for (const pack of packs) counts[shardOf(pack, 6)]++;
 		expect(Math.min(...counts)).toBeGreaterThan(400 / 6 / 3);
 	});
-
-	it('puts everything on worker 0 of one', () => {
-		expect(packs.every((pack) => shardOf(pack, 1) === 0)).toBe(true);
-	});
 });

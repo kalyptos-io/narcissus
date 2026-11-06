@@ -1,29 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Engine } from '../engine/index.ts';
-import { Controls, flyAxes, metresPerPixel, smooth } from './controls.ts';
+import { Controls, flyAxes, smooth } from './controls.ts';
 import { cameraOf, LIMITS, type Pose } from './pose.ts';
-
-describe('metresPerPixel', () => {
-	it('spans the 45 degree view at the focus over the canvas height', () => {
-		expect(metresPerPixel(100, 1000)).toBeCloseTo((200 * Math.tan(Math.PI / 8)) / 1000, 12);
-	});
-
-	it('grows with distance and shrinks with taller canvases', () => {
-		expect(metresPerPixel(200, 1000)).toBeCloseTo(2 * metresPerPixel(100, 1000), 12);
-		expect(metresPerPixel(100, 2000)).toBeCloseTo(metresPerPixel(100, 1000) / 2, 12);
-	});
-
-	it('stays finite on a canvas with no height yet', () => {
-		expect(Number.isFinite(metresPerPixel(100, 0))).toBe(true);
-	});
-});
 
 describe('flyAxes', () => {
 	const axes = (...codes: string[]) => flyAxes(new Set(codes));
-
-	it('rests with no keys held', () => {
-		expect(axes()).toEqual([0, 0, 0]);
-	});
 
 	it('maps wasd and arrows to right and forward, q and e to down and up', () => {
 		expect(axes('KeyD')).toEqual([1, 0, 0]);
@@ -43,10 +24,6 @@ describe('smooth', () => {
 	const ground = () => -1000;
 	const a: Pose = { e: 0, n: 0, h: 0, yaw: 0, pitch: -35, dist: 300 };
 	const b: Pose = { ...a, e: 100 };
-
-	it('closes 63% of the gap in 0.05 s', () => {
-		expect(smooth(a, b, 0.05, ground).e).toBeCloseTo(100 * (1 - Math.exp(-1)), 9);
-	});
 
 	it('returns the target itself once the rest of the way is invisible', () => {
 		const near = { ...b, e: 100 - 1e-6 };

@@ -47,7 +47,7 @@ interface Trip {
 }
 
 /** metres one screen pixel spans at dist in a view pixels tall */
-export function metresPerPixel(dist: number, pixels: number): number {
+function metresPerPixel(dist: number, pixels: number): number {
 	return (2 * dist * Math.tan((FOV * Math.PI) / 360)) / Math.max(1, pixels);
 }
 

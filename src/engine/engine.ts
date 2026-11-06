@@ -238,7 +238,7 @@ export function poolRoom(
 }
 
 /** origin while position stays within REBASE of it, else the GRID point nearest position */
-export function rebase(origin: Point, position: Point): Point {
+function rebase(origin: Point, position: Point): Point {
 	const [e, n, h] = position;
 	if (Math.hypot(e - origin[0], n - origin[1], h - origin[2]) <= REBASE) return origin;
 	const snap = (x: number) => Math.round(x / GRID) * GRID;

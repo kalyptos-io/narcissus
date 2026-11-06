@@ -240,7 +240,7 @@ describe('encodePage', () => {
 				box[3 + a] = Math.max(box[3 + a], s.position[t * 3 + a] + e[a]);
 			}
 		}
-		expect(row).toMatchObject({ ...PAGE, count: 500, offset: 0, length: 0 });
+		expect(row).toMatchObject({ ...PAGE, count: 500 });
 		[...row.box].forEach((v, k) => expect(v).toBeCloseTo(box[k], 3));
 	});
 

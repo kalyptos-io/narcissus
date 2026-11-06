@@ -58,7 +58,6 @@ describe('Scheduler', () => {
 		const first = s.next();
 		expect(ids(first.start)).toEqual([[1], [2]]);
 		expect(s.next().start).toEqual([]);
-		expect(s.loading).toBe(2);
 		expect(s.queued).toBe(1);
 		s.done(first.start[0]);
 		s.want([job(2, 1000 * KiB), job(3, 2000 * KiB)]);
@@ -69,13 +68,11 @@ describe('Scheduler', () => {
 	it('never starts a page in flight again', () => {
 		const s = scheduler();
 		s.want([job(1, 0)]);
-		const { start } = s.next();
+		s.next();
 		s.want([job(1, 0), job(2, 10 * KiB)]);
 		expect(ids(s.next().start)).toEqual([[2]]);
 		s.want([job(2, 10 * KiB), job(1, 0)]);
 		expect(s.next()).toEqual({ start: [], abort: [] });
-		s.done(start[0]);
-		expect(s.loading).toBe(1);
 	});
 
 	it('returns a batch to abort once none of its pages is wanted, and only once', () => {

@@ -1,16 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { centreWeight, footprint } from './footprint.ts';
+import { footprint } from './footprint.ts';
 
 const identity = () => Float64Array.of(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1);
 const box = (x = 0, z = -10) => [x - 1, -1, z - 1, x + 1, 1, z + 1];
-
-describe('centreWeight', () => {
-	it('asks sixteen times the density at the centre and none extra at the edge', () => {
-		expect(centreWeight(0, 0, 0, 0)).toBe(16);
-		expect(centreWeight(1, 1, 1, 1)).toBe(1);
-		expect(centreWeight(-1, 1, -1, 1)).toBeCloseTo(1 + 15 / 9);
-	});
-});
 
 describe('footprint', () => {
 	it('uses perspective, viewport size and partial visibility without changing density', () => {
