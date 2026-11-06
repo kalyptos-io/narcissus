@@ -75,11 +75,15 @@ export class Pick {
 			size: this.#values.byteLength,
 			usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
 		});
-		const { uniforms, plugins, work } = buffers;
-		const { geometry, colour, pages, clusters } = pool;
-		const fixed = [uniforms, plugins, geometry, colour, pages, clusters, work, this.#probes];
 		this.#group = liveGroup(device, 'pick', layout, () => [
-			...fixed,
+			buffers.uniforms,
+			buffers.plugins,
+			pool.geometry,
+			pool.colour,
+			pool.pages,
+			pool.clusters,
+			buffers.work,
+			this.#probes,
 			this.#hits,
 			pool.extension.buffer
 		]);

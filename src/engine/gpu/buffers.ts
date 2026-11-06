@@ -16,36 +16,55 @@ export interface FrameBuffers {
 	sort: GPUBuffer;
 	/** PLUGIN_VEC4S vec4f for shade hooks */
 	plugins: GPUBuffer;
-	bytes: number;
+	readonly bytes: number;
 	destroy(): void;
 }
 
 /** clusters bounds the visible list: every cluster the pool can hold */
 export function frameBuffers(device: GPUDevice, capacity: number, clusters: number): FrameBuffers {
+	const uniform = GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST;
+	const make = (label: string, size: number) =>
+		device.createBuffer({ label, size, usage: uniform });
+	const buffers: FrameBuffers = {
+		uniforms: make('frame uniforms', FRAME_UNIFORM_BYTES),
+		plugins: make('plugins', PLUGIN_VEC4S * 16),
+		visible: make('visible clusters', 4),
+		...sized(device, capacity, clusters),
+		get bytes() {
+			return all(this).reduce((sum, b) => sum + b.size, 0);
+		},
+		destroy() {
+			for (const b of all(this)) b.destroy();
+		}
+	};
+	return buffers;
+}
+
+/** buffers' sized ones made again for capacity and clusters, empty; frames in flight keep the old */
+export function growFrame(
+	device: GPUDevice,
+	buffers: FrameBuffers,
+	capacity: number,
+	clusters: number
+): void {
+	const { work, projected, sort } = buffers;
+	Object.assign(buffers, sized(device, capacity, clusters));
+	for (const b of [work, projected, sort]) b.destroy();
+}
+
+function sized(device: GPUDevice, capacity: number, clusters: number) {
+	const storage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
 	const make = (label: string, size: number, usage: number) =>
 		device.createBuffer({ label, size, usage });
-	const storage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
-	const list = [
-		make('frame uniforms', FRAME_UNIFORM_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST),
-		make('work', (WORK.list + clusters) * 4, storage | GPUBufferUsage.INDIRECT),
-		make('projected', capacity * PROJECTED_WORDS * 4, storage),
-		make('sort', capacity * 16, storage),
-		make('plugins', PLUGIN_VEC4S * 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST),
-		make('visible clusters', 4, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST)
-	];
-	const [uniforms, work, projected, sort, plugins, visible] = list;
 	return {
 		capacity,
-		uniforms,
-		work,
-		visible,
-		projected,
-		sort,
-		plugins,
-		bytes: list.reduce((sum, b) => sum + b.size, 0),
-		destroy: () => list.forEach((b) => b.destroy())
+		work: make('work', (WORK.list + clusters) * 4, storage | GPUBufferUsage.INDIRECT),
+		projected: make('projected', capacity * PROJECTED_WORDS * 4, storage),
+		sort: make('sort', capacity * 16, storage)
 	};
 }
+
+const all = (b: FrameBuffers) => [b.uniforms, b.work, b.projected, b.sort, b.plugins, b.visible];
 
 /** a layout of whole buffers of types at bindings 0, 1, .. */
 export function bufferLayout(

@@ -22,7 +22,7 @@ import {
 import { Planner, type Plan, type View } from './plan/cut.ts';
 import { FADE_CAP, Fader } from './plan/draw.ts';
 import type { Fetch } from '../ports.ts';
-import type { Frame, Host, Plugin, Post, Shade } from './plugin.ts';
+import type { Frame, Host, Plugin } from './plugin.ts';
 import { percentile, pixelRatio, Quality } from './quality.ts';
 import { Feed } from './stream/feed.ts';
 import { http } from '../adapters/http.ts';
@@ -273,11 +273,6 @@ function push(samples: number[], value: number): void {
 	if (samples.length > SAMPLES) samples.shift();
 }
 
-interface Installed<T> {
-	hook: T;
-	off: () => void;
-}
-
 interface Picking {
 	/** canvas css pixels */
 	points: readonly (readonly [number, number])[];
@@ -299,7 +294,6 @@ interface Measuring {
 class GpuEngine implements Engine {
 	#canvas: HTMLCanvasElement;
 	#gpu: Gpu;
-	#context: GPUCanvasContext;
 	#options: EngineOptions;
 	#fetch: Fetch;
 	#spawn: (() => Worker) | undefined;
@@ -370,8 +364,6 @@ class GpuEngine implements Engine {
 	#frameMs: number[] = [];
 	#cpuMs: number[] = [];
 
-	#shades: Installed<Shade>[] = [];
-	#posts: Installed<Post>[] = [];
 	#picks: Picking[] = [];
 	/** the last frame submitted; null while the gpu holds none to pick in */
 	#rendered: Frame | null = null;
@@ -397,7 +389,6 @@ class GpuEngine implements Engine {
 	) {
 		this.#canvas = canvas;
 		this.#gpu = gpu;
-		this.#context = context;
 		this.#options = options;
 		this.#fetch = fetch;
 		this.#spawn = spawn;
@@ -656,8 +647,8 @@ class GpuEngine implements Engine {
 	use(plugin: Plugin): () => void {
 		if (this.#destroyed) return () => {};
 		const host: Host = {
-			shade: (hook) => this.#install(this.#shades, hook, this.#renderer.shade(hook)),
-			post: (pass) => this.#install(this.#posts, pass, this.#renderer.post(pass)),
+			shade: (hook) => this.#install(this.#renderer.shade(hook)),
+			post: (pass) => this.#install(this.#renderer.post(pass)),
 			table: (words) => {
 				const table = this.#pool.tables.create(words);
 				return {
@@ -761,18 +752,13 @@ class GpuEngine implements Engine {
 		return true;
 	}
 
-	/** a larger pool with its pages in place, and a renderer over it */
+	/** a larger pool with its pages in place, and frame buffers over it */
 	#grow(capacity: number, frame: number): void {
 		this.#pool.grow(capacity);
-		this.#renderer.destroy();
-		const renderer = new Renderer(this.#gpu, this.#context, this.#pool, frame);
-		renderer.resize(...this.#target);
-		for (const entry of this.#shades) entry.off = renderer.shade(entry.hook);
-		for (const entry of this.#posts) entry.off = renderer.post(entry.hook);
-		this.#renderer = renderer;
+		this.#renderer.grow(frame);
 		this.#frameCapacity = frame;
+		// the last frame's cull went with its work buffer
 		this.#rendered = null;
-		this.#graphics.reshape();
 	}
 
 	#feedFor(tree: Tree, loader: Loader): Feed {
@@ -817,15 +803,11 @@ class GpuEngine implements Engine {
 		this.requestFrame();
 	}
 
-	#install<T>(list: Installed<T>[], hook: T, off: () => void): () => void {
-		const entry = { hook, off };
-		list.push(entry);
+	#install(off: () => void): () => void {
 		this.requestFrame();
 		return () => {
-			const k = list.indexOf(entry);
-			if (this.#destroyed || k < 0) return;
-			list.splice(k, 1);
-			entry.off();
+			if (this.#destroyed) return;
+			off();
 			this.requestFrame();
 		};
 	}

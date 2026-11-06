@@ -30,8 +30,14 @@ export class Cull {
 			layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
 			compute: { module, entryPoint: 'cull' }
 		});
-		const fixed = [buffers.uniforms, pool.pages, pool.clusters, pool.list, buffers.work];
-		this.#group = liveGroup(device, 'cull', layout, () => [...fixed, pool.extension.buffer]);
+		this.#group = liveGroup(device, 'cull', layout, () => [
+			buffers.uniforms,
+			pool.pages,
+			pool.clusters,
+			pool.list,
+			buffers.work,
+			pool.extension.buffer
+		]);
 	}
 
 	encode(encoder: GPUCommandEncoder, timestamps?: GPUComputePassTimestampWrites): void {

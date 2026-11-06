@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { WORK } from './layout.ts';
-import { frameBuffers } from './buffers.ts';
+import { frameBuffers, growFrame } from './buffers.ts';
 import { Sort } from './sort.ts';
 import { readBuffer, testDevice } from './test-device.ts';
 
@@ -15,11 +15,21 @@ function testKeys(count: number): Uint32Array {
 	return keys;
 }
 
-/** sorts keys with values 1, 2, ... after writing projected into WORK.projected */
-async function gpuSort(keys: Uint32Array, projected: number, capacity: number, drawn = projected) {
+/** sorts keys with values 1, 2, ... after writing projected into WORK.projected; grown from a smaller capacity when given */
+async function gpuSort(
+	keys: Uint32Array,
+	projected: number,
+	capacity: number,
+	drawn = projected,
+	from?: number
+) {
 	const device = await testDevice();
-	const buffers = frameBuffers(device, capacity, 1);
+	const buffers = frameBuffers(device, from ?? capacity, 1);
 	const sort = new Sort(device, buffers);
+	if (from !== undefined) {
+		growFrame(device, buffers, capacity, 1);
+		sort.resize(buffers);
+	}
 	const stored = keys.subarray(0, capacity);
 	device.queue.writeBuffer(buffers.sort, 0, stored);
 	device.queue.writeBuffer(
@@ -94,6 +104,15 @@ describe('Sort', () => {
 		expect(mismatch(got.keys, want.keys)).toBe(-1);
 		expect(mismatch(got.values, want.values)).toBe(-1);
 		expect(got.draw).toEqual([4, 200, 0, 0]);
+	});
+
+	it('sorts in buffers grown from a smaller capacity', async () => {
+		const keys = testKeys(100_000);
+		const got = await gpuSort(keys, keys.length, keys.length, keys.length, 1024);
+		const want = cpuSort(keys);
+		expect(mismatch(got.keys, want.keys)).toBe(-1);
+		expect(mismatch(got.values, want.values)).toBe(-1);
+		expect(got.draw).toEqual([4, keys.length, 0, 0]);
 	});
 
 	it('sorts a small projected list in a larger frame buffer', async () => {

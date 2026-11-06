@@ -72,13 +72,11 @@ export class Project {
 	#pipeline: HookedPipeline;
 	#group: () => GPUBindGroup;
 	#pool: Pool;
-	#work: GPUBuffer;
-	#visible: GPUBuffer;
+	#buffers: FrameBuffers;
 
 	constructor(device: GPUDevice, pool: Pool, buffers: FrameBuffers) {
 		this.#pool = pool;
-		this.#work = buffers.work;
-		this.#visible = buffers.visible;
+		this.#buffers = buffers;
 		const layout = bufferLayout(device, 'project', GPUShaderStage.COMPUTE, [
 			'uniform',
 			'uniform',
@@ -94,7 +92,7 @@ export class Project {
 		]);
 		const pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [layout] });
 		this.#pipeline = new HookedPipeline(device, pipelineLayout, source, 'project', 'project');
-		const fixed = [
+		this.#group = liveGroup(device, 'project', layout, () => [
 			buffers.uniforms,
 			buffers.plugins,
 			pool.geometry,
@@ -104,9 +102,9 @@ export class Project {
 			buffers.work,
 			buffers.projected,
 			buffers.sort,
-			buffers.visible
-		];
-		this.#group = liveGroup(device, 'project', layout, () => [...fixed, pool.extension.buffer]);
+			buffers.visible,
+			pool.extension.buffer
+		]);
 	}
 
 	/** the next frame's pipeline runs these hooks in order, each reading from its first slot */
@@ -120,7 +118,8 @@ export class Project {
 		timestamps?: GPUComputePassTimestampWrites
 	): void {
 		// a uniform count keeps the loop uniform across each workgroup
-		encoder.copyBufferToBuffer(this.#work, WORK.visible * 4, this.#visible, 0, 4);
+		const buffers = this.#buffers;
+		encoder.copyBufferToBuffer(buffers.work, WORK.visible * 4, buffers.visible, 0, 4);
 		// a stale count changes parallelism only; the shader still visits every current cluster
 		const count = Math.max(
 			1,

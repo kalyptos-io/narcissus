@@ -17,7 +17,8 @@ export const OVER: GPUBlendComponent = { srcFactor: 'one', dstFactor: 'one-minus
 export class Raster {
 	#device: GPUDevice;
 	#format: GPUTextureFormat;
-	#work: GPUBuffer;
+	#buffers: FrameBuffers;
+	#sort: Sort;
 	#sorted: GPUBuffer;
 	/** samples over the coverage estimate, copied into the work buffer after the pass */
 	#over: GPUBuffer;
@@ -38,14 +39,14 @@ export class Raster {
 	) {
 		this.#device = device;
 		this.#format = format;
-		this.#work = buffers.work;
+		this.#buffers = buffers;
+		this.#sort = sort;
 		this.#sorted = device.createBuffer({
 			label: 'raster sorted',
 			size: 16,
 			usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
 		});
-		const words = new Uint32Array([sort.keys / 4, sort.values / 4, 0, 0]);
-		device.queue.writeBuffer(this.#sorted, 0, words);
+		this.resize();
 		this.#over = device.createBuffer({
 			label: 'raster over',
 			size: 4,
@@ -72,13 +73,21 @@ export class Raster {
 			}))
 		});
 		this.#pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [layout] });
-		const { uniforms, projected, plugins } = buffers;
-		const fixed = [uniforms, projected, buffers.sort, this.#sorted, plugins];
 		this.#group = liveGroup(device, 'raster', layout, () => [
-			...fixed,
+			buffers.uniforms,
+			buffers.projected,
+			buffers.sort,
+			this.#sorted,
+			buffers.plugins,
 			pool.extension.buffer,
 			this.#over
 		]);
+	}
+
+	/** reads the sorted splats where sort, resized, puts them */
+	resize(): void {
+		const words = new Uint32Array([this.#sort.keys / 4, this.#sort.values / 4, 0, 0]);
+		this.#device.queue.writeBuffer(this.#sorted, 0, words);
 	}
 
 	/** the next frame draws sampled splats through these hooks, as project numbers them */
@@ -118,9 +127,10 @@ export class Raster {
 		if (!pipeline) this.#pipelines.set(name, (pipeline = this.#pipeline(name)));
 		pass.setPipeline(pipeline);
 		pass.setBindGroup(0, this.#group());
-		pass.drawIndirect(this.#work, WORK.drawArgs * 4);
+		const { work } = this.#buffers;
+		pass.drawIndirect(work, WORK.drawArgs * 4);
 		pass.end();
-		encoder.copyBufferToBuffer(this.#over, 0, this.#work, WORK.rasterOver * 4, 4);
+		encoder.copyBufferToBuffer(this.#over, 0, work, WORK.rasterOver * 4, 4);
 	}
 
 	destroy(): void {

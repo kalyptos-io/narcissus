@@ -4,7 +4,7 @@ import { CLUSTER } from '../../format/index.ts';
 import { FRAME_UNIFORM_BYTES, LOW_PASS, PLUGIN_VEC4S, RECORD_WORDS, WORK } from './layout.ts';
 import { multiply } from '../math/mat4.ts';
 import type { Frame, Post, PostPass, Shade } from '../plugin.ts';
-import { frameBuffers, type FrameBuffers } from './buffers.ts';
+import { frameBuffers, growFrame, type FrameBuffers } from './buffers.ts';
 import { Cull } from './cull.ts';
 import type { Gpu } from './device.ts';
 import { Heights } from './heights.ts';
@@ -157,6 +157,13 @@ export class Renderer {
 			entry.streams = streams(entry.shade, this.#pool.attributes);
 		}
 		this.#hooks();
+	}
+
+	/** room for capacity splats a frame over the pool's slots as they are now; pipelines and hooks stay */
+	grow(capacity: number): void {
+		growFrame(this.#device, this.#buffers, capacity, this.#pool.slots);
+		this.#sort.resize(this.#buffers);
+		this.#raster.resize();
 	}
 
 	post(pass: Post): () => void {
