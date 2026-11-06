@@ -5,7 +5,7 @@ import type { Idx, PageRow } from '../../format/index.ts';
 import type { Wanted } from './attributes.ts';
 import { answering, type Ask } from './remote.ts';
 import type { Batch, UnitFile } from './scheduler.ts';
-import type { Loaded, Message, Reply } from './worker.ts';
+import type { Loaded, Message, Reply } from './serve.ts';
 // inline, so the built engine is one file that needs no path to its worker
 import StreamWorker from './worker.ts?worker&inline';
 
@@ -14,8 +14,10 @@ export interface LoaderOptions {
 	base: string;
 	workers: number;
 	cache: 'opfs' | 'memory' | 'none';
-	/** a Fetch stays on the main thread, where the workers ask it by message */
-	source: 'http' | 'synthetic' | Fetch;
+	/** the page's own Fetch, which stays on the main thread and the workers ask by message; http otherwise */
+	page?: Fetch;
+	/** a new stream worker; the synthetic world's comes from its own module */
+	spawn?: () => Worker;
 }
 
 interface Slot {
@@ -37,14 +39,12 @@ export class Loader {
 	#id = 0;
 
 	constructor(options: LoaderOptions) {
-		const { base, cache, source, workers: shards } = options;
+		const { base, cache, page, workers: shards, spawn = () => new StreamWorker() } = options;
 		this.#slots = Array.from({ length: shards }, (_, shard) => {
-			const worker = new StreamWorker();
+			const worker = spawn();
 			const slot: Slot = { worker };
 			const answer =
-				typeof source === 'function'
-					? answering(source, (fetched, transfer) => worker.postMessage(fetched, transfer))
-					: undefined;
+				page && answering(page, (fetched, transfer) => worker.postMessage(fetched, transfer));
 			worker.onmessage = ({ data }: MessageEvent<Reply | Ask>) => {
 				if ('id' in data) this.#reply(data);
 				else answer?.(data);
@@ -54,7 +54,7 @@ export class Loader {
 				type: 'init',
 				base,
 				cache,
-				source: typeof source === 'function' ? 'page' : source,
+				source: page ? 'page' : 'http',
 				shard,
 				shards
 			} satisfies Message;

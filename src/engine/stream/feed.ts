@@ -8,7 +8,7 @@ import { Missing } from '../../ports.ts';
 import type { Loader } from './loader.ts';
 import type { Objects } from './objects.ts';
 import { Scheduler, type Batch, type PageJob, type SchedulerOptions } from './scheduler.ts';
-import type { Loaded } from './worker.ts';
+import type { Loaded } from './serve.ts';
 
 export interface FeedOptions extends SchedulerOptions {
 	/** .idx fetches in flight */

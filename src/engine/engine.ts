@@ -159,13 +159,17 @@ export async function createEngine(
 	if ((options.cache ?? 'opfs') === 'opfs') void navigator.storage?.persist().catch(() => false);
 	// only benches draw the synthetic world, so its generator stays out of the viewer's bundle
 	const { source = 'http' } = options;
-	const fetch =
-		source === 'synthetic'
-			? (await import('./stream/synthetic.ts')).synthetic()
-			: source === 'http'
-				? http
-				: source;
-	return new GpuEngine(canvas, gpu, context, options, fetch);
+	let fetch: Fetch = http;
+	let spawn: (() => Worker) | undefined;
+	if (source === 'synthetic') {
+		const [{ synthetic }, { default: SyntheticWorker }] = await Promise.all([
+			import('./stream/synthetic.ts'),
+			import('./stream/synthetic-worker.ts?worker&inline')
+		]);
+		fetch = synthetic();
+		spawn = () => new SyntheticWorker();
+	} else if (source !== 'http') fetch = source;
+	return new GpuEngine(canvas, gpu, context, options, fetch, spawn);
 }
 
 const NEAR = 0.2;
@@ -298,6 +302,7 @@ class GpuEngine implements Engine {
 	#context: GPUCanvasContext;
 	#options: EngineOptions;
 	#fetch: Fetch;
+	#spawn: (() => Worker) | undefined;
 	#settings: Settings;
 	#quality: Quality;
 	#pool: Pool;
@@ -383,13 +388,15 @@ class GpuEngine implements Engine {
 		gpu: Gpu,
 		context: GPUCanvasContext,
 		options: EngineOptions,
-		fetch: Fetch
+		fetch: Fetch,
+		spawn: (() => Worker) | undefined
 	) {
 		this.#canvas = canvas;
 		this.#gpu = gpu;
 		this.#context = context;
 		this.#options = options;
 		this.#fetch = fetch;
+		this.#spawn = spawn;
 		this.#settings = { ...options.settings };
 		this.#quality = this.#control();
 		this.#css = [canvas.width, canvas.height, 1];
@@ -440,7 +447,8 @@ class GpuEngine implements Engine {
 			base: directory(worldUrl),
 			workers: Math.min(6, Math.max(2, navigator.hardwareConcurrency - 2)),
 			cache,
-			source
+			page: typeof source === 'function' ? source : undefined,
+			spawn: this.#spawn
 		});
 		const tree = new Tree(world);
 		try {
