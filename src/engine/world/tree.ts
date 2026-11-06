@@ -19,6 +19,8 @@ export interface UnitNode extends UnitKey {
 	pages: PageNode[];
 	/** its pages by slot */
 	grid: Map<number, PageNode>;
+	/** the units its .idx names, by unit key */
+	named: Map<string, { key: UnitKey; hash: string }>;
 }
 
 export interface PageNode {
@@ -46,6 +48,16 @@ export interface Wanted extends UnitKey {
 }
 
 const slot = (g: number, i: number, j: number) => (g * 256 + i) * 256 + j;
+
+/** the units idx names by key, as namedUnits lists them first */
+function namedBy(idx: Idx): UnitNode['named'] {
+	const named: UnitNode['named'] = new Map();
+	for (const entry of namedUnits(idx)) {
+		const k = unitKey(entry.key);
+		if (!named.has(k)) named.set(k, entry);
+	}
+	return named;
+}
 
 export class Tree {
 	/** the coarsest pages of every root */
@@ -80,7 +92,8 @@ export class Tree {
 			path,
 			parent: null,
 			pages: [],
-			grid
+			grid,
+			named: namedBy(idx)
 		};
 		for (const row of idx.rows) {
 			const b = row.box;
@@ -130,14 +143,12 @@ export class Tree {
 			const parent = this.units.get(unitKey(ancestor(idx, idx.level + 1)));
 			if (parent) this.#link(parent, unit);
 		}
-		const named = namedUnits(unit.idx);
-		for (const { key: child } of named) {
-			const node = child.level === idx.level - 1 ? this.units.get(unitKey(child)) : undefined;
+		for (const [k, { key: child }] of unit.named) {
+			const node = child.level === idx.level - 1 ? this.units.get(k) : undefined;
 			if (node) this.#link(unit, node);
 		}
 
-		for (const { key: below, hash } of named) {
-			const k = unitKey(below);
+		for (const [k, { key: below, hash }] of unit.named) {
 			if (this.units.has(k)) continue;
 			const entry = this.#wanted.get(k);
 			// the nearest namer's pages rank the fetch
@@ -210,7 +221,7 @@ export class Tree {
 				if (count) this.#below.set(up, count);
 				else this.#below.delete(up);
 			}
-			for (const { key: below } of namedUnits(unit.idx)) this.#want(below);
+			for (const { key: below } of unit.named.values()) this.#want(below);
 			this.#want(unit);
 		}
 		return removed;
@@ -223,7 +234,7 @@ export class Tree {
 		for (let level = key.level + 1; level <= key.level + 3; level++) {
 			const namer = this.units.get(unitKey(ancestor(key, level)));
 			if (!namer) continue;
-			const named = namedUnits(namer.idx).find((entry) => unitKey(entry.key) === k);
+			const named = namer.named.get(k);
 			if (!named) continue;
 			this.#name(namer, key, named.hash, k);
 			return;
